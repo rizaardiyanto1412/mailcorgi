@@ -78,12 +78,14 @@ export function createStore(registry: Registry, migrations: readonly string[], d
   const id = storeId(ref)
   migrate(db, migrations, deps.now)
 
-  let armed: number | null | undefined
-  const rearm = async () => {
-    const at = nextWakeAt(db)
-    if (at === armed) return
-    armed = at
-    await platform.setAlarm(ref, at)
+  let arming: Promise<void> | null = null
+  const rearm = (): Promise<void> => {
+    // Serialize writes and read the queue after earlier writes finish. Every invocation repairs
+    // a missing alarm, including when a previous registration failed or an alarm was consumed.
+    if (arming) return arming.catch(() => {}).then(rearm)
+    const write = async () => { await platform.setAlarm(ref, nextWakeAt(db)) }
+    arming = write().finally(() => { arming = null })
+    return arming
   }
   const jobs = createJobs(db, deps.now, () => void rearm().catch((err) => console.error('[alarm]', err)))
 
@@ -160,7 +162,6 @@ export function createStore(registry: Registry, migrations: readonly string[], d
           }
         }
       } finally {
-        armed = undefined
         await rearm()
       }
     },

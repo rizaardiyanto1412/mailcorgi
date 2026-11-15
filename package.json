@@ -22,10 +22,19 @@
     "test": "tsx --test server/test/*.test.ts",
     "smoke": "tsx scripts/smoke.ts",
     "ci": "sh scripts/ci.sh",
-    "deploy": "npm run build:web && wrangler deploy"
+    "deploy": "npm run build:web && wrangler deploy",
+    "docs:api": "tsx scripts/docs-api.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
+    "@tiptap/core": "^3.34.0",
+    "@tiptap/extension-bubble-menu": "^3.34.0",
+    "@tiptap/extension-highlight": "^3.34.0",
+    "@tiptap/extension-image": "^3.34.0",
+    "@tiptap/extension-placeholder": "^3.34.0",
+    "@tiptap/pm": "^3.34.0",
+    "@tiptap/react": "^3.34.0",
+    "@tiptap/starter-kit": "^3.34.0",
     "aws4fetch": "^1.0.20",
     "hono": "^4.13.18",
     "marked": "^18.2.0",

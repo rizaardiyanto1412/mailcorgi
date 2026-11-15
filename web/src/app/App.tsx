@@ -49,6 +49,7 @@ export function App() {
 }
 
 function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
+  const location = useLocation()
   const session = boot.session!
   const account = session.accounts.find((a) => a.id === session.current) ?? null
   const newsletters = useActionQuery('newsletters.list', {}, { enabled: !!account, staleTime: 30_000 })
@@ -74,11 +75,10 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
     [boot, session, account, list, current, storageKey, refresh, newsletters],
   )
 
-  const location = useLocation()
   const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/')
   const tree: RouteObject[] = [
     { path: '/welcome', element: <Welcome /> },
-    list.length === 0 && account && !inSettings
+    list.length === 0 && account && !inSettings && !(location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
       ? { path: '*', element: <Navigate to="/welcome" replace /> }
       : {
           element: <Shell />,

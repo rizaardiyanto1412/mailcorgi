@@ -2,6 +2,8 @@
  * Cloudflare platform. The Worker is the edge; ControlStore and AccountStore are SQLite-backed
  * Durable Objects. Images live in R2 when the IMAGES bucket is bound, else in the account store.
  */
+import { isAccountId } from '../server/core/ids.ts'
+import { AppError } from '../server/core/http.ts'
 import { DurableObject } from 'cloudflare:workers'
 import { parseConfig, type Config } from '../server/core/config.ts'
 import { createDb, type Driver } from '../server/core/db.ts'
@@ -210,11 +212,20 @@ export class AccountStore extends BaseStore {
     this.accountId = ctx.storage.kv.get<string>('accountId') ?? null
   }
 
-  /** The object learns its own account id from the first caller and keeps it for alarms. */
-  private learn(accountId: string | null) {
-    if (!accountId || this.accountId) return
-    this.accountId = accountId
-    this.ctx.storage.kv.put('accountId', accountId)
+  private async authorize(accountId: string | null, provision = false) {
+    if (!accountId || !isAccountId(accountId) || (this.accountId && this.accountId !== accountId)) throw new AppError('not_found', 'Not found.', 404)
+    if (!provision && (!this.accountId || !(await envStores(this.env).control.accountExists({ accountId })))) {
+      throw new AppError('not_found', 'Account store is not provisioned.', 404)
+    }
+    if (!this.accountId) {
+      this.ctx.storage.kv.put('accountId', accountId)
+      this.accountId = accountId
+    }
+  }
+
+  async alarm(): Promise<void> {
+    await this.authorize(this.accountId)
+    return super.alarm()
   }
 
   protected ref(): StoreRef {
@@ -223,13 +234,22 @@ export class AccountStore extends BaseStore {
   }
 
   async fetch(request: Request): Promise<Response> {
-    this.learn(request.headers.get('x-mc-account'))
-    return super.fetch(request)
+    try {
+      await this.authorize(request.headers.get('x-mc-account'))
+      return super.fetch(request)
+    } catch (err) {
+      if (err instanceof AppError) return Response.json({ code: err.code, error: err.message }, { status: err.status })
+      throw err
+    }
   }
 
-  rpc(accountId: string, name: string, args: unknown): Promise<RpcResult> {
-    this.learn(accountId)
-    return this.call(name, args)
+  async rpc(accountId: string, name: string, args: unknown): Promise<RpcResult> {
+    try {
+      await this.authorize(accountId, name === 'bootstrap')
+      return this.call(name, args)
+    } catch (err) {
+      return encodeRpcError(err)
+    }
   }
 }
 

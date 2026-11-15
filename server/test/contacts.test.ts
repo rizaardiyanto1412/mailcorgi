@@ -50,7 +50,7 @@ test('contact lifecycle, tombstones, confirmed consent and newsletter isolation'
 })
 
 test('contact limits are atomic and no-op on the N+1th subscriber', async () => {
-  const install = await createInstall()
+  const install = await createInstall({ cloud: true })
   try {
     const owner = await install.signUp({ email: 'owner@example.com' })
     const nl = await owner.action('newsletters.create', { name: 'Limit test' })

@@ -7,7 +7,7 @@ import { newId } from '../../core/ids.ts'
 import { AppError, clientIp, readJson, validate, type StoreEnv } from '../../core/http.ts'
 import { allowRate, clearRate } from '../../core/ratelimit.ts'
 import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
-import { appUrl, learnAppUrl } from '../install/index.ts'
+import { appUrl, learnAppUrl, getSettingSync } from '../install/index.ts'
 import { createAccountForUser, isInstallAdmin, resolveSession } from '../accounts/index.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 
@@ -84,15 +84,19 @@ function limit(ctx: StoreCtx, c: Context<StoreEnv>, address: string) {
   if (!ok) throw new AppError('rate_limited', 'Too many attempts. Try again in a few minutes.', 429)
 }
 
-async function issueCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin' | 'reset') {
+async function issueCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin' | 'reset', prepare?: (codeHash: string) => void) {
   const value = randomCode()
-  ctx.db.run(
-    'INSERT INTO login_codes (email, code_hash, purpose, expires_at, attempts) VALUES (?, ?, ?, ?, 0) ON CONFLICT(email, purpose) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0',
-    address,
-    await sha256Hex(`${purpose}:${value}`),
-    purpose,
-    ctx.now() + CODE_TTL_MS,
-  )
+  const codeHash = await sha256Hex(`${purpose}:${value}`)
+  ctx.db.tx(() => {
+    prepare?.(codeHash)
+    ctx.db.run(
+      'INSERT INTO login_codes (email, code_hash, purpose, expires_at, attempts) VALUES (?, ?, ?, ?, 0) ON CONFLICT(email, purpose) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0',
+      address,
+      codeHash,
+      purpose,
+      ctx.now() + CODE_TTL_MS,
+    )
+  })
   const copy = {
     signup: { subject: 'Your MailCorgi sign-up code', title: 'Confirm your email', lines: ['Enter this code to finish signing up. It expires in 15 minutes.'] },
     signin: { subject: 'Your MailCorgi sign-in code', title: 'Sign in to MailCorgi', lines: ['Enter this code to sign in. It expires in 15 minutes.'] },
@@ -101,27 +105,31 @@ async function issueCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'si
   await sendSystemEmail(ctx, { to: address, subject: copy.subject, kind: `auth.${purpose}`, ...simpleEmail({ title: copy.title, lines: copy.lines, code: value }) })
 }
 
-async function consumeCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin' | 'reset', value: string) {
-  const row = ctx.db.get<{ code_hash: string; expires_at: number; attempts: number }>('SELECT code_hash, expires_at, attempts FROM login_codes WHERE email = ? AND purpose = ?', address, purpose)
-  const bad = () => new AppError('bad_code', 'That code is wrong or has expired.', 400)
-  if (!row || row.expires_at < ctx.now()) throw bad()
-  if (row.attempts >= CODE_MAX_ATTEMPTS) throw new AppError('bad_code', 'Too many wrong codes. Ask for a new one.', 400)
-  if (row.code_hash !== (await sha256Hex(`${purpose}:${value}`))) {
-    ctx.db.run('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ? AND purpose = ?', address, purpose)
-    throw bad()
-  }
-  ctx.db.run('DELETE FROM login_codes WHERE email = ? AND purpose = ?', address, purpose)
+function consumeCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin' | 'reset', codeHash: string) {
+  const accepted = ctx.db.tx(() => {
+    const consumed = ctx.db.run(
+      'DELETE FROM login_codes WHERE email = ? AND purpose = ? AND code_hash = ? AND expires_at >= ? AND attempts < ?',
+      address, purpose, codeHash, ctx.now(), CODE_MAX_ATTEMPTS,
+    ).changes
+    if (consumed) return true
+    ctx.db.run('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ? AND purpose = ? AND expires_at >= ? AND attempts < ?', address, purpose, ctx.now(), CODE_MAX_ATTEMPTS)
+    return false
+  })
+  if (!accepted) throw new AppError('bad_code', 'That code is wrong or has expired. Ask for a new one.', 400)
 }
 
-export const signupOpen = (ctx: StoreCtx) => ctx.config.cloud || ctx.config.allowedEmails.length > 0
+export const signupOpen = (ctx: StoreCtx) => getSettingSync(ctx, 'signup_mode') !== 'closed' && (ctx.config.cloud || allowedEmails(ctx).length > 0)
+const allowedEmails = (ctx: StoreCtx) => [...ctx.config.allowedEmails, ...getSettingSync(ctx, 'allowed_emails').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
 
 /** Whether an address may sign itself up. Invitations are handled by the team unit. */
 function mayJoin(ctx: StoreCtx, address: string) {
-  if (ctx.config.cloud) return true
-  return ctx.config.allowedEmails.includes(address) || ctx.config.adminEmails.includes(address)
+  const mode = getSettingSync(ctx, 'signup_mode')
+  if (mode === 'closed') return false
+  if (ctx.config.cloud && mode !== 'allowlist') return true
+  return allowedEmails(ctx).includes(address) || ctx.config.adminEmails.includes(address)
 }
 
-async function createUser(ctx: StoreCtx, input: { email: string; name: string; password: string; verified: boolean; installAdmin?: boolean }): Promise<UserRow> {
+function createUser(ctx: StoreCtx, input: { email: string; name: string; passwordHash: string; verified: boolean; installAdmin?: boolean }): UserRow {
   const id = newId('usr')
   const now = ctx.now()
   ctx.db.run(
@@ -129,7 +137,7 @@ async function createUser(ctx: StoreCtx, input: { email: string; name: string; p
     id,
     input.email,
     input.name,
-    await hashPassword(input.password),
+    input.passwordHash,
     input.verified ? now : null,
     input.installAdmin || ctx.config.adminEmails.includes(input.email) ? 1 : 0,
     now,
@@ -162,8 +170,11 @@ export const authModule = {
         const ctx = c.get('ctx')
         if (ctx.config.cloud) throw new AppError('not_found', 'Not found.', 404)
         const input = validate(z.object({ name, email, password }), await readJson(c))
-        if (userCount(ctx) > 0) throw new AppError('setup_done', 'This install is already set up. Sign in instead.', 409)
-        const user = await createUser(ctx, { ...input, verified: true, installAdmin: true })
+        const passwordHash = await hashPassword(input.password)
+        const user = ctx.db.tx(() => {
+          if (userCount(ctx) > 0) throw new AppError('setup_done', 'This install is already set up. Sign in instead.', 409)
+          return createUser(ctx, { ...input, passwordHash, verified: true, installAdmin: true })
+        })
         await createAccountForUser(ctx, user)
         learnAppUrl(ctx, requestOrigin(c))
         await startSession(ctx, c, user.id)
@@ -175,19 +186,24 @@ export const authModule = {
         const input = validate(z.object({ name, email, password }), await readJson(c))
         limit(ctx, c, input.email)
         if (!mayJoin(ctx, input.email)) throw new AppError('signup_closed', 'Sign-up is by invitation. Ask the person who runs this install.', 403)
-        const existing = userByEmail(ctx, input.email)
-        if (existing?.email_verified_at) throw new AppError('email_taken', 'An account with that email already exists. Sign in instead.', 409)
+        const passwordHash = await hashPassword(input.password)
+        const save = (codeHash?: string) => {
+          const existing = userByEmail(ctx, input.email)
+          if (existing?.email_verified_at != null) throw new AppError('email_taken', 'An account with that email already exists. Sign in instead.', 409)
+          // Pending credentials carry the code digest, so a different submission cannot activate them.
+          const stored = codeHash ? `pending:${codeHash}:${passwordHash}` : passwordHash
+          if (!existing) return createUser(ctx, { ...input, passwordHash: stored, verified: !ctx.config.cloud })
+          ctx.db.run('UPDATE users SET name = ?, password_hash = ?, email_verified_at = ? WHERE id = ?', input.name, stored, ctx.config.cloud ? null : ctx.now(), existing.id)
+          return userByEmail(ctx, input.email)!
+        }
         if (!ctx.config.cloud) {
-          const user = existing ?? (await createUser(ctx, { ...input, verified: true }))
-          if (existing) ctx.db.run('UPDATE users SET email_verified_at = ?, name = ?, password_hash = ? WHERE id = ?', ctx.now(), input.name, await hashPassword(input.password), existing.id)
+          const user = ctx.db.tx(() => save())
           await createAccountForUser(ctx, user)
           learnAppUrl(ctx, requestOrigin(c))
           await startSession(ctx, c, user.id)
           return c.json({ ok: true, pending: false })
         }
-        if (existing) ctx.db.run('UPDATE users SET name = ?, password_hash = ? WHERE id = ?', input.name, await hashPassword(input.password), existing.id)
-        else await createUser(ctx, { ...input, verified: false })
-        await issueCode(ctx, input.email, 'signup')
+        await issueCode(ctx, input.email, 'signup', save)
         return c.json({ ok: true, pending: true })
       })
 
@@ -195,10 +211,15 @@ export const authModule = {
         const ctx = c.get('ctx')
         const input = validate(z.object({ email, code }), await readJson(c))
         limit(ctx, c, input.email)
-        const user = userByEmail(ctx, input.email)
-        if (!user) throw new AppError('bad_code', 'That code is wrong or has expired.', 400)
-        await consumeCode(ctx, input.email, 'signup', input.code)
-        if (!user.email_verified_at) ctx.db.run('UPDATE users SET email_verified_at = ? WHERE id = ?', ctx.now(), user.id)
+        const codeHash = await sha256Hex(`signup:${input.code}`)
+        consumeCode(ctx, input.email, 'signup', codeHash)
+        const user = ctx.db.tx(() => {
+          const pending = userByEmail(ctx, input.email)!
+          const prefix = `pending:${codeHash}:`
+          if (pending.email_verified_at != null || !pending.password_hash.startsWith(prefix)) throw new AppError('bad_code', 'Ask for a new sign-up code.', 400)
+          ctx.db.run('UPDATE users SET email_verified_at = ?, password_hash = ? WHERE id = ?', ctx.now(), pending.password_hash.slice(prefix.length), pending.id)
+          return userByEmail(ctx, input.email)!
+        })
         await createAccountForUser(ctx, user)
         learnAppUrl(ctx, requestOrigin(c))
         await startSession(ctx, c, user.id)
@@ -212,8 +233,12 @@ export const authModule = {
         limit(ctx, c, input.email)
         const user = userByEmail(ctx, input.email)
         const wrong = () => new AppError('bad_credentials', 'Wrong email or password.', 401)
-        if (!user || user.disabled || !user.password_hash || !(await verifyPassword(input.password, user.password_hash))) throw wrong()
-        if (!user.email_verified_at) throw new AppError('unverified', 'Confirm your email first. Sign up again to get a new code.', 403)
+        if (!user || user.disabled) throw wrong()
+        const passwordHash = user.password_hash.startsWith('pending:') ? user.password_hash.slice(user.password_hash.indexOf(':', 8) + 1) : user.password_hash
+        if (!(await verifyPassword(input.password, passwordHash))) throw wrong()
+        if (user.email_verified_at == null) throw new AppError('unverified', 'Confirm your email first. Sign up again to get a new code.', 403)
+        const latest = userByEmail(ctx, input.email)
+        if (!latest || latest.disabled || latest.password_hash !== user.password_hash) throw wrong()
         learnAppUrl(ctx, requestOrigin(c))
         await startSession(ctx, c, user.id)
         clearRate(ctx.db, `auth:email:${input.email}`)
@@ -234,9 +259,10 @@ export const authModule = {
         const ctx = c.get('ctx')
         const input = validate(z.object({ email, code }), await readJson(c))
         limit(ctx, c, input.email)
+        const codeHash = await sha256Hex(`signin:${input.code}`)
         const user = userByEmail(ctx, input.email)
-        if (!user || user.disabled) throw new AppError('bad_code', 'That code is wrong or has expired.', 400)
-        await consumeCode(ctx, input.email, 'signin', input.code)
+        if (!user || user.disabled || user.email_verified_at == null) throw new AppError('bad_code', 'That code is wrong or has expired.', 400)
+        consumeCode(ctx, input.email, 'signin', codeHash)
         learnAppUrl(ctx, requestOrigin(c))
         await startSession(ctx, c, user.id)
         return c.json({ ok: true })
@@ -252,7 +278,7 @@ export const authModule = {
         const input = validate(z.object({ email }), await readJson(c))
         limit(ctx, c, input.email)
         const user = userByEmail(ctx, input.email)
-        if (user && !user.disabled) await issueCode(ctx, input.email, 'reset')
+        if (user && !user.disabled && user.email_verified_at != null) await issueCode(ctx, input.email, 'reset')
         return c.json({ ok: true })
       })
 
@@ -260,11 +286,14 @@ export const authModule = {
         const ctx = c.get('ctx')
         const input = validate(z.object({ email, code, password }), await readJson(c))
         limit(ctx, c, input.email)
+        const [passwordHash, codeHash] = await Promise.all([hashPassword(input.password), sha256Hex(`reset:${input.code}`)])
         const user = userByEmail(ctx, input.email)
-        if (!user) throw new AppError('bad_code', 'That code is wrong or has expired.', 400)
-        await consumeCode(ctx, input.email, 'reset', input.code)
-        ctx.db.run('UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', await hashPassword(input.password), ctx.now(), user.id)
-        ctx.db.run('DELETE FROM sessions WHERE user_id = ?', user.id)
+        if (!user || user.disabled || user.email_verified_at == null) throw new AppError('bad_code', 'That code is wrong or has expired.', 400)
+        consumeCode(ctx, input.email, 'reset', codeHash)
+        ctx.db.tx(() => {
+          ctx.db.run('UPDATE users SET password_hash = ? WHERE id = ?', passwordHash, user.id)
+          ctx.db.run('DELETE FROM sessions WHERE user_id = ?', user.id)
+        })
         await startSession(ctx, c, user.id)
         return c.json({ ok: true })
       })

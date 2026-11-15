@@ -125,4 +125,16 @@ export const controlMigrations: readonly string[] = [
   );
   ${JOBS_SQL}
   `,
+  `
+  ALTER TABLE accounts ADD COLUMN billing_event_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE accounts ADD COLUMN billing_grace_until INTEGER;
+  ALTER TABLE accounts ADD COLUMN blocked_at INTEGER;
+  CREATE TABLE account_email_changes (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ]

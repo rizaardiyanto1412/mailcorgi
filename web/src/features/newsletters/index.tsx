@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Palette, PenLine } from 'lucide-react'
-import { DesignPage } from './Design.tsx'
+import { PenLine } from 'lucide-react'
 import { AuthorsPage } from './Authors.tsx'
 import { SenderSettings, NewsletterImages } from './SenderSettings.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
@@ -109,12 +108,10 @@ export const newslettersFeature: Feature = {
   name: 'newsletters',
   settings: [
     { to: '/settings/newsletter', label: 'Newsletter', icon: PenLine },
-    { to: '/settings/design', label: 'Design', icon: Palette },
     { to: '/settings/authors', label: 'Authors' },
   ],
   settingsRoutes: [
     { path: 'newsletter', element: <NewsletterSettings /> },
-    { path: 'design', element: <DesignPage /> },
     { path: 'authors', element: <AuthorsPage /> },
   ],
 }

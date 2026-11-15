@@ -331,6 +331,16 @@ export const accountMigrations: readonly string[] = [
   ${JOBS_SQL}
   `,
   `
+  CREATE TABLE api_idempotency (
+    key TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    response TEXT,
+    status INTEGER,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX api_idempotency_expiry ON api_idempotency(expires_at);
+  `,
+  `
   CREATE INDEX contacts_created_page ON contacts(newsletter_id, created_at, id);
   CREATE INDEX contacts_name_page ON contacts(newsletter_id, name, id);
   CREATE INDEX contacts_email_page ON contacts(newsletter_id, email, id);
