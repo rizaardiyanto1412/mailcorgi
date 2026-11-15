@@ -198,6 +198,10 @@ test('human page loads count once per request, including cache hits; bots, prefe
     await install.fetch('/n/weekly', { headers: { ...headers, 'sec-purpose': 'prefetch;prerender' } })
     await install.fetch('/n/weekly', { method: 'HEAD', headers })
     await install.fetch('/n/weekly/feed.xml', { headers })
+    // Views wait in memory until the next alarm.
+    assert.equal(install.app.account(owner.accountId!).ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM page_views')!.n, 0)
+    install.clock.advance(301_000)
+    await install.runJobs()
     const stats = await owner.action('website.stats', { newsletterId: nl.id })
     assert.equal(stats.days[0].page_views, 2)
     assert.deepEqual(stats.referrers, [{ host: 'search.example.com', views: 2 }])

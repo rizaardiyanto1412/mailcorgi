@@ -104,8 +104,8 @@ test('separate edge configs enforce the authoritative learned host and constrain
   } finally { install.close() }
 })
 
-test('an invocation restores an alarm that disappeared after successful registration', async () => {
-  const install = await createInstall()
+test('a store trusts the alarm it armed and asks the platform again only after a restart', async () => {
+  let install = await createInstall()
   let ran = false
   controlRegistry.jobs.set('test.alarm-missing', async () => { ran = true; return 'done' })
   try {
@@ -113,11 +113,15 @@ test('an invocation restores an alarm that disappeared after successful registra
     store.ctx.jobs.enqueue('test.alarm-missing', {}, { runAt: install.clock.now() + 1000 })
     await store.rearm()
     const original = install.app.platform.setAlarm
-    let registeredAt: number | null = null
+    let registeredAt: number | null | undefined
     install.app.platform.setAlarm = async (ref, at) => { await original(ref, at); registeredAt = at }
     await original({ kind: 'control' }, null)
+    // Re-registering on every request would cost a row write each; the armed time is trusted.
     await install.fetch('/api/auth/bootstrap')
-    assert.equal(registeredAt, install.clock.now() + 1000)
+    assert.equal(registeredAt, undefined)
+    // A restart forgets what was armed, asks the platform, and arms again.
+    install = await install.restart()
+    assert.equal(install.app.control.nextWakeAt(), install.clock.now() + 1000)
     install.clock.advance(1000)
     await install.tick()
     assert.equal(ran, true)
@@ -126,7 +130,6 @@ test('an invocation restores an alarm that disappeared after successful registra
     install.close()
   }
 })
-
 test('overlapping alarm registrations cannot replace an earlier wake with a late one', async () => {
   const install = await createInstall()
   const store = install.app.control
