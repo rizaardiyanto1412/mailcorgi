@@ -60,3 +60,17 @@ public issues for paging, the author by slug, and the issue by slug (or id when 
 answers 404 at once, and that 404 is cached for 60 seconds (`s-maxage=60`, and 60 seconds in the
 in-process and Workers caches) under the same versioned key as the pages. Publishing, hiding or
 renaming anything bumps the version, so a cached 404 never hides a new post. 404s count no page view.
+
+## `TRUST_PROXY` on Node
+
+Contract: section 3.6 lists the environment and had no proxy setting. Node trusted `x-forwarded-for`
+from any private or loopback peer, which a directly published Docker port turns into every client.
+
+Node now trusts forwarding headers only from a peer named in `TRUST_PROXY` (a comma-separated list
+of addresses, or `true` for any private or loopback peer). From any other peer the edge drops
+`x-forwarded-for`, `x-forwarded-proto`, `x-forwarded-host` and `x-real-ip` before a store sees them,
+so they also cannot steer the app URL learned at first sign-in. Compose has no per-profile
+environment, so `docker-compose.yml` gives Caddy a fixed address (`172.31.250.10`) on the app's own
+network and sets `TRUST_PROXY` to that address. Without the `https` profile no container holds it;
+with it, a client that reaches the published port directly still shows up as the gateway (`.1`).
+The Worker is unchanged: it takes `cf-connecting-ip`.

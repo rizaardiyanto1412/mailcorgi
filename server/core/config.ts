@@ -8,6 +8,8 @@ export interface Config {
   adminEmails: string[]
   allowedEmails: string[]
   dataDir: string
+  /** Node only: proxy addresses whose forwarding headers count (`TRUST_PROXY`); `true` means any private or loopback peer. */
+  trustProxy: string[]
   port: number
   host: string
   imagesPublicUrl: string
@@ -44,6 +46,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     adminEmails: list(env.ADMIN_EMAILS),
     allowedEmails: list(env.ALLOWED_EMAILS),
     dataDir: env.DATA_DIR || './data',
+    trustProxy: list(env.TRUST_PROXY),
     port,
     host: env.HOST || '0.0.0.0',
     imagesPublicUrl: (env.IMAGES_PUBLIC_URL || '').replace(/\/+$/, ''),

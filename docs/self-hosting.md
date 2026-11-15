@@ -150,7 +150,13 @@ DATA_DIR=/var/lib/mailcorgi APP_URL=https://news.example.com npm start
 ```
 
 Put a reverse proxy with HTTPS in front of port 3000. The included `Caddyfile` works with
-`mailcorgi:3000` replaced by `127.0.0.1:3000`.
+`mailcorgi:3000` replaced by `127.0.0.1:3000`. Set `TRUST_PROXY=127.0.0.1` (the proxy's address) so
+rate limits see each visitor's address, and keep port 3000 closed to everyone but the proxy.
+MailCorgi ignores `X-Forwarded-*` headers from any other address.
+
+The bundled `docker-compose.yml` does this for you: Caddy has a fixed address on the app's own
+network, and `TRUST_PROXY` names only that address. A client that reaches a published port 3000
+directly is never taken for the proxy.
 
 ## First run
 
@@ -443,6 +449,7 @@ a variable that is missing here.
 |---|---|---|---|
 | `WORKERS_PLAN` | Cloudflare | free in `wrangler.jsonc` | `free` keeps each run under 40 outbound requests, inside the Workers Free limit of 50. On Workers Paid, delete the line from `wrangler.jsonc` to allow 900 per run. |
 | `PORT` | Node | 3000 | HTTP port. |
+| `TRUST_PROXY` | Node | unset (Caddy's fixed address in `docker-compose.yml`) | Reverse proxies whose `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` count: a comma-separated list of their addresses, or `true` for any loopback or private peer. Unset, MailCorgi uses the socket address and ignores forwarding headers. Set it only when every request reaches MailCorgi through that proxy. |
 | `HOST` | Node | 0.0.0.0 | Interface to listen on. |
 | `DATA_DIR` | Node | `./data` (`/data` in Docker) | Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`. |
 | `WEB_DIR` | Node | `web/dist` | Folder with the built web app. |

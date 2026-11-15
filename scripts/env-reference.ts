@@ -60,6 +60,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'CF_ZONE_ID', group: 'Websites', platform: 'cloudflare', description: 'ID of the zone that holds your Cloudflare for SaaS setup.' },
   { name: 'WORKERS_PLAN', group: 'Platform', platform: 'cloudflare', default: 'free in `wrangler.jsonc`', description: '`free` keeps each run under 40 outbound requests, inside the Workers Free limit of 50. On Workers Paid, delete the line from `wrangler.jsonc` to allow 900 per run.' },
   { name: 'PORT', group: 'Platform', platform: 'node', default: '3000', description: 'HTTP port.' },
+  { name: 'TRUST_PROXY', group: 'Platform', platform: 'node', default: 'unset (Caddy\'s fixed address in `docker-compose.yml`)', description: 'Reverse proxies whose `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` count: a comma-separated list of their addresses, or `true` for any loopback or private peer. Unset, MailCorgi uses the socket address and ignores forwarding headers. Set it only when every request reaches MailCorgi through that proxy.' },
   { name: 'HOST', group: 'Platform', platform: 'node', default: '0.0.0.0', description: 'Interface to listen on.' },
   { name: 'DATA_DIR', group: 'Platform', platform: 'node', default: '`./data` (`/data` in Docker)', description: 'Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`.' },
   { name: 'WEB_DIR', group: 'Platform', platform: 'node', default: '`web/dist`', description: 'Folder with the built web app.' },

@@ -36,6 +36,8 @@ export interface EdgeDeps {
   fetch?: typeof fetch
   /** The client address the platform can vouch for, given the socket peer when it has one. */
   clientIp?(request: Request, peer: string | null): string
+  /** Node: whether the socket peer is a trusted proxy. When it is not, forwarding headers are dropped. */
+  trustsProxy?(peer: string | null): boolean
 }
 
 export interface Edge {
@@ -155,6 +157,7 @@ export function createEdge(deps: EdgeDeps): Edge {
     const url = new URL(request.url)
     const path = url.pathname
     const headers = stripHeaders(request)
+    if (deps.trustsProxy && !deps.trustsProxy(peer)) for (const name of ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-real-ip']) headers.delete(name)
     const ip = deps.clientIp?.(request, peer) ?? ''
     if (ip) headers.set(CLIENT_IP_HEADER, ip)
     const method = request.method.toUpperCase()

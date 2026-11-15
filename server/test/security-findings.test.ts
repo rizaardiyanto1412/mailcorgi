@@ -6,10 +6,10 @@ import { createIssue, sendableInstall } from './sending-setup.ts'
 // Each test reproduces one defect found in the security review (docs/security-review.md).
 
 test('sign-in attempts from one client stay rate-limited when it rotates forwarding headers', async () => {
-  const install = await createInstall()
+  const install = await createInstall({ env: { TRUST_PROXY: '172.18.0.3' } })
   try {
     await install.signUp({ email: 'owner@example.com' })
-    // Direct clients (public peer) and clients behind a local proxy that appends the address it saw.
+    // Direct clients (public peer) and clients behind the trusted proxy, which appends the address it saw.
     for (const [peer, real] of [['203.0.113.7', ''], ['172.18.0.3', ', 198.51.100.20']] as const) {
       const attempt = (i: number, forwarded = `203.0.113.${i}${real}`) => install.app.edge.fetch(new Request(`${APP_URL}/api/auth/signin`, {
         method: 'POST',
@@ -22,6 +22,41 @@ test('sign-in attempts from one client stay rate-limited when it rotates forward
       if (real) assert.equal((await attempt(99, '198.51.100.21')).status, 401, 'another client behind the same proxy keeps its own limit')
       install.clock.advance(16 * 60_000)
     }
+  } finally {
+    install.close()
+  }
+})
+
+test('forwarding headers count only from a proxy named in TRUST_PROXY, not from any private peer', async () => {
+  // A Docker port published directly shows every client as the private gateway address.
+  for (const env of [{}, { TRUST_PROXY: '172.18.0.3' }]) {
+    const install = await createInstall({ env })
+    try {
+      await install.signUp({ email: 'owner@example.com' })
+      const attempt = (i: number) => install.app.edge.fetch(new Request(`${APP_URL}/api/auth/signin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${i}` },
+        body: JSON.stringify({ email: `guess${i}@example.com`, password: 'wrong password here' }),
+      }), '172.18.0.1')
+      const statuses: number[] = []
+      for (let i = 0; i < 40; i++) statuses.push((await attempt(i)).status)
+      assert.ok(statuses.includes(429), `${JSON.stringify(env)}: a spoofed x-forwarded-for from an untrusted private peer must not split the limit`)
+    } finally {
+      install.close()
+    }
+  }
+  const install = await createInstall({ env: { TRUST_PROXY: 'true' } })
+  try {
+    await install.signUp({ email: 'owner@example.com' })
+    const statuses: number[] = []
+    for (let i = 0; i < 40; i++) {
+      statuses.push((await install.app.edge.fetch(new Request(`${APP_URL}/api/auth/signin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${i}` },
+        body: JSON.stringify({ email: `guess${i}@example.com`, password: 'wrong password here' }),
+      }), '127.0.0.1')).status)
+    }
+    assert.ok(!statuses.includes(429), 'TRUST_PROXY=true trusts a proxy on loopback')
   } finally {
     install.close()
   }

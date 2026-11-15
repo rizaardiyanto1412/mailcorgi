@@ -81,10 +81,17 @@ export function openDriver(file: string): { driver: Driver; close(): void } {
 
 const isPrivatePeer = (ip: string) => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(ip)
 
-/** A proxy on this host or network (Caddy in Compose) appends the client it saw last; anyone else is the client. */
-export function nodeClientIp(request: Request, peer: string | null): string {
+/** Whether the socket peer is a proxy named in `TRUST_PROXY`, so its forwarding headers count. */
+export function trustsProxy(trust: string[], peer: string | null): boolean {
+  const socket = (peer ?? '').replace(/^::ffff:/i, '').toLowerCase()
+  if (!socket || trust.length === 0) return false
+  return trust.includes(socket) || (trust.includes('true') && isPrivatePeer(socket))
+}
+
+/** A trusted proxy appends the client it saw last; without one the socket peer is the client. */
+export function nodeClientIp(request: Request, peer: string | null, trust: string[] = []): string {
   const socket = (peer ?? '').replace(/^::ffff:/i, '')
-  if (!socket || !isPrivatePeer(socket)) return socket
+  if (!trustsProxy(trust, peer)) return socket
   return (request.headers.get('x-forwarded-for') ?? '').split(',').map((part) => part.trim()).filter(Boolean).at(-1) ?? socket
 }
 
@@ -255,7 +262,8 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     blobs: platform.blobs,
     assets: opts.assets ?? (async () => new Response('Not found', { status: 404 })),
     now,
-    clientIp: nodeClientIp,
+    clientIp: (request, peer) => nodeClientIp(request, peer, config.trustProxy),
+    trustsProxy: (peer) => trustsProxy(config.trustProxy, peer),
   })
 
   let ticking = false
