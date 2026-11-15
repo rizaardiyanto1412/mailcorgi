@@ -102,6 +102,14 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
     registry,
   }
 
+  // Without APP_URL only the control store learns the address (at sign-in). An account store has its
+  // own config, so it reads the learned value before building any link.
+  const learnAppUrl = async () => {
+    if (ref.kind !== 'account' || ctx.config.appUrl) return
+    const values = await deps.stores.control.getInstallSettings({ keys: ['app_url'] })
+    if (values.app_url) ctx.config.appUrl = values.app_url.replace(/\/+$/, '')
+  }
+
   const app = new Hono<StoreEnv>()
   app.use('*', async (c, next) => {
     c.set('ctx', ctx)
@@ -131,6 +139,7 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
     ref,
     async fetch(request) {
       try {
+        await learnAppUrl()
         return withSecurityHeaders(await app.fetch(request))
       } finally {
         await rearm()
@@ -140,6 +149,7 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
       try {
         const fn = registry.rpc.get(name)
         if (!fn) throw new AppError('unknown_rpc', `Unknown RPC ${name} on the ${ref.kind} store.`, 404)
+        if (name !== 'bootstrap') await learnAppUrl()
         return await fn(ctx, args)
       } finally {
         await rearm()
@@ -148,6 +158,7 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
     async alarm() {
       const budget = new Budget(deps.now() + ALARM_RUN_MS, platform.limits.subrequestsPerRun, deps.now)
       try {
+        await learnAppUrl()
         await runDueJobs(ctx, budget, {
           onDead: (ctx, job, error) => {
             if (job.kind === 'alerts.raise') return
