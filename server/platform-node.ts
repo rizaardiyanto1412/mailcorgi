@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { Config } from './core/config.ts'
-import { createDb, createMeter, isWriteRefused, type Driver, type Meter, type SqlValue } from './core/db.ts'
+import { createDb, createMeter, isWriteRefused, meterStatement, type Driver, type Meter, type SqlValue } from './core/db.ts'
 import { deriveKeys, randomHex, type Keys } from './core/crypto.ts'
 import { dnsResolver, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from './core/platform.ts'
 import { storeId } from './core/platform.ts'
@@ -72,13 +72,13 @@ export function openDriver(file: string, opts: { meter?: Meter; refuseWrites?: (
     all: (sql, params) => {
       refuse(sql)
       const rows = stmt(sql).all(...(params as Bind)) as any[]
-      meter.reads += rows.length
+      meterStatement(meter, sql, 0, rows.length)
       return rows
     },
     run: (sql, params) => {
       refuse(sql)
       const r = stmt(sql).run(...(params as Bind))
-      meter.writes += Number(r.changes)
+      meterStatement(meter, sql, Number(r.changes), 0)
       return { id: Number(r.lastInsertRowid), changes: Number(r.changes) }
     },
     exec: (sql) => {
@@ -227,7 +227,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     fetch: fetchFn,
     async setAlarm(ref, at) {
       if (opts.refuseWrites?.()) throw new Error(WRITE_REFUSED_MESSAGE)
-      meters.get(storeId(ref))!.writes++
+      meterStatement(meters.get(storeId(ref))!, 'setAlarm', 1, 0)
       if (at === null) alarms.delete(storeId(ref))
       else alarms.set(storeId(ref), at)
     },
