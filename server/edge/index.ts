@@ -117,8 +117,10 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   async function forwardSite(site: SiteRow, request: Request, headers: Headers, custom = false) {
+    // The actor only lets the owner's own visits skip page-view counting. Custom hosts serve
+    // anonymous reads and public form posts, and a state-changing method gets no actor anywhere.
     const cookies = parseCookies(request.headers.get('cookie'))
-    if (cookies[SESSION_COOKIE]) {
+    if (!custom && (request.method === 'GET' || request.method === 'HEAD') && cookies[SESSION_COOKIE]) {
       const info = await resolveSession(await sha256Hex(cookies[SESSION_COOKIE]), site.account_id)
       if (info?.accounts.some((a) => a.id === site.account_id && a.owner)) {
         headers.set(ACTOR_HEADER, await signActor(sessionActor(info, site.account_id), site.account_id))

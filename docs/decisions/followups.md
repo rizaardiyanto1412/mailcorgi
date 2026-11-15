@@ -42,3 +42,13 @@ any edit of a public post, unless the caller is an admin (`website.test.ts`, "me
 posts; admins publish and hide them"). A member can only keep a hidden draft. `campaigns.sendTest`
 stays at `member`: a test goes to at most five addresses the writer types, never to the list, and it
 counts against the monthly limit.
+
+## No actor on custom website hosts
+
+Contract: section 3.5 routes custom hosts to the account store and does not say whether an actor goes
+with them.
+
+The edge now signs an actor for website requests only on the app host and only for GET and HEAD.
+Its one use is to leave the owner's own visits out of page views. Custom hosts get no actor at all,
+and no website request with a state-changing method gets one, so the missing CSRF check there no
+longer matters. Signup form posts on a website are anonymous anyway.

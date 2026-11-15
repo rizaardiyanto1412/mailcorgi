@@ -109,3 +109,30 @@ test('unknown API paths are JSON 404s and everything else falls through to asset
   const page = await install.fetch('/campaigns')
   assert.equal(page.status, 404, 'the harness serves no web build')
 })
+
+test('website requests carry an owner actor only for app-host reads, never on custom hosts or for state-changing methods', async () => {
+  const nl = await owner.action('newsletters.create', { name: 'Edge site', slug: 'edge-site' })
+  const info = await owner.action('website.setHost', { newsletterId: nl.id, hostname: 'edge-news.example.com' })
+  install.dns.set(info.cname.name, 'CNAME', [info.cname.value])
+  install.dns.set(info.txt.name, 'TXT', [info.txt.value])
+  assert.ok((await owner.action('website.checkHost', { newsletterId: nl.id })).verifiedAt)
+  await install.runJobs()
+  install.clock.advance(61_000)
+  const store = install.app.account(owner.accountId!)
+  const original = store.fetch.bind(store)
+  const seen: { method: string; host: string; actor: boolean }[] = []
+  store.fetch = (request: Request) => {
+    seen.push({ method: request.method, host: new URL(request.url).host, actor: request.headers.has('x-mc-actor') })
+    return original(request)
+  }
+  try {
+    for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+      seen.length = 0
+      await owner.fetch('/n/edge-site', { method, csrf: false })
+      await install.fetch('https://edge-news.example.com/', { method, headers: { cookie: owner.cookie } })
+      assert.deepEqual(seen.map((s) => s.actor), [method === 'GET', false], method)
+    }
+  } finally {
+    store.fetch = original
+  }
+})
