@@ -149,6 +149,8 @@ defineAction({
   name: 'contacts.create',                 // unique, dot-separated
   scope: 'account',                        // 'account' | 'control'
   role: 'member',                          // minimum: 'member' | 'admin' | 'owner' ; control: 'user' | 'installAdmin'
+  effect: 'write',                         // 'read' | 'write' | 'send'
+  resource: { type: 'newsletter', param: 'newsletterId' },  // which input names the resource; see 11.2
   input: z.object({...}),                  // zod; newsletter-scoped actions include newsletterId
   rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts' },  // omit to hide from REST
   mcp: { title: 'Add a contact', destructive: false },                    // omit to hide from MCP
@@ -158,9 +160,10 @@ defineAction({
 
 - `runAction(ctx, name, rawInput, actor)` validates input, checks role and plan limits, runs the
   handler, and maps `AppError(code, message, status)` to responses. It is the only entry point.
-- `actor = { userId, role, newsletterIds: 'all' | string[], via: 'web' | 'api' | 'mcp', keyId? }`.
-  A team member's actor is limited to the newsletters they were invited to; `runAction` rejects a
-  `newsletterId` outside that list before the handler runs.
+- `actor = { userId, owner: boolean, grants: Record<newsletterId, 'admin' | 'member'>, access: 'full' | 'read',
+  via: 'web' | 'api' | 'mcp', keyId? }`. Roles are per newsletter. `runAction` resolves the newsletter that
+  the named resource really belongs to (11.2), then checks the actor's role for that newsletter, and
+  rejects a non-`read` action for a `read` key. Details in section 11.
 - Dashboard: `POST /api/actions/<name>` with a JSON body. REST: `/api/v1/...` from `rest`. MCP: tool
   name = action name with dots replaced by underscores. OpenAPI and docs are generated from the registry.
 - A test (`server/test/parity.test.ts`) fails when an action lacks a description for its inputs or when
@@ -227,7 +230,7 @@ trimmed and lowercased. JSON columns are TEXT. Money never appears in account st
 users(id, email UNIQUE, name, password_hash, email_verified_at, is_install_admin, disabled, created_at)
 sessions(id, user_id, csrf, created_at, expires_at, ip, user_agent)
 login_codes(email, code_hash, purpose 'signup'|'signin'|'reset', expires_at, attempts)
-accounts(id, owner_user_id, name, status 'active'|'blocked'|'deleting', block_reason, plan, plan_period_end,
+accounts(id, owner_user_id, name, status 'active'|'blocked'|'deleting', block_reason, policy_version, plan, plan_period_end,
          billing_provider, billing_customer_id, billing_subscription_id, billing_status, billing_paused,
          created_at, deleted_at)
 memberships(user_id, account_id, newsletter_id NULL, role 'owner'|'admin'|'member', created_at)
@@ -265,7 +268,11 @@ contact_fields(id, newsletter_id, key, label, type 'text'|'number'|'date'|'boole
 tags(id, newsletter_id, name, UNIQUE(newsletter_id,name))
 contact_tags(contact_id, tag_id, PRIMARY KEY(contact_id, tag_id))
 segments(id, newsletter_id, name, filter JSON, created_at, updated_at)
-suppressions(email PRIMARY KEY, reason 'unsubscribed'|'hard_bounce'|'complaint'|'manual'|'cleaned', newsletter_id NULL, created_at)
+suppressions(id, email, newsletter_id NULL, reason, created_at)
+         -- account-wide rows (newsletter_id NULL): 'hard_bounce'|'complaint'|'manual'
+         -- newsletter rows: 'unsubscribed'|'cleaned'
+         -- UNIQUE(email) WHERE newsletter_id IS NULL; UNIQUE(newsletter_id, email) WHERE newsletter_id IS NOT NULL
+         -- a contact's own opt-in removes only that newsletter's row; account-wide rows stay
 deleted_contacts(email_hash, newsletter_id, deleted_at)      -- keeps a re-import from resubscribing them
 imports(id, newsletter_id, status, source_preset, mapping JSON, options JSON, total_rows, processed_rows,
         added, updated, skipped JSON (by reason), created_by, created_at, finished_at, error)
@@ -281,7 +288,9 @@ campaign_sends(id, campaign_id, step INTEGER, kind 'warmup'|'main'|'more', plann
 deliveries(id INTEGER PRIMARY KEY, campaign_id, send_id, contact_id, email, status, provider_message_id,
            error, queued_at, sent_at, delivered_at, opened_at, clicked_at, bounced_at, complained_at,
            unsubscribed_at, open_count, click_count, UNIQUE(campaign_id, contact_id))
-           -- status: 'queued'|'sending'|'sent'|'delivered'|'bounced'|'complained'|'failed'|'skipped'
+           -- status: 'queued'|'sending'|'sent'|'delivered'|'bounced'|'complained'|'failed'|'skipped'|'unknown'
+           -- also: attempt_token, attempt_at
+provider_events(id PRIMARY KEY, delivery_id, type, occurred_at, received_at)   -- dedupe of webhook events
 links(id, campaign_id, url, position, clicks, unique_clicks, UNIQUE(campaign_id, url))
 events(id INTEGER PRIMARY KEY, type, newsletter_id, contact_id NULL, campaign_id NULL, delivery_id NULL,
        data JSON, at)       -- signup, confirm, unsubscribe, open, click, bounce, complaint, cleaned, import, send
@@ -308,9 +317,12 @@ Indexes that matter: `contacts(newsletter_id, status)`, `deliveries(campaign_id,
   `subscribed → unsubscribed | bounced | complained | cleaned`. Only the contact's own action
   (confirm link, signup with opt-in) brings a suppressed address back. Imports and API calls never do.
 - **Campaign**: `draft → scheduled → sending → sent`; `sending ⇄ paused`; `draft|scheduled → canceled`.
-  Only `draft` is editable. Sending is exactly-once per `(campaign_id, contact_id)`.
-- **Delivery**: `queued → sending → sent → delivered`; `sent → bounced | complained`; `queued → skipped`;
-  `sending → failed` (permanent provider refusal) or back to `queued` (temporary).
+  Only `draft` is editable. One delivery row per `(campaign_id, contact_id)`; a send is attempted at
+  most once automatically (11.5).
+- **Delivery**: `queued → sending → sent → delivered`; `sending|sent|delivered → bounced`;
+  `sent|delivered → complained`; `queued → skipped`; `sending → failed` (definite refusal), back to
+  `queued` (definite temporary refusal), or `unknown` (the outcome was never learned). Provider events can
+  arrive early, late, twice and out of order (11.6).
 - **Domain**: `pending → verified`; `verified → failed` when a daily recheck finds records gone;
   `failed → verified` on recovery.
 
@@ -502,8 +514,153 @@ an empty state that says how to add the first item. Copy is plain, short, senten
   formula. Redirects are same-origin or to a recorded link.
 - Public endpoints have limits per visitor and per target. Nothing a script can trigger emails a
   stranger more than a few times a day.
-- Webhooks verify signatures (SNS certificate from an amazonaws.com URL only, Svix, Stripe, Polar/Standard
-  Webhooks) before any state change.
+- Webhooks verify signatures (SNS per 11.6, Svix, Stripe, Polar/Standard Webhooks) before any state
+  change.
 - MCP and API output that carries people's content is data, never instructions.
 - No secrets, personal data or real addresses in code, tests, fixtures or commits. Tests use
   `example.com`.
+
+## 11. Pinned interfaces
+
+These are the seams between modules. Build to them exactly. Change one only together with every caller.
+
+### 11.1 Sessions and the actor envelope
+
+- `control.resolveSession({ sessionId, wantAccountId? }) → { user: { id, email, name, isInstallAdmin },
+  csrf, accounts: [{ id, name, owner: boolean, grants: Record<newsletterId, 'admin'|'member'>, status }],
+  current: accountId | null } | null`. `wantAccountId` comes from the `mc_account` cookie, which is only
+  a hint: `current` is that account when the user has access to it, else their own account. The edge
+  may cache a result for 30 seconds per session.
+- The edge sends the store `x-mc-actor`: base64url JSON `{ actor, aud: storeId, exp }` plus an HMAC with
+  the session-signing key. `exp` is 60 seconds ahead. The store rejects a wrong `aud`, an expired or
+  unsigned envelope. CSRF is checked at the edge for every non-GET `/api/*` request made with a session.
+- API keys: the edge only reads the account id from `mc_<accountId>_<secret>` to pick the store. The
+  account store hashes the secret, finds the key, and builds the actor itself
+  (`owner: true, access: key.access`). A wrong secret is a 401 from the store.
+
+### 11.2 Authorization
+
+- `resource.type` is one of `newsletter | contact | segment | campaign | import | author | tag | domain |
+  apiKey | account`. For newsletter-scoped types `runAction` calls `resolveNewsletterId(ctx, type, id)`
+  (one registry, each module registers its own resolver that reads the row). A missing row is a 404. If
+  the input also carries `newsletterId` and it differs from the resolved one, that is a 404 too.
+- Role check: owner passes everything. Otherwise `grants[newsletterId]` must meet the action's `role`.
+  Account-level types (`domain`, `apiKey`, `account`) need `owner`.
+- Handlers still put `newsletter_id = ?` in every query on newsletter-scoped tables.
+- `effect`: a `read` key may only run `read` actions. MCP marks `write` and `send` tools as not
+  read-only, and `send` tools as destructive.
+
+### 11.3 Public tokens
+
+`<accountId>.<purpose>.<payload>.<sig>`, all base64url except the account id. `sig` = HMAC-SHA256 over
+`purpose.payload` with the account's token key, truncated to 16 bytes. Purposes and payloads:
+`o` open (delivery id), `c` click (delivery id, link id), `u` unsubscribe (contact id, campaign id or 0),
+`p` preferences (contact id), `cf` confirm (contact id, issued-at; valid 7 days), `k` keep (contact id,
+issued-at; valid 30 days), `w` website-host verification. A token for one purpose never passes for
+another. Tokens die with the contact row.
+
+### 11.4 Jobs, precisely
+
+- `enqueue` inserts the row and arms the alarm in the same event. On Cloudflare both commit together
+  (storage writes in one event are atomic). On Node there is no alarm registry: the scheduler asks each
+  open store for its next wake time every second and, at startup, opens every account database.
+- Next wake time = the smallest of `run_at` over unclaimed jobs and `locked_until` over claimed ones.
+  Every store invocation (request, RPC, alarm) ends by re-arming to that time.
+- A claim sets `locked_until` and a random `claim_token`. Completing, failing or rescheduling a job is a
+  conditional update on that token, so a claimant whose lease expired cannot overwrite its successor.
+- One `Budget` per invocation, shared by every handler in it: `budget.take(n)` returns how many outbound
+  requests the caller may make now; `budget.expired()` says when to yield. Handlers that get nothing
+  return `{ again: soon }`.
+
+### 11.5 Sending, precisely
+
+```ts
+interface EmailProvider {
+  name: 'ses' | 'resend' | 'smtp' | 'test'
+  capabilities: { identities: boolean; events: boolean; idempotency: boolean }
+  send(msg: { from, to, replyTo?, subject, html, text, headers: Record<string,string>,
+              meta: { accountId: string; deliveryId: string | null; kind: 'campaign'|'system' },
+              idempotencyKey: string }): Promise<SendResult>
+  createIdentity?(domain): Promise<Identity>; getIdentity?(domain): Promise<Identity>; deleteIdentity?(domain): Promise<void>
+  parseWebhook?(request, settings): Promise<{ confirmUrl?: string; events: ProviderEvent[] }>
+}
+type SendResult =
+  | { ok: true; id: string }
+  | { ok: false; kind: 'permanent' | 'temporary' | 'throttled' | 'unknown'; message: string; retryAfterMs?: number }
+```
+
+- `meta` travels with the message so events can be routed back: SES `EmailTags` (`mc_account`,
+  `mc_delivery`) and the install's configuration set; Resend `tags`. Also as `X-MC-Account` and
+  `X-MC-Delivery` headers.
+- Per delivery: set `status='sending', attempt_token, attempt_at` and commit, call the provider, then
+  record the result. `unknown` (timeout, connection lost, or a crash that leaves a row in `sending` for
+  more than 10 minutes) is retried with the same `idempotencyKey` only when the provider has
+  `capabilities.idempotency`; otherwise the row becomes `unknown` and is never resent automatically. A
+  later provider event for that delivery still updates it.
+- Pace is install-wide. Before each batch the account store calls
+  `control.takeSendPermits({ accountId, want }) → { granted, retryAt }` (token bucket at
+  `send_rate_per_second`). Monthly email limits are reserved in the same call in cloud mode.
+- Block and plan changes: the control store bumps `accounts.policy_version`, and in the same transaction
+  enqueues a `policy.push` job that calls `account.applyPolicy({ version, status, plan, limits })`. The
+  account store ignores a version it already has or passed. Every send batch re-reads the local policy,
+  so a block stops sending within one batch. Account-to-control updates (slug and host directory rows,
+  usage snapshots, global suppression reports) use the same pattern in the other direction:
+  enqueue a job, never a bare RPC after commit.
+
+### 11.6 Provider events
+
+```ts
+interface ProviderEvent {
+  id: string                 // provider's event id, or a hash of (message id, type, timestamp, recipient)
+  type: 'delivered' | 'bounce' | 'complaint' | 'deferred'
+  bounce?: { permanent: boolean; nonexistent: boolean; reason: string }
+  accountId: string | null; deliveryId: string | null; messageId: string; recipient: string
+  occurredAt: number
+}
+```
+
+- The edge verifies the webhook, groups events by `accountId`, and calls
+  `account.ingestProviderEvents(events)`. Events without an account are counted and dropped.
+- The account store inserts each event into `provider_events` and applies it in one transaction; a
+  duplicate id is a no-op, so counters and thresholds move once. A delivery is found by `deliveryId`,
+  else by `provider_message_id`. An event for a delivery still in `sending` first marks it sent.
+- SNS: accept only when `SigningCertURL` is https, its host matches `sns.<region>.amazonaws.com`
+  (or `.amazonaws.com.cn`), its path ends in `.pem`, the fetch follows no redirect, the signature
+  verifies, and `TopicArn` equals the configured `ses_sns_topic_arn`. A `SubscriptionConfirmation` is
+  confirmed only under the same checks and only when `SubscribeURL` is on the same SNS host.
+
+### 11.7 Shared module functions
+
+```ts
+// server/account/contacts/index.ts — the only writers of subscription state
+subscribe(ctx, { newsletterId, email, name?, fields?, tags?, source, consent: 'asserted' | 'confirmed' | 'pending',
+                 at? }): { contact, created: boolean, outcome: 'subscribed' | 'pending' | 'suppressed' | 'limit' | 'exists' }
+unsubscribe(ctx, { contactId, reason?, campaignId? }): void
+suppress(ctx, { email, newsletterId: string | null, reason }): void
+isSuppressed(ctx, email, newsletterId): boolean
+setContactStatus(ctx, contactId, status, detail?): void
+// 'pending' → unconfirmed + confirm email (signup module sends it). 'asserted' never revives a
+// suppressed or deleted address. Plan limits are checked inside subscribe(), in its transaction.
+
+// server/account/segments/index.ts
+type Filter = { all: Filter[] } | { any: Filter[] } | { not: Filter } | Condition
+type Condition =
+  | { field: 'status'; in: ContactStatus[] } | { field: 'tag'; id: string }
+  | { field: 'custom'; key: string; op: 'eq'|'neq'|'contains'|'gt'|'lt'|'set'|'unset'; value?: string|number|boolean }
+  | { field: 'subscribedAt' | 'lastOpenedAt' | 'lastClickedAt' | 'lastSentAt'; op: 'before'|'after'|'withinDays'|'never'; value?: number }
+  | { field: 'source' | 'provider'; in: string[] } | { field: 'email'; op: 'contains'|'endsWith'; value: string }
+  | { field: 'engagement'; op: 'openedLast'|'clickedLast'|'ignoredLast'; issues: number }
+compileFilter(filter: Filter | null, newsletterId: string): { where: string; params: Param[] }   // alias `c` = contacts
+audienceQuery(ctx, newsletterId, audience): { where, params }   // adds status = 'subscribed' and suppression
+
+// server/account/render/index.ts
+renderEmail(input: { campaign, newsletter, theme, recipient: { contact, links: { unsubscribe, web, preferences, openPixel?, wrap?(url): string } } }):
+  { subject: string; html: string; text: string; headers: Record<string,string> }
+renderWeb(input: { campaign, newsletter, theme, author? }): { html: string; excerpt: string; image?: string }
+renderDocPreview(doc, theme): string
+
+// server/account/usage/index.ts
+reserveContacts(ctx, n): boolean      // inside the caller's transaction
+countEmails(ctx, n): void
+limits(ctx): { maxContacts, maxEmailsPerMonth, maxNewsletters, maxTeamPerNewsletter }   // Infinity when self-hosted
+```
