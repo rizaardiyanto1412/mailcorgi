@@ -1,0 +1,3 @@
+uuid,email,name,subscribed_to_emails,created_at,labels
+one,active@example.com,Reader,true,2024-01-02T03:04:05Z,Readers
+two,optout@example.com,Reader,false,2024-01-02T03:04:05Z,Readers
