@@ -14,7 +14,7 @@ say() { printf '%s\n' "$*"; }
 fail() { printf 'install: %s\n' "$*" >&2; exit 1; }
 ask() {
   # Read from the terminal, because stdin is this script when it is piped from curl.
-  if [ -r /dev/tty ]; then
+  if (: < /dev/tty) 2> /dev/null; then
     printf '%s' "$1" > /dev/tty
     read -r answer < /dev/tty || answer=''
   else
