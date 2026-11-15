@@ -9,6 +9,7 @@ import { getCampaign, getCampaignRow, reviewChecks, serializeCampaign, transitio
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { parseTheme } from '../render/index.ts'
 import { verifiedSenderFor } from '../domains/index.ts'
+import { countEmails, currentPeriod, limits } from '../usage/index.ts'
 import { migrations } from './migrations.ts'
 import { finishCampaign, sendBatch } from './batch.ts'
 import { audienceCount, startSending, type SendOptions } from './plan.ts'
@@ -172,6 +173,8 @@ export const sendingModule = {
           if (!allowRate(ctx.db, `test:${row.id}`, 10, 3_600_000, ctx.now()) || !allowRate(ctx.db, `test:${actor.userId}`, 30, 3_600_000, ctx.now())) throw new AppError('rate_limited', 'Too many test emails. Try again in an hour.', 429)
           const settings = await sendSettings(ctx)
           if (settings.sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
+          const used = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0
+          if (used + recipients.length > limits(ctx).maxEmailsPerMonth) throw new AppError('limit_reached', 'This account has used its emails for this month.', 403)
           const provider = await sendProvider(ctx, settings)
           const sent: string[] = []
           const failed: { to: string; error: string }[] = []
@@ -179,8 +182,10 @@ export const sendingModule = {
             const message = await buildMessage(ctx, send, { deliveryId: null, contact: { id: 'test', email: to, name: actor.email === to ? 'You' : '', fields: '{}' } }, '[Test] ')
             let result: Awaited<ReturnType<typeof provider.send>>
             try { result = await provider.send(message) } catch (err) { result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) } }
-            if (result.ok) sent.push(to)
-            else failed.push({ to, error: result.message })
+            if (result.ok) {
+              sent.push(to)
+              countEmails(ctx, 1)
+            } else failed.push({ to, error: result.message })
           }
           return { sent, failed }
         },

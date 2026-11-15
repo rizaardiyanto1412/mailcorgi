@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { APP_URL, createInstall } from './harness.ts'
+import { APP_URL, createInstall, expectError } from './harness.ts'
+import { createIssue, sendableInstall } from './sending-setup.ts'
 
 // Each test reproduces one defect found in the security review (docs/security-review.md).
 
@@ -59,6 +60,21 @@ test('an unverified custom hostname in another account cannot block the domain o
     assert.equal(page.status, 200)
     assert.match(await page.text(), /Real owner/)
     assert.equal((await install.fetch(`/api/public/tls-check?domain=news.example.com`)).status, 200)
+  } finally {
+    install.close()
+  }
+})
+
+test('test emails count against the monthly email limit', async () => {
+  const { install, owner, nl, accountId } = await sendableInstall({ cloud: true, env: { KEEP_PLAN: '1' } })
+  try {
+    await install.app.stores.account(accountId).applyPolicy({ version: 1_000, status: 'active', plan: 'test', limits: { maxContacts: null, maxEmailsPerMonth: 6, maxNewsletters: null, maxTeamPerNewsletter: null } })
+    const draft = await createIssue(owner, nl.id)
+    const to = ['a@example.com', 'b@example.com', 'c@example.com', 'd@example.com', 'e@example.com']
+    assert.equal((await owner.action('campaigns.sendTest', { campaignId: draft.id, to })).sent.length, 5)
+    const error = await expectError(() => owner.action('campaigns.sendTest', { campaignId: draft.id, to }))
+    assert.equal(error.code, 'limit_reached')
+    assert.equal(install.outbox(accountId).filter((row) => row.subject.startsWith('[Test]')).length, 5)
   } finally {
     install.close()
   }
