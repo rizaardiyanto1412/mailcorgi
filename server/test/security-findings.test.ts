@@ -29,7 +29,7 @@ test('sign-in attempts from one client stay rate-limited when it rotates forward
 
 test('forwarding headers count only from a proxy named in TRUST_PROXY, not from any private peer', async () => {
   // A Docker port published directly shows every client as the private gateway address.
-  for (const env of [{}, { TRUST_PROXY: '172.18.0.3' }]) {
+  for (const env of [{}, { TRUST_PROXY: '172.18.0.3' }] as Record<string, string>[]) {
     const install = await createInstall({ env })
     try {
       await install.signUp({ email: 'owner@example.com' })

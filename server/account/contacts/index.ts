@@ -9,6 +9,7 @@ import type { AccountRegistrar } from '../rpc.ts'
 import { contactRow, deleteContact, emailSchema, fieldValuesSchema, serializeContact, statusSchema, subscribe, unsubscribe, validateFields, validateTags, type ContactRow } from './state.ts'
 import { taxonomyActions } from './taxonomy.ts'
 import { emailHash } from './hash.ts'
+import { migrations } from './migrations.ts'
 export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider, validateFields } from './state.ts'
 export type { Contact, ContactStatus, SubscribeInput, SubscribeOutcome } from './state.ts'
 
@@ -81,6 +82,7 @@ function exportPage(ctx: StoreCtx, i: ListInput) {
 export const contactsModule = {
   name: 'contacts',
   register(reg: AccountRegistrar) {
+    reg.migrations(migrations)
     reg.resolver('contact', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM contacts WHERE id = ?', id)?.newsletter_id ?? null)
     reg.resolver('tag', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM tags WHERE id = ?', id)?.newsletter_id ?? null)
     reg.routes((app) => {

@@ -39,11 +39,27 @@ export function limits(ctx: StoreCtx): { maxContacts: number; maxEmailsPerMonth:
   }
 }
 
+const countActiveContacts = (ctx: StoreCtx) => ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")!.n
+
+/** Contacts that use a plan slot, from the counter the contacts triggers maintain. */
+export function activeContacts(ctx: StoreCtx): number {
+  const value = getMeta(ctx, 'active_contacts')
+  if (value !== null) return Number(value)
+  return repairActiveContacts(ctx)
+}
+
+/** Recount from the table and reset the counter. The hourly usage job runs it to undo any drift. */
+export function repairActiveContacts(ctx: StoreCtx): number {
+  const count = countActiveContacts(ctx)
+  setMeta(ctx, 'active_contacts', String(count))
+  return count
+}
+
 /** Whether `n` more contacts fit the plan. Call inside the caller's transaction. */
 export function reserveContacts(ctx: StoreCtx, n: number): boolean {
   const max = limits(ctx).maxContacts
   if (max === Infinity) return true
-  const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")!.n
+  const count = activeContacts(ctx)
   if (count + n >= max * 0.9) notifyLimitNear(ctx, 'contacts')
   return count + n <= max
 }
@@ -86,7 +102,7 @@ export const usageModule = {
       if (getPolicy(ctx).status === 'deleting') return 'done'
       if (budget.take(1) < 1) return { again: ctx.now() + 1000 }
       const period = currentPeriod(ctx.now())
-      const contacts = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")?.n ?? 0
+      const contacts = repairActiveContacts(ctx)
       // One count an hour records the month's peak; counting on every subscribe made imports quadratic.
       ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, 0, ?) ON CONFLICT(period) DO UPDATE SET contacts_peak = MAX(contacts_peak, excluded.contacts_peak)', period, contacts)
       const emailsSent = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', period)?.n ?? 0

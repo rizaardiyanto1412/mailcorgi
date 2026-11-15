@@ -74,3 +74,17 @@ environment, so `docker-compose.yml` gives Caddy a fixed address (`172.31.250.10
 network and sets `TRUST_PROXY` to that address. Without the `https` profile no container holds it;
 with it, a client that reaches the published port directly still shows up as the gateway (`.1`).
 The Worker is unchanged: it takes `cf-connecting-ip`.
+
+## Maintained active-contact counter
+
+Contract: 11.7 says plan limits are checked inside `subscribe()`, in its transaction.
+`reserveContacts` did that with a full `COUNT(*)` on every call once a plan had a contact limit.
+
+`account_meta.active_contacts` now holds the number of `subscribed` and `unconfirmed` contacts. The
+contacts module's migration `2026-11-16-contacts-active-counter` seeds it and adds three triggers on
+`contacts` (insert, delete, status change). SQLite runs triggers inside the statement's transaction,
+so every write path keeps the counter exact, including bulk deletes and newsletter cascades, without
+each caller having to remember it. `reserveContacts` reads the counter, and recounts only when the
+row is missing. The hourly `usage.push` job recounts and resets it, which repairs any drift and
+supplies the usage snapshot it already sent. The triggers sit in the contacts module because it owns
+the table; the counter's readers are in `usage`.
