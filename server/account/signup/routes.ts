@@ -7,7 +7,8 @@ import { newId } from '../../core/ids.ts'
 import { subscribe } from '../contacts/index.ts'
 import { parseTheme, escapeHtml, safeUrl } from '../render/index.ts'
 import { customFields, getSettings, publicNewsletter, getNewsletter, redirectSchema } from './settings.ts'
-import { confirmationSchema, formTokenSchema, readToken, token } from './tokens.ts'
+import { confirmationSchema, formTokenSchema } from './tokens.ts'
+import { signToken, verifyToken } from '../tracking/index.ts'
 import { deliverMail, queueMail, queueWelcome } from './mail.ts'
 import { hostedForm, page } from './pages.ts'
 import { embedScript } from './embed.ts'
@@ -35,14 +36,14 @@ export function registerRoutes(reg: AccountRegistrar) {
       const ctx = c.get('ctx')
       const nl = publicNewsletter(ctx, c.req.param('newsletterKey'))
       return c.json({ name: nl.name, description: nl.description, theme: parseTheme(nl.theme), settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id).filter((f) => getSettings(ctx, nl.id).fieldKeys.includes(f.key)),
-        formToken: await token(ctx, 'form', { newsletterId: nl.id, issuedAt: ctx.now() }), siteKey: ctx.config.turnstile?.siteKey ?? '' })
+        formToken: await signToken(ctx, 'form', [nl.id, ctx.now()]), siteKey: ctx.config.turnstile?.siteKey ?? '' })
     })
     app.get('/f/:newsletterKey', async (c) => {
       const ctx = c.get('ctx')
       const nl = publicNewsletter(ctx, c.req.param('newsletterKey'))
       c.header('Cache-Control', 'no-store')
       if (ctx.config.turnstile) c.header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
-      return c.html(hostedForm({ nl, settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id), formToken: await token(ctx, 'form', { newsletterId: nl.id, issuedAt: ctx.now() }), siteKey: ctx.config.turnstile?.siteKey, base: ctx.config.appUrl }))
+      return c.html(hostedForm({ nl, settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id), formToken: await signToken(ctx, 'form', [nl.id, ctx.now()]), siteKey: ctx.config.turnstile?.siteKey, base: ctx.config.appUrl }))
     })
     app.get('/embed.js', (c) => {
       publicNewsletter(c.get('ctx'), c.req.query('key') ?? '')
@@ -83,7 +84,7 @@ export function registerRoutes(reg: AccountRegistrar) {
         return c.json({ ok: true, message: settings.successMessage, redirectUrl: input.redirectUrl || settings.redirectUrl || null })
       }
       if (input.website) return ok()
-      const started = formTokenSchema.safeParse(await readToken(ctx, 'form', input.formToken))
+      const started = formTokenSchema.safeParse(await verifyToken(ctx, input.formToken, 'form'))
       if (!started.success || started.data.newsletterId !== nl.id || ctx.now() - started.data.issuedAt < 2000 || ctx.now() - started.data.issuedAt > 3_600_000) throw new AppError('form_expired', 'Please reopen the form and take a moment before submitting.', 400)
       if (!allowRate(ctx.db, `signup:target:${await sha256Hex(input.email)}`, 10, 3_600_000, ctx.now())) return ok()
       if (ctx.config.turnstile) {
@@ -103,7 +104,7 @@ export function registerRoutes(reg: AccountRegistrar) {
         return result
       })
       if (nl.double_opt_in && result.outcome !== 'limit' && !ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', input.email) && ctx.db.get('SELECT id FROM contacts WHERE id = ? AND newsletter_id = ?', result.contact.id, nl.id)) {
-        const confirmToken = await token(ctx, 'cf', { contactId: result.contact.id, issuedAt: ctx.now() })
+        const confirmToken = await signToken(ctx, 'cf', [result.contact.id, ctx.now()])
         ctx.db.tx(() => {
           if (!allowRate(ctx.db, `signup:confirm:${targetHash}`, 3, 86_400_000, ctx.now())) return
           mailId = newId('sgm')
@@ -116,7 +117,7 @@ export function registerRoutes(reg: AccountRegistrar) {
     app.get('/confirm/:token', async (c) => {
       const ctx = c.get('ctx')
       const value = c.req.param('token')
-      const parsed = confirmationSchema.safeParse(await readToken(ctx, 'cf', value))
+      const parsed = confirmationSchema.safeParse(await verifyToken(ctx, value, 'cf'))
       if (!parsed.success || parsed.data.issuedAt > ctx.now() || ctx.now() - parsed.data.issuedAt > 7 * 86_400_000) throw new AppError('invalid_token', 'That confirmation link is invalid or expired. Please sign up again.', 400)
       const contact = ctx.db.get<{ id: string; newsletter_id: string; email: string; created_at: number }>('SELECT id, newsletter_id, email, created_at FROM contacts WHERE id = ?', parsed.data.contactId)
       if (!contact || contact.created_at > parsed.data.issuedAt) throw new AppError('invalid_token', 'That confirmation link is no longer valid.', 400)

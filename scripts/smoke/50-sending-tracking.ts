@@ -2,8 +2,7 @@ import type { SmokeContext } from '../smoke-context.ts'
 
 /** Sending needs a verified domain, which smoke cannot get without DNS, so this checks the guards and the public routes. */
 export default async function step({ base, json, call, expect, state }: SmokeContext) {
-  const newsletter = state.get('newsletter')
-  if (!newsletter || typeof newsletter !== 'object' || !('id' in newsletter) || typeof newsletter.id !== 'string') throw new Error('smoke: newsletter step must run first')
+  const newsletter = await json('POST', '/api/actions/newsletters.create', { name: 'Sending smoke' })
   const draft = await json('POST', '/api/actions/campaigns.create', { newsletterId: newsletter.id, subject: 'Smoke issue' })
   const count = await json('POST', '/api/actions/campaigns.audienceCount', { campaignId: draft.id })
   expect(count.total === 0 && count.fresh === 0, 'an empty newsletter has an empty audience')

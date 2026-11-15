@@ -78,21 +78,20 @@ for (const cloud of [false, true]) test(`a 1,000-contact send reaches every subs
   assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE kind LIKE 'send.%'")!.n, 0, 'no send job stays queued')
 })
 
-test('only admins of the newsletter can send, schedule, pause or test; other accounts get 404', async (t) => {
+test('only admins of the newsletter can control sends; members can test; other accounts get 404', async (t) => {
   const { install, owner, nl, ctx } = await sendableInstall()
   t.after(() => install.close())
   addContacts(ctx, nl.id, 3)
   const issue = await createIssue(owner, nl.id)
   const member = memberActor('usr_member', nl.id, 'member')
-  for (const [name, input] of [['campaigns.send', { campaignId: issue.id }], ['campaigns.schedule', { campaignId: issue.id, scheduledAt: install.clock.now() + 3_600_000 }], ['campaigns.pause', { campaignId: issue.id }], ['campaigns.resume', { campaignId: issue.id }], ['campaigns.cancel', { campaignId: issue.id }], ['campaigns.sendMore', { campaignId: issue.id }], ['campaigns.sendTest', { campaignId: issue.id, to: ['a@example.com'] }]] as const) {
+  for (const [name, input] of [['campaigns.send', { campaignId: issue.id }], ['campaigns.schedule', { campaignId: issue.id, scheduledAt: install.clock.now() + 3_600_000 }], ['campaigns.pause', { campaignId: issue.id }], ['campaigns.resume', { campaignId: issue.id }], ['campaigns.cancel', { campaignId: issue.id }], ['campaigns.sendMore', { campaignId: issue.id }]] as const) {
     await assert.rejects(runAction(ctx, name, input, member), { status: 403 }, name)
   }
   assert.equal(((await runAction(ctx, 'campaigns.progress', { campaignId: issue.id }, member)) as { status: string }).status, 'draft')
   const other = await install.signUp({ email: 'other@example.com' })
   assert.equal((await expectError(() => other.action('campaigns.send', { campaignId: issue.id }))).status, 404)
   assert.equal((await expectError(() => other.action('campaigns.progress', { campaignId: issue.id }))).status, 404)
-  const admin = memberActor('usr_admin', nl.id, 'admin')
-  const sent = (await runAction(ctx, 'campaigns.sendTest', { campaignId: issue.id, to: ['tester@example.com'] }, admin)) as { sent: string[] }
+  const sent = (await runAction(ctx, 'campaigns.sendTest', { campaignId: issue.id, to: ['tester@example.com'] }, member)) as { sent: string[] }
   assert.deepEqual(sent.sent, ['tester@example.com'])
 })
 

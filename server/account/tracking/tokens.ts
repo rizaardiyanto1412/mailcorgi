@@ -2,8 +2,8 @@ import type { StoreCtx } from '../../core/store.ts'
 import { fromBase64Url, hmac, timingSafeEqual, toBase64Url } from '../../core/crypto.ts'
 
 /** Public token purposes per architecture 11.3. A token for one purpose never passes for another. */
-export type TokenPurpose = 'o' | 'c' | 'u' | 'p' | 'cf' | 'k' | 'w'
-const PURPOSES = new Set<string>(['o', 'c', 'u', 'p', 'cf', 'k', 'w'])
+export type TokenPurpose = 'o' | 'c' | 'u' | 'p' | 'cf' | 'k' | 'w' | 'form'
+const PURPOSES = new Set<string>(['o', 'c', 'u', 'p', 'cf', 'k', 'w', 'form'])
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 

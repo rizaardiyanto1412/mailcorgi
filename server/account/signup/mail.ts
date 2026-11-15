@@ -6,7 +6,7 @@ import { renderEmail, parseTheme, type RenderCampaign } from '../render/index.ts
 import { getPolicy } from '../usage/index.ts'
 import { isSuppressed } from '../contacts/index.ts'
 import { getNewsletter, welcomeCampaign, welcomeEnabled } from './settings.ts'
-import { token } from './tokens.ts'
+import { signToken } from '../tracking/index.ts'
 
 interface MailRow {
   id: string
@@ -58,8 +58,8 @@ export async function deliverMail(ctx: StoreCtx, mailId: string): Promise<void> 
   if (row.state === 'sending' && (row.attempt_at ?? 0) + 600_000 > ctx.now()) throw new Error('Signup email is already being sent.')
   const base = ctx.config.appUrl
   const links = {
-    unsubscribe: `${base}/u/${await token(ctx, 'u', { contactId: contact.id, campaignId: 0 })}`,
-    preferences: `${base}/u/${await token(ctx, 'p', { contactId: contact.id })}`,
+    unsubscribe: `${base}/u/${await signToken(ctx, 'u', [contact.id, 0])}`,
+    preferences: `${base}/u/${await signToken(ctx, 'p', [contact.id])}`,
     web: `${base}/f/${nl.key}`,
   }
   let campaign: RenderCampaign

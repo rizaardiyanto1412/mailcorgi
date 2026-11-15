@@ -30,7 +30,7 @@ test('permission matrix covers the entire registry; add one explicit entry per n
 
 for (const action of actions) test(`permission matrix: ${action.name}`, async () => {
   assert.ok(action.name in matrix, `Missing permission matrix entry for ${action.name}`)
-  const { role: expected, input: fixture } = matrix[action.name]
+  const { role: expected, input: fixture, error: expectedError } = matrix[action.name]
   const metadataRole = action.scope === 'control' && (expected === 'owner' || expected === 'teammate') ? 'user' : expected
   assert.equal(action.role, metadataRole, `${action.name}: minimum role differs from the reviewed matrix`)
   const install = await createInstall({ cloud: true })
@@ -77,7 +77,11 @@ for (const action of actions) test(`permission matrix: ${action.name}`, async ()
         await assert.rejects(() => runAction(ctx, action.name, input, { ...actor, grants: { another_newsletter: 'admin' } }), (error: unknown) => error instanceof AppError && [403, 404].includes(error.status), `${action.name} must deny a grant for another newsletter`)
       }
       if (allow) {
-        try { await runAction(ctx, action.name, input, actor) } catch (error) { assert.fail(`${action.name} must allow ${grant}: ${String(error)}`) }
+        if (expectedError) {
+          await assert.rejects(() => runAction(ctx, action.name, input, actor), (error: unknown) => error instanceof AppError && error.code === expectedError, `${action.name} must allow ${grant} through to its domain precondition`)
+        } else {
+          try { await runAction(ctx, action.name, input, actor) } catch (error) { assert.fail(`${action.name} must allow ${grant}: ${String(error)}`) }
+        }
       } else {
         await assert.rejects(() => runAction(ctx, action.name, input, actor), (error: unknown) => error instanceof AppError && (error.status === 403 || error.status === 404), `${action.name} must deny ${grant}`)
       }

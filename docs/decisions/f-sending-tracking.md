@@ -64,3 +64,13 @@ at most 38 provider calls.
 
 `server/account/sending/provider.ts` exports `sendHooks.provider`, null in production. Tests set it to
 a wrapper around the test provider to simulate permanent, temporary, throttled and lost results.
+
+## Teams and signup integration
+
+Send controls require newsletter admin; test sends, audience counts and progress allow members.
+The permission matrix covers every sending action. Tracking has no actions. For calls that cannot
+succeed on the shared draft fixture, the matrix asserts the specific domain error after authorization.
+
+Tracking owns token signing and verification, including signup confirmation and the additional
+`form` purpose for signed signup timestamps. Signup imports them through tracking's public index.
+Campaign lists contain issues only; sending and scheduling reject welcome and keep campaigns.

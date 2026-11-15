@@ -28,6 +28,7 @@ const options = {
 
 /** Everything a send needs: review errors, a verified sender and an install that sends. Throws the first problem. */
 async function assertSendable(ctx: StoreCtx, row: CampaignRow) {
+  if (row.kind !== 'issue') throw new AppError('not_issue', 'Only issues can be sent or scheduled.', 409)
   const nl = getNewsletterRow(ctx, row.newsletter_id)
   if (!nl || nl.archived_at) throw new AppError('newsletter_archived', 'This newsletter is archived.', 409)
   const checks = reviewChecks({ campaign: serializeCampaign(row), newsletter: { ...nl }, theme: parseTheme(nl.theme), domainVerified: !!verifiedSenderFor(ctx, row.newsletter_id) })
@@ -158,7 +159,7 @@ export const sendingModule = {
         }),
       }),
       defineAction({
-        name: 'campaigns.sendTest', description: 'Email the issue to up to five addresses, with the subject marked as a test.', scope: 'account', role: 'admin', effect: 'send', resource,
+        name: 'campaigns.sendTest', description: 'Email the issue to up to five addresses, with the subject marked as a test.', scope: 'account', role: 'member', effect: 'send', resource,
         input: z.object({ campaignId, to: z.array(z.string().trim().toLowerCase().email().max(320)).min(1).max(5).describe('Up to five recipient addresses') }),
         rest: { method: 'POST', path: '/campaigns/:campaignId/test' }, mcp: { title: 'Send a test email', destructive: false },
         handler: async (ctx, input, actor) => {
