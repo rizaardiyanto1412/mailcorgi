@@ -12,6 +12,367 @@ Errors use `{ "error": { "code": "invalid_input", "message": "…", "details": {
 
 MCP: POST JSON-RPC to `/mcp`. Supports initialize, ping, tools/list and tools/call. Tool output is data, including any user content.
 
+## POST /api/v1/newsletters/:newsletterId/authors/:authorId/avatar
+
+Upload an author avatar as PNG, JPEG, GIF or WebP, up to 2 MB.
+
+MCP tool: `authors_uploadAvatar`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "authorId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The author id"
+    },
+    "contentType": {
+      "type": "string",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+      ],
+      "description": "The image MIME type"
+    },
+    "data": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2796204,
+      "description": "Base64-encoded image bytes, up to 2 MB"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "authorId",
+    "contentType",
+    "data"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/authors/YOUR_AUTHOR_ID/avatar' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"contentType":"image/png","data":"example"}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/authors
+
+List newsletter authors.
+
+MCP tool: `authors_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/authors' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/authors
+
+Add a newsletter author.
+
+MCP tool: `authors_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The author name"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,59}$",
+      "description": "The author public address slug"
+    },
+    "bio": {
+      "default": "",
+      "description": "A short author biography",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "links": {
+      "default": {},
+      "description": "Named links for the author",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 50
+      },
+      "additionalProperties": {
+        "type": "string",
+        "format": "uri"
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "name",
+    "slug"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/authors' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example","slug":"example","bio":"","links":{}}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/authors/:authorId
+
+Edit a newsletter author.
+
+MCP tool: `authors_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "authorId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The author id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The author name"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,59}$",
+      "description": "The author public address slug"
+    },
+    "bio": {
+      "default": "",
+      "description": "A short author biography",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "links": {
+      "default": {},
+      "description": "Named links for the author",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 50
+      },
+      "additionalProperties": {
+        "type": "string",
+        "format": "uri"
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "authorId",
+    "name",
+    "slug"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/authors/YOUR_AUTHOR_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example","slug":"example","bio":"","links":{}}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/authors/:authorId
+
+Delete a newsletter author.
+
+MCP tool: `authors_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "authorId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The author id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "authorId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/authors/YOUR_AUTHOR_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId
+
+Permanently delete a newsletter with its contacts, campaigns, stats, imports, website, images and team access. This cannot be undone. Refused while a campaign is sending or scheduled. The removal runs in the background; calling again is safe.
+
+MCP tool: `newsletters_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "confirmName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "The newsletter name, typed exactly, to confirm the deletion"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "confirmName"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"confirmName":"example"}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/branding/images
+
+Upload a newsletter logo or icon as PNG, JPEG, GIF or WebP, up to 2 MB.
+
+MCP tool: `newsletters_uploadImage`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "logo",
+        "icon"
+      ],
+      "description": "Which newsletter image to replace"
+    },
+    "contentType": {
+      "type": "string",
+      "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+      ],
+      "description": "The image MIME type"
+    },
+    "data": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2796204,
+      "description": "Base64-encoded image bytes, up to 2 MB"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "kind",
+    "contentType",
+    "data"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/branding/images' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"kind":"logo","contentType":"image/png","data":"example"}'
+```
+
 ## POST /api/v1/newsletters
 
 Create a newsletter. The slug becomes its public address under /n/.
@@ -34,6 +395,8 @@ Input JSON Schema:
     "slug": {
       "description": "Public address slug. Made from the name when left out.",
       "type": "string",
+      "minLength": 3,
+      "maxLength": 60,
       "pattern": "^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$"
     }
   },
@@ -109,7 +472,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID' \
 
 ## PATCH /api/v1/newsletters/:newsletterId
 
-Rename a newsletter or change its description.
+Update newsletter identity, sender, postal address, language and subscription settings.
 
 MCP tool: `newsletters_update`. Effect: write.
 
@@ -135,6 +498,191 @@ Input JSON Schema:
       "description": "New description",
       "type": "string",
       "maxLength": 500
+    },
+    "fromName": {
+      "description": "Sender display name",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n]*$"
+    },
+    "fromLocal": {
+      "description": "Sender email local part, before the domain",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]*$"
+    },
+    "domainId": {
+      "description": "Verified sender domain id, or null to clear the sender",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "replyTo": {
+      "description": "Reply-to email address, or empty to use the sender",
+      "anyOf": [
+        {
+          "type": "string",
+          "const": ""
+        },
+        {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        }
+      ]
+    },
+    "postalAddress": {
+      "description": "Postal address included in every email",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "language": {
+      "description": "Newsletter language code",
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35
+    },
+    "timezone": {
+      "description": "IANA timezone for scheduling",
+      "type": "string",
+      "maxLength": 100
+    },
+    "doubleOptIn": {
+      "description": "Require email confirmation for public signups",
+      "type": "boolean"
+    },
+    "tracking": {
+      "description": "Enable tracking for opens and clicks",
+      "type": "object",
+      "properties": {
+        "opens": {
+          "type": "boolean"
+        },
+        "clicks": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "opens",
+        "clicks"
+      ]
+    },
+    "theme": {
+      "description": "Email and website colors, fonts, headings, buttons, header and footer",
+      "type": "object",
+      "properties": {
+        "background": {
+          "default": "#f3f4f6",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "surface": {
+          "default": "#ffffff",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "text": {
+          "default": "#20242c",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "muted": {
+          "default": "#596273",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "accent": {
+          "default": "#9a3412",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "font": {
+          "default": "sans",
+          "type": "string",
+          "enum": [
+            "sans",
+            "serif",
+            "mono"
+          ]
+        },
+        "headingSizes": {
+          "default": [
+            32,
+            26,
+            21
+          ],
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 48
+            },
+            {
+              "type": "integer",
+              "minimum": 20,
+              "maximum": 40
+            },
+            {
+              "type": "integer",
+              "minimum": 18,
+              "maximum": 32
+            }
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "buttonColor": {
+          "default": "#9a3412",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "buttonText": {
+          "default": "#ffffff",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "buttonShape": {
+          "default": "rounded",
+          "type": "string",
+          "enum": [
+            "square",
+            "rounded",
+            "pill"
+          ]
+        },
+        "header": {
+          "default": {
+            "logo": "",
+            "title": ""
+          },
+          "type": "object",
+          "properties": {
+            "logo": {
+              "default": "",
+              "type": "string",
+              "maxLength": 2048
+            },
+            "title": {
+              "default": "",
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "footerText": {
+          "default": "Thanks for reading.",
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
     }
   },
   "required": [
@@ -171,6 +719,8 @@ Input JSON Schema:
     },
     "slug": {
       "type": "string",
+      "minLength": 3,
+      "maxLength": 60,
       "pattern": "^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$",
       "description": "The new slug"
     }
@@ -254,6 +804,4362 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/una
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
   --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/tags
+
+List the tags in a newsletter.
+
+MCP tool: `tags_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/tags' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/tags
+
+Create a tag for contacts.
+
+MCP tool: `tags_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The tag name"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "name"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/tags' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example"}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/tags/:tagId
+
+Rename a tag.
+
+MCP tool: `tags_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "tagId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The tag id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The tag name"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "tagId",
+    "name"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/tags/YOUR_TAG_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example"}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/tags/:tagId
+
+Delete a tag and remove it from contacts.
+
+MCP tool: `tags_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "tagId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The tag id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "tagId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/tags/YOUR_TAG_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/fields
+
+List typed custom fields for a newsletter.
+
+MCP tool: `contactFields_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/fields' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/fields
+
+Create a typed custom field.
+
+MCP tool: `contactFields_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$",
+      "description": "The custom field key, used in filters and merge fields"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The field label"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "number",
+        "date",
+        "boolean"
+      ],
+      "description": "The field value type"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "key",
+    "label",
+    "type"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/fields' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"key":"example","label":"example","type":"text"}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/fields/:fieldId
+
+Change a custom field label. Keys and types stay stable for existing contact data.
+
+MCP tool: `contactFields_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "fieldId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The custom field id"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The field label"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "fieldId",
+    "label"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/fields/YOUR_FIELD_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"label":"example"}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/fields/:fieldId
+
+Delete a custom field and remove its values from contacts.
+
+MCP tool: `contactFields_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "fieldId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The custom field id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "fieldId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/fields/YOUR_FIELD_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/suppressions
+
+List account and newsletter suppressions. Only the owner can read account-wide addresses.
+
+MCP tool: `suppressions_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountId": {
+      "type": "string",
+      "description": "The current account id"
+    },
+    "afterId": {
+      "description": "The last suppression id from the preceding page",
+      "type": "string"
+    },
+    "limit": {
+      "default": 100,
+      "description": "Maximum rows to return",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "accountId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/suppressions?accountId=example&limit=100' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/suppressions
+
+Manually suppress an address throughout this account.
+
+MCP tool: `suppressions_add`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountId": {
+      "type": "string",
+      "description": "The current account id"
+    },
+    "email": {
+      "type": "string",
+      "maxLength": 320,
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      "description": "The address to suppress"
+    }
+  },
+  "required": [
+    "accountId",
+    "email"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/suppressions' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"accountId":"example","email":"reader@example.com"}'
+```
+
+## DELETE /api/v1/suppressions/:suppressionId
+
+Remove a manual suppression. This does not resubscribe contacts.
+
+MCP tool: `suppressions_remove`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountId": {
+      "type": "string",
+      "description": "The current account id"
+    },
+    "suppressionId": {
+      "type": "string",
+      "description": "The manual suppression id"
+    }
+  },
+  "required": [
+    "accountId",
+    "suppressionId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/suppressions/YOUR_SUPPRESSION_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"accountId":"example"}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/contacts
+
+Search and page through contacts in a newsletter.
+
+MCP tool: `contacts_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "search": {
+      "description": "Find an email address or name containing this text",
+      "type": "string",
+      "maxLength": 320
+    },
+    "status": {
+      "description": "Subscription status to include",
+      "type": "string",
+      "enum": [
+        "unconfirmed",
+        "subscribed",
+        "unsubscribed",
+        "bounced",
+        "complained",
+        "cleaned"
+      ]
+    },
+    "tagId": {
+      "description": "Only include contacts with this tag",
+      "type": "string"
+    },
+    "filter": {
+      "description": "Additional contact conditions",
+      "anyOf": [
+        {},
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sort": {
+      "default": "createdAt",
+      "description": "Field used to order contacts",
+      "type": "string",
+      "enum": [
+        "createdAt",
+        "email",
+        "name"
+      ]
+    },
+    "direction": {
+      "default": "desc",
+      "description": "Sort direction",
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "cursor": {
+      "description": "Next cursor from the previous page",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "limit": {
+      "default": 50,
+      "description": "Maximum contacts in one page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts?sort=createdAt&direction=desc&limit=50' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/contacts
+
+Add a contact with asserted consent. Suppressed addresses stay suppressed (outcome suppressed). Past the plan contact limit the call fails with limit_reached and nothing is added.
+
+MCP tool: `contacts_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "email": {
+      "type": "string",
+      "maxLength": 320,
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      "description": "The email address"
+    },
+    "name": {
+      "description": "The contact name",
+      "type": "string",
+      "maxLength": 200
+    },
+    "fields": {
+      "description": "Typed custom field values",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 10000
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    "tags": {
+      "description": "Tag ids from this newsletter",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source": {
+      "default": "manual",
+      "description": "How the contact was added",
+      "type": "string",
+      "maxLength": 100
+    }
+  },
+  "required": [
+    "newsletterId",
+    "email"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"email":"reader@example.com","source":"manual"}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/contacts/:contactId
+
+Read a contact with their tags and recent timeline.
+
+MCP tool: `contacts_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id"
+    },
+    "beforeEventId": {
+      "description": "Load events older than this event id",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/YOUR_CONTACT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/contacts/:contactId
+
+Edit a contact name and typed custom fields.
+
+MCP tool: `contacts_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id"
+    },
+    "name": {
+      "description": "The new contact name",
+      "type": "string",
+      "maxLength": 200
+    },
+    "fields": {
+      "description": "Custom field values to merge with existing values",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 10000
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    "unsetFields": {
+      "description": "Custom field keys to clear",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/YOUR_CONTACT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/contacts/:contactId/unsubscribe
+
+Unsubscribe a contact from this newsletter.
+
+MCP tool: `contacts_unsubscribe`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id"
+    },
+    "reason": {
+      "description": "Why the contact is leaving",
+      "type": "string",
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/YOUR_CONTACT_ID/unsubscribe' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/contacts/:contactId
+
+Delete a contact and remember their opt-out against future imports.
+
+MCP tool: `contacts_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/YOUR_CONTACT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/contacts/bulk
+
+Tag, untag, unsubscribe or delete up to 100 contacts atomically.
+
+MCP tool: `contacts_bulk`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactIds": {
+      "minItems": 1,
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Contacts from this newsletter"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "tag",
+        "untag",
+        "unsubscribe",
+        "delete"
+      ],
+      "description": "The operation to apply"
+    },
+    "tagIds": {
+      "default": [],
+      "description": "Tags to add or remove",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactIds",
+    "operation"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/bulk' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"contactIds":[],"operation":"tag","tagIds":[]}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/contacts/export
+
+Export a formula-safe CSV page. Follow nextCursor until null or download the streamed CSV endpoint.
+
+MCP tool: `contacts_export`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "search": {
+      "description": "Find an email address or name containing this text",
+      "type": "string",
+      "maxLength": 320
+    },
+    "status": {
+      "description": "Subscription status to include",
+      "type": "string",
+      "enum": [
+        "unconfirmed",
+        "subscribed",
+        "unsubscribed",
+        "bounced",
+        "complained",
+        "cleaned"
+      ]
+    },
+    "tagId": {
+      "description": "Only include contacts with this tag",
+      "type": "string"
+    },
+    "filter": {
+      "description": "Additional contact conditions",
+      "anyOf": [
+        {},
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sort": {
+      "default": "createdAt",
+      "description": "Field used to order contacts",
+      "type": "string",
+      "enum": [
+        "createdAt",
+        "email",
+        "name"
+      ]
+    },
+    "direction": {
+      "default": "desc",
+      "description": "Sort direction",
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "cursor": {
+      "description": "Next cursor from the previous page",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "limit": {
+      "default": 50,
+      "description": "Maximum contacts in one page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/contacts/export' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"sort":"createdAt","direction":"desc","limit":50}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/segments
+
+List saved contact filters.
+
+MCP tool: `segments_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/segments' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/segments
+
+Save a contact filter.
+
+MCP tool: `segments_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The segment name"
+    },
+    "filter": {
+      "description": "Contact conditions, combined with all, any and not"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "name",
+    "filter"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/segments' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example","filter":"example"}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/segments/:segmentId
+
+Change a saved contact filter.
+
+MCP tool: `segments_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "segmentId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The saved segment id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The segment name"
+    },
+    "filter": {
+      "description": "Contact conditions, combined with all, any and not"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "segmentId",
+    "name",
+    "filter"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/segments/YOUR_SEGMENT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example","filter":"example"}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/segments/:segmentId
+
+Delete a saved contact filter.
+
+MCP tool: `segments_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "segmentId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The saved segment id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "segmentId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/segments/YOUR_SEGMENT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/segments/count
+
+Count contacts matching a live filter.
+
+MCP tool: `segments_count`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "filter": {
+      "anyOf": [
+        {
+          "description": "Contact conditions, combined with all, any and not"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The filter to count, or null for every contact"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "filter"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/segments/count' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"filter":"example"}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/imports
+
+Begin a resumable CSV import. Upload chunks, then start processing.
+
+MCP tool: `imports_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "preset": {
+      "default": "generic",
+      "description": "The source export platform",
+      "type": "string",
+      "enum": [
+        "generic",
+        "beehiiv",
+        "Substack",
+        "Mailchimp",
+        "Kit",
+        "MailerLite",
+        "Buttondown",
+        "Ghost",
+        "EmailOctopus",
+        "listmonk"
+      ]
+    },
+    "mapping": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Email column header"
+        },
+        "name": {
+          "description": "Full name column header",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "firstName": {
+          "description": "First name column header",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "lastName": {
+          "description": "Last name column header",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "description": "Subscription status column header",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "signupDate": {
+          "description": "Signup date column header",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "unsubscribeDate": {
+          "description": "A populated unsubscribe date always overrides an active status",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "tags": {
+          "description": "Comma or semicolon separated tag names",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "fields": {
+          "default": {},
+          "description": "Custom field keys mapped to CSV headers",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "description": "CSV column mapping"
+    },
+    "options": {
+      "default": {
+        "tagIds": [],
+        "consent": false,
+        "statuses": "preserve",
+        "defaultStatus": "pending"
+      },
+      "description": "Cleaning, opt-out and consent options",
+      "type": "object",
+      "properties": {
+        "tagIds": {
+          "default": [],
+          "description": "Newsletter tag ids to add",
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "consent": {
+          "default": false,
+          "description": "Assert that active contacts consented elsewhere; never revives opt-outs. Only rows whose status is subscribed (from the status column, or defaultStatus when no status column is mapped) become subscribed; every other active row is added as unconfirmed and receives no email",
+          "type": "boolean"
+        },
+        "statuses": {
+          "default": "preserve",
+          "description": "Preserve opt-outs or skip inactive rows; neither option subscribes opt-outs",
+          "type": "string",
+          "enum": [
+            "preserve",
+            "activeOnly"
+          ]
+        },
+        "defaultStatus": {
+          "default": "pending",
+          "description": "Status for every row when no status column is mapped, especially Mailchimp split exports. The default, pending, adds contacts as unconfirmed: they receive no issues and no confirmation email. Use subscribed together with consent to add them as subscribed",
+          "type": "string",
+          "enum": [
+            "subscribed",
+            "unsubscribed",
+            "cleaned",
+            "pending"
+          ]
+        }
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "mapping"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"preset":"generic","mapping":{"email":"example"},"options":{"tagIds":[],"consent":false,"statuses":"preserve","defaultStatus":"pending"}}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/imports/:importId/chunks
+
+Upload at most 500 rows. Repeating the same sequence and data is a no-op; conflicting data is rejected.
+
+MCP tool: `imports_addChunk`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "importId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The import id"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "Zero-based chunk sequence"
+    },
+    "rows": {
+      "minItems": 1,
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "description": "CSV records keyed by their original headers"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "importId",
+    "seq",
+    "rows"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports/YOUR_IMPORT_ID/chunks' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"seq":0,"rows":[]}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/imports/:importId/start
+
+Seal the upload and queue processing. Missing chunks or a row-count mismatch are rejected.
+
+MCP tool: `imports_start`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "importId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The import id"
+    },
+    "totalRows": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Expected total number of CSV records"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "importId",
+    "totalRows"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports/YOUR_IMPORT_ID/start' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"totalRows":0}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/imports/:importId/cancel
+
+Cancel an upload or import. Contacts already processed stay in the newsletter.
+
+MCP tool: `imports_cancel`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "importId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The import id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "importId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports/YOUR_IMPORT_ID/cancel' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/imports/:importId
+
+Read import progress and counts by skip reason, including uploaded sequences for resuming.
+
+MCP tool: `imports_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "importId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The import id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "importId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports/YOUR_IMPORT_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/imports
+
+List recent imports for this newsletter.
+
+MCP tool: `imports_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "before": {
+      "description": "Only imports created before this timestamp",
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "limit": {
+      "default": 30,
+      "description": "Maximum imports per page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports?limit=30' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/imports/:importId/skipped
+
+Download a page of skipped rows as formula-safe CSV.
+
+MCP tool: `imports_skipped`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "importId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The import id"
+    },
+    "afterRow": {
+      "default": 0,
+      "description": "Last row number from the preceding page",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "limit": {
+      "default": 500,
+      "description": "Maximum skipped rows per page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    }
+  },
+  "required": [
+    "newsletterId",
+    "importId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/imports/YOUR_IMPORT_ID/skipped' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"afterRow":0,"limit":500}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/campaigns
+
+List campaigns by status and subject.
+
+MCP tool: `campaigns_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "status": {
+      "description": "Filter by campaign status",
+      "type": "string",
+      "enum": [
+        "draft",
+        "scheduled",
+        "sending",
+        "paused",
+        "sent",
+        "canceled"
+      ]
+    },
+    "search": {
+      "description": "Search the subject",
+      "type": "string",
+      "maxLength": 200
+    },
+    "limit": {
+      "default": 30,
+      "description": "Maximum rows",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "offset": {
+      "default": 0,
+      "description": "Number of rows to skip",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/campaigns?limit=30&offset=0' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/campaigns
+
+Create a campaign draft.
+
+MCP tool: `campaigns_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "subject": {
+      "default": "",
+      "description": "Email subject or draft name",
+      "type": "string",
+      "maxLength": 500
+    },
+    "format": {
+      "default": "doc",
+      "description": "Content format",
+      "type": "string",
+      "enum": [
+        "doc",
+        "markdown",
+        "html"
+      ]
+    },
+    "doc": {
+      "description": "Initial TipTap document",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "$ref": "#/$defs/__schema0"
+    },
+    "source": {
+      "description": "Markdown or HTML source",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "html": {
+      "description": "Raw email HTML",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "text": {
+      "description": "Plain text alternative",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "audience": {
+      "default": {
+        "all": true
+      },
+      "description": "Audience selection and exclusions",
+      "type": "object",
+      "properties": {
+        "all": {
+          "type": "boolean"
+        },
+        "segmentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tagIds": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "engaged": {
+          "type": "boolean"
+        },
+        "exclude": {
+          "type": "object",
+          "properties": {
+            "segmentIds": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tagIds": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "newsletterId"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/campaigns' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"subject":"","format":"doc","audience":{"all":true}}'
+```
+
+## GET /api/v1/campaigns/:campaignId
+
+Read a campaign and its current revision.
+
+MCP tool: `campaigns_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PATCH /api/v1/campaigns/:campaignId
+
+Autosave a draft only if its revision is still current.
+
+MCP tool: `campaigns_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "The revision last read. Stale saves return 409 with the current revision."
+    },
+    "subject": {
+      "description": "Email subject or draft name",
+      "type": "string",
+      "maxLength": 500
+    },
+    "previewText": {
+      "description": "Inbox preview text",
+      "type": "string",
+      "maxLength": 1000
+    },
+    "format": {
+      "description": "Content format",
+      "type": "string",
+      "enum": [
+        "doc",
+        "markdown",
+        "html"
+      ]
+    },
+    "doc": {
+      "description": "TipTap document JSON",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "$ref": "#/$defs/__schema0"
+    },
+    "source": {
+      "description": "Markdown or HTML source",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "html": {
+      "description": "Raw email HTML",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "text": {
+      "description": "Plain text alternative",
+      "type": "string",
+      "maxLength": 1000000
+    },
+    "audience": {
+      "description": "Audience selection and exclusions",
+      "type": "object",
+      "properties": {
+        "all": {
+          "type": "boolean"
+        },
+        "segmentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tagIds": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "engaged": {
+          "type": "boolean"
+        },
+        "exclude": {
+          "type": "object",
+          "properties": {
+            "segmentIds": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tagIds": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "campaignId",
+    "revision"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"revision":1}'
+```
+
+## POST /api/v1/campaigns/:campaignId/duplicate
+
+Copy a campaign into a new editable draft.
+
+MCP tool: `campaigns_duplicate`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/duplicate' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## DELETE /api/v1/campaigns/:campaignId
+
+Permanently delete an editable draft.
+
+MCP tool: `campaigns_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "The revision last read. Stale saves return 409 with the current revision."
+    }
+  },
+  "required": [
+    "campaignId",
+    "revision"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"revision":1}'
+```
+
+## GET /api/v1/campaigns/:campaignId/preview
+
+Render email and web previews with review checks.
+
+MCP tool: `campaigns_preview`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/preview' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/campaign-audiences
+
+List saved segments and tags for the audience picker.
+
+MCP tool: `campaigns_audienceOptions`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/campaign-audiences' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/design
+
+Read the newsletter email and web design.
+
+MCP tool: `campaigns_getTheme`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/design' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PUT /api/v1/newsletters/:newsletterId/design
+
+Save the newsletter email and web design.
+
+MCP tool: `campaigns_updateTheme`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "theme": {
+      "type": "object",
+      "properties": {
+        "background": {
+          "default": "#f3f4f6",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "surface": {
+          "default": "#ffffff",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "text": {
+          "default": "#20242c",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "muted": {
+          "default": "#596273",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "accent": {
+          "default": "#9a3412",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "font": {
+          "default": "sans",
+          "type": "string",
+          "enum": [
+            "sans",
+            "serif",
+            "mono"
+          ]
+        },
+        "headingSizes": {
+          "default": [
+            32,
+            26,
+            21
+          ],
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 48
+            },
+            {
+              "type": "integer",
+              "minimum": 20,
+              "maximum": 40
+            },
+            {
+              "type": "integer",
+              "minimum": 18,
+              "maximum": 32
+            }
+          ],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "buttonColor": {
+          "default": "#9a3412",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "buttonText": {
+          "default": "#ffffff",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "buttonShape": {
+          "default": "rounded",
+          "type": "string",
+          "enum": [
+            "square",
+            "rounded",
+            "pill"
+          ]
+        },
+        "header": {
+          "default": {
+            "logo": "",
+            "title": ""
+          },
+          "type": "object",
+          "properties": {
+            "logo": {
+              "default": "",
+              "type": "string",
+              "maxLength": 2048
+            },
+            "title": {
+              "default": "",
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        },
+        "footerText": {
+          "default": "Thanks for reading.",
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "description": "Colors, email-safe fonts, heading sizes, button style, header and footer"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "theme"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/design' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"theme":{}}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/images
+
+Upload an image up to 5 MB. PNG, JPEG, GIF and WebP are supported.
+
+MCP tool: `campaigns_uploadImage`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter that owns the image"
+    },
+    "data": {
+      "type": "string",
+      "maxLength": 6990508,
+      "description": "Base64-encoded image bytes without a data URL prefix"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20000,
+      "description": "Image width in pixels"
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20000,
+      "description": "Image height in pixels"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "data",
+    "width",
+    "height"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/images' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"data":"example","width":1,"height":1}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/images
+
+List images uploaded for this newsletter’s campaigns, newest first.
+
+MCP tool: `campaigns_listImages`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter that owns the images"
+    },
+    "cursor": {
+      "description": "The `next` value from the previous page",
+      "type": "string",
+      "maxLength": 200
+    },
+    "limit": {
+      "default": 48,
+      "description": "Images per page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/images?limit=48' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/images/:imageId/usage
+
+List the campaigns, and whether the newsletter settings, that still use an uploaded image.
+
+MCP tool: `campaigns_imageUsage`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter that owns the image"
+    },
+    "imageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]{8,64}\\.(png|jpg|gif|webp)$",
+      "description": "The image file name, as returned by the image list"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "imageId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/images/YOUR_IMAGE_ID/usage' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/images/:imageId
+
+Delete an uploaded image from storage. Emails already sent show a broken image where they used it. When a campaign still uses the image, nothing is deleted unless `confirm` is true; the error lists where it is used.
+
+MCP tool: `campaigns_deleteImage`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter that owns the image"
+    },
+    "imageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]{8,64}\\.(png|jpg|gif|webp)$",
+      "description": "The image file name, as returned by the image list"
+    },
+    "confirm": {
+      "default": false,
+      "description": "Delete even though a campaign or the newsletter settings still use the image",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "imageId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/images/YOUR_IMAGE_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"confirm":false}'
+```
+
+## POST /api/v1/campaigns/:campaignId/send
+
+Send a draft now. Runs the review checks first.
+
+MCP tool: `campaigns_send`. Effect: send.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    },
+    "gradual": {
+      "default": false,
+      "description": "Warm up contacts this account never emailed: a random 2%, then 5% more, then the rest, 30 minutes apart",
+      "type": "boolean"
+    },
+    "engagedFirst": {
+      "default": false,
+      "description": "Send to recently engaged subscribers first and the rest a day later",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/send' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"gradual":false,"engagedFirst":false}'
+```
+
+## POST /api/v1/campaigns/:campaignId/schedule
+
+Schedule a draft to send at a later time.
+
+MCP tool: `campaigns_schedule`. Effect: send.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    },
+    "scheduledAt": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "description": "When to send, in milliseconds since the epoch (UTC)"
+    },
+    "gradual": {
+      "default": false,
+      "description": "Warm up contacts this account never emailed: a random 2%, then 5% more, then the rest, 30 minutes apart",
+      "type": "boolean"
+    },
+    "engagedFirst": {
+      "default": false,
+      "description": "Send to recently engaged subscribers first and the rest a day later",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "campaignId",
+    "scheduledAt"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/schedule' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"scheduledAt":1,"gradual":false,"engagedFirst":false}'
+```
+
+## POST /api/v1/campaigns/:campaignId/cancel
+
+Cancel a scheduled send, or stop a paused send and skip the rest.
+
+MCP tool: `campaigns_cancel`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/cancel' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/campaigns/:campaignId/pause
+
+Pause a send in progress. Emails already handed to the provider still go out.
+
+MCP tool: `campaigns_pause`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/pause' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/campaigns/:campaignId/resume
+
+Resume a paused send from where it stopped.
+
+MCP tool: `campaigns_resume`. Effect: send.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/resume' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/campaigns/:campaignId/send-more
+
+Release the next waiting step of a gradual or engaged-first send now. Refused while the campaign's hard bounces are above 2.5% or complaints above 0.08%.
+
+MCP tool: `campaigns_sendMore`. Effect: send.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/send-more' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/campaigns/:campaignId/test
+
+Email the issue to up to five addresses, with the subject marked as a test.
+
+MCP tool: `campaigns_sendTest`. Effect: send.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    },
+    "to": {
+      "minItems": 1,
+      "maxItems": 5,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 320,
+        "format": "email",
+        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+      },
+      "description": "Up to five recipient addresses"
+    }
+  },
+  "required": [
+    "campaignId",
+    "to"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/test' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"to":[]}'
+```
+
+## GET /api/v1/campaigns/:campaignId/audience-count
+
+Count who would receive this campaign, and how many were never emailed or recently engaged.
+
+MCP tool: `campaigns_audienceCount`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/audience-count' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/campaigns/:campaignId/progress
+
+Live counters of a send: queued, sent, delivered, bounced, opened and the gradual steps. nextStepHeld says why the next step cannot be released now (bounce or complaint rate over the limit), or is null.
+
+MCP tool: `campaigns_progress`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id"
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/progress' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/signup
+
+Read signup form settings, public links and the welcome email.
+
+MCP tool: `signup_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/signup' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PUT /api/v1/newsletters/:newsletterId/signup
+
+Save signup form fields, copy, redirects and opt-in settings.
+
+MCP tool: `signup_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "showName": {
+          "default": true,
+          "description": "Show the reader name field",
+          "type": "boolean"
+        },
+        "fieldKeys": {
+          "default": [],
+          "description": "Custom field keys shown in the form",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+          }
+        },
+        "buttonLabel": {
+          "default": "Subscribe",
+          "description": "Subscribe button label",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "successMessage": {
+          "default": "Thanks! Check your inbox for the next step.",
+          "description": "Message shown after every accepted signup",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "redirectUrl": {
+          "default": "",
+          "description": "Optional absolute http or https success redirect",
+          "type": "string",
+          "maxLength": 2048
+        },
+        "style": {
+          "default": "card",
+          "description": "Form layout",
+          "type": "string",
+          "enum": [
+            "card",
+            "inline"
+          ]
+        }
+      },
+      "description": "Fields, copy, redirect and form layout"
+    },
+    "doubleOptIn": {
+      "type": "boolean",
+      "description": "Require email confirmation before subscribing"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "settings",
+    "doubleOptIn"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/signup' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"settings":{},"doubleOptIn":false}'
+```
+
+## PUT /api/v1/newsletters/:newsletterId/signup/welcome
+
+Save the one welcome campaign for this newsletter and turn it on or off.
+
+MCP tool: `signup_saveWelcome`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Send this email after a reader subscribes"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 150,
+      "description": "Welcome email subject"
+    },
+    "doc": {
+      "default": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "description": "Welcome email editor document",
+      "$ref": "#/$defs/__schema0"
+    },
+    "revision": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Revision last read, or null to create the welcome campaign"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "enabled",
+    "subject",
+    "revision"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/signup/welcome' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"enabled":false,"subject":"example","doc":{"type":"doc","content":[{"type":"paragraph"}]},"revision":1}'
+```
+
+## PUT /api/v1/newsletters/:newsletterId/website/host
+
+Set or remove a custom website hostname and get the DNS verification records.
+
+MCP tool: `website_setHost`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "hostname": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+        },
+        {
+          "type": "string",
+          "const": ""
+        }
+      ],
+      "description": "Custom hostname, or empty to remove it"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "hostname"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website/host' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"hostname":"example"}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/website/host/check
+
+Check CNAME and TXT ownership records before enabling a custom hostname.
+
+MCP tool: `website_checkHost`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website/host/check' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/website
+
+Read public website settings, custom hostname records and web-only posts.
+
+MCP tool: `website_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PUT /api/v1/newsletters/:newsletterId/website
+
+Save website SEO, analytics ids, social links and custom code.
+
+MCP tool: `website_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Make the public archive discoverable",
+          "type": "boolean"
+        },
+        "seoTitle": {
+          "default": "",
+          "description": "Optional home page title",
+          "type": "string",
+          "maxLength": 160
+        },
+        "seoDescription": {
+          "default": "",
+          "description": "Optional search engine description",
+          "type": "string",
+          "maxLength": 500
+        },
+        "plausible": {
+          "default": "",
+          "description": "Plausible site domain",
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^[a-zA-Z0-9.-]*$"
+        },
+        "ga4": {
+          "default": "",
+          "description": "Google Analytics measurement id",
+          "type": "string",
+          "pattern": "^(G-[A-Z0-9]+)?$"
+        },
+        "fathom": {
+          "default": "",
+          "description": "Fathom site id",
+          "type": "string",
+          "maxLength": 30,
+          "pattern": "^[A-Z0-9]*$"
+        },
+        "umami": {
+          "default": "",
+          "description": "Umami Cloud website id",
+          "type": "string",
+          "maxLength": 50,
+          "pattern": "^[a-fA-F0-9-]*$"
+        },
+        "headCode": {
+          "default": "",
+          "description": "Custom head HTML, used only on a verified custom host",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "bodyCode": {
+          "default": "",
+          "description": "Custom body HTML, used only on a verified custom host",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "socialLinks": {
+          "default": {},
+          "description": "Named public social links",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "additionalProperties": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "favicon": {
+          "default": "",
+          "description": "Optional favicon URL; otherwise the newsletter icon is used",
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uri"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        }
+      },
+      "description": "Public website options"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "settings"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"settings":{}}'
+```
+
+## PATCH /api/v1/campaigns/:campaignId/website
+
+Show or hide a sent issue and change its public slug and author without editing its email.
+
+MCP tool: `website_updateIssue`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sent campaign id"
+    },
+    "slug": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public issue address"
+    },
+    "visible": {
+      "type": "boolean",
+      "description": "Whether to list and serve the issue publicly"
+    },
+    "authorId": {
+      "description": "Newsletter author id, or null for no byline",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "campaignId",
+    "slug",
+    "visible"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/website' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"slug":"example","visible":false}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/website/posts
+
+Draft, publish or update a web-only Markdown post without sending an email.
+
+MCP tool: `website_publishPost`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "postId": {
+      "description": "An existing web-only post id to update",
+      "type": "string"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Post title"
+    },
+    "slug": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public post address"
+    },
+    "source": {
+      "type": "string",
+      "maxLength": 1000000,
+      "description": "Markdown content"
+    },
+    "authorId": {
+      "default": null,
+      "description": "Newsletter author id, or null",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "visible": {
+      "default": true,
+      "description": "Whether the post is public",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "subject",
+    "slug",
+    "source"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website/posts' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"subject":"example","slug":"example","source":"example","authorId":null,"visible":true}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/website/stats
+
+Read recent cookie-free public page views.
+
+MCP tool: `website_stats`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/website/stats' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/domains
+
+List sending domains and the DNS records to publish.
+
+MCP tool: `domains_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {}
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/domains' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/domains
+
+Add a domain to use as a newsletter sender.
+
+MCP tool: `domains_add`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 253,
+      "description": "Domain name, such as example.com"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/domains' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example"}'
+```
+
+## POST /api/v1/domains/:domainId/check
+
+Check the sending domain DNS records now.
+
+MCP tool: `domains_check`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "domainId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sending domain ID"
+    }
+  },
+  "required": [
+    "domainId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/domains/YOUR_DOMAIN_ID/check' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## DELETE /api/v1/domains/:domainId
+
+Remove a sending domain. Newsletters using it must choose another sender.
+
+MCP tool: `domains_delete`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "domainId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sending domain ID"
+    }
+  },
+  "required": [
+    "domainId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/domains/YOUR_DOMAIN_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/stats
+
+Read subscriber growth, recent campaigns, traffic and setup progress.
+
+MCP tool: `stats_overview`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id."
+    },
+    "range": {
+      "default": "30",
+      "description": "The number of days to show, or all history.",
+      "type": "string",
+      "enum": [
+        "7",
+        "30",
+        "90",
+        "all"
+      ]
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/stats?range=30' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/campaigns/:campaignId/report
+
+Read a campaign report with unique engagement, links and cached breakdowns.
+
+MCP tool: `stats_report`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id."
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/report' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/campaigns/:campaignId/recipients
+
+Read a page of campaign recipients filtered by delivery or engagement status.
+
+MCP tool: `stats_recipients`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id."
+    },
+    "status": {
+      "default": "all",
+      "description": "Filter recipients by delivery or engagement status.",
+      "type": "string",
+      "enum": [
+        "all",
+        "queued",
+        "sending",
+        "sent",
+        "delivered",
+        "bounced",
+        "complained",
+        "failed",
+        "skipped",
+        "unknown",
+        "opened",
+        "clicked",
+        "unsubscribed"
+      ]
+    },
+    "after": {
+      "default": 0,
+      "description": "Return delivery ids after this cursor.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "limit": {
+      "default": 50,
+      "description": "The maximum number of recipients in this page.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/recipients?status=all&after=0&limit=50' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/campaigns/:campaignId/recipients.csv
+
+Export one formula-safe CSV page of campaign recipients; follow next until null.
+
+MCP tool: `stats_exportRecipients`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "campaignId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The campaign id."
+    },
+    "status": {
+      "default": "all",
+      "description": "Filter recipients by delivery or engagement status.",
+      "type": "string",
+      "enum": [
+        "all",
+        "queued",
+        "sending",
+        "sent",
+        "delivered",
+        "bounced",
+        "complained",
+        "failed",
+        "skipped",
+        "unknown",
+        "opened",
+        "clicked",
+        "unsubscribed"
+      ]
+    },
+    "after": {
+      "default": 0,
+      "description": "Return delivery ids after this cursor.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "limit": {
+      "default": 50,
+      "description": "The maximum number of recipients in this page.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    }
+  },
+  "required": [
+    "campaignId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/recipients.csv?status=all&after=0&limit=50' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/hygiene
+
+Read automatic list hygiene and reminder copy.
+
+MCP tool: `hygiene_settings`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/hygiene' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## PUT /api/v1/newsletters/:newsletterId/hygiene
+
+Save automatic list hygiene and reminder copy. Account protection always remains enabled.
+
+MCP tool: `hygiene_updateSettings`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "enabled": {
+      "default": true,
+      "description": "Automatically ask inactive subscribers whether they want to stay",
+      "type": "boolean"
+    },
+    "afterIssues": {
+      "default": 8,
+      "description": "Consecutive ignored issues before asking, after at least 90 days subscribed",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "waitDays": {
+      "default": 14,
+      "description": "Days to wait after the reminder is sent before cleaning",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30
+    },
+    "strict": {
+      "default": false,
+      "description": "Ignore privacy-proxy opens when deciding whether a subscriber is engaged",
+      "type": "boolean"
+    },
+    "subject": {
+      "default": "Do you still want these emails?",
+      "description": "Subject of the keep-subscription email",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 150
+    },
+    "body": {
+      "default": "We noticed you have not read our recent issues. If you would like to keep receiving them, please confirm below. Otherwise, we will stop sending.",
+      "description": "Markdown copy above the required keep-subscription link",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5000
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/hygiene' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"enabled":true,"afterIssues":8,"waitDays":14,"strict":false,"subject":"Do you still want these emails?","body":"We noticed you have not read our recent issues. If you would like to keep receiving them, please confirm below. Otherwise, we will stop sending."}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/list-health
+
+Read list status, inactivity and reputation rates across the latest 1,000 emails.
+
+MCP tool: `hygiene_health`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/list-health' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/accounts/:accountId/resume-sending
+
+Explicitly resume sending after reviewing an account protection pause.
+
+MCP tool: `hygiene_resume`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The account id to resume"
+    },
+    "confirmation": {
+      "type": "string",
+      "const": "RESUME",
+      "description": "Confirm the list and sender reputation have been reviewed"
+    }
+  },
+  "required": [
+    "accountId",
+    "confirmation"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/accounts/YOUR_ACCOUNT_ID/resume-sending' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"confirmation":"RESUME"}'
+```
+
+## GET /api/v1/notifications
+
+Read your notifications and unread count.
+
+MCP tool: `notifications_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "before": {
+      "description": "Only show notifications older than this UTC millisecond timestamp.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "beforeId": {
+      "default": "",
+      "description": "The last notification id at the before timestamp, to page through timestamp ties.",
+      "type": "string"
+    }
+  }
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/notifications?beforeId=' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/notifications/read
+
+Mark your visible notifications as read.
+
+MCP tool: `notifications_markRead`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ids": {
+      "default": [],
+      "description": "The visible notification ids to mark read; an empty list changes nothing.",
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/notifications/read' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"ids":[]}'
 ```
 
 ## GET /api/v1/keys
@@ -364,7 +5270,7 @@ curl -X DELETE 'https://mail.example.com/api/v1/keys/YOUR_KEY_ID' \
 
 ## MCP install_settings_set
 
-Change install settings. An empty string clears a setting.
+Change install settings. An empty string clears a setting. The result is checked as a whole: choosing an email provider needs its credentials (saved, sent in the same call, or set by environment).
 
 Required role: installAdmin. Effect: write. Account API keys never have install-admin access.
 
@@ -408,32 +5314,6 @@ Required role: installAdmin. Effect: write. Account API keys never have install-
         "type": "string",
         "maxLength": 4000
       },
-      "required": [
-        "email_provider",
-        "email_from",
-        "email_from_name",
-        "sending_enabled",
-        "send_rate_per_second",
-        "signup_mode",
-        "ses_region",
-        "ses_access_key_id",
-        "ses_secret_access_key",
-        "ses_configuration_set",
-        "ses_sns_topic_arn",
-        "resend_api_key",
-        "resend_webhook_secret",
-        "smtp_host",
-        "smtp_port",
-        "smtp_security",
-        "smtp_user",
-        "smtp_password",
-        "stripe_secret_key",
-        "stripe_webhook_secret",
-        "polar_access_token",
-        "polar_webhook_secret",
-        "cf_api_token",
-        "cf_zone_id"
-      ],
       "description": "Setting values by key"
     }
   },

@@ -3,6 +3,10 @@ import path from 'node:path'
 import { accountRegistry } from '../server/account/modules.ts'
 import { markdown } from '../server/api/index.ts'
 
-const output = path.resolve(import.meta.dirname, '../docs/api.md')
-fs.writeFileSync(output, markdown(accountRegistry, 'https://mail.example.com'))
-console.log(`Generated ${output}`)
+export const apiDocPath = path.resolve(import.meta.dirname, '../docs/api.md')
+export const renderApiDoc = () => markdown(accountRegistry, 'https://mail.example.com')
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  fs.writeFileSync(apiDocPath, renderApiDoc())
+  console.log(`Generated ${apiDocPath}`)
+}
