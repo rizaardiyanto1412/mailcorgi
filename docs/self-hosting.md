@@ -63,31 +63,41 @@ Workers Free costs nothing and fits a small newsletter. These limits apply per C
 | Requests | 100,000 a day | Every page view, open pixel, link click, signup and API call |
 | CPU time | 10 ms per request | Each request to the Worker |
 | Outbound requests | 50 per request | Each email sent is one; MailCorgi sends at most 40 per run with `WORKERS_PLAN=free` |
-| Durable Object rows written | 100,000 a day | Each email writes several rows: queue, delivery, status, stats, opens and clicks |
+| Durable Object rows written | 100,000 a day, shared by every Durable Object app on the account | About 20 per email sent, 11 per open, 14 per click, 30 per signup; reads write nothing |
 | Durable Object rows read | 5 million a day | Lists, reports and sending |
 | Durable Object storage | 5 GB in total | Contacts, issues, events and, without R2, images |
 
 When a daily limit runs out, requests fail until 00:00 UTC.
 
-**What list size fits.** The row-write limit is the one that binds. Measured on the Node build
-(`npm run test:slow`), one sent email changes 11 rows (the queued delivery, its two status
-updates, the contact, the event, the daily and campaign counters, usage, and the job rows); one
-open changes 7, one click 8, one signup 6. Cloudflare also counts every index entry a write
-touches, which roughly doubles those numbers, so budget about 22 row writes per email, 14 per open
-and 16 per click:
+**What list size fits.** The row-write limit is the one that binds, and it is shared by every
+Durable Object app on your Cloudflare account, not just MailCorgi. `npm run budget` measures rows
+written per operation on `wrangler dev` the way Cloudflare bills them, index entries included
+(`docs/performance.md`): about 20 per email sent, 11 per first open, 14 per click, 30 per signup,
+2 per website page view, and 0 for reading the dashboard, the public website or an already-counted
+open. A store that has nothing to do writes about 250 rows a day.
 
-- 100,000 ÷ 22 ≈ 4,500 emails a day with nobody opening.
-- With a typical 40% open rate and 5% click rate, each email costs about 22 + 0.4 × 14 + 0.05 × 16 ≈ 28
-  row writes, so about 3,500 emails a day.
+- 100,000 ÷ 20 = 5,000 emails a day with nobody opening or clicking.
+- With a typical 40% open rate and 5% click rate, each email costs about 20 + 0.4 × 11 + 0.05 × 14 ≈
+  25 rows, so about 4,000 emails a day.
+- A day with 3,000 emails, 1,200 opens, 150 clicks, 50 signups and 2,000 page views uses about
+  60,000 + 13,200 + 2,100 + 1,500 + 4,000 ≈ 81,000 rows.
 - Outbound requests do not bind: each send run makes at most 40 (one settings read, one suppression
   check, one permit call and 37 emails), and runs repeat as often as the alarm fires.
 
-So a Free install sends to about 3,500 subscribers a day. A larger list still works but a single
+So a Free install sends to about 4,000 subscribers a day. A larger list still works but a single
 issue then takes several days to go out (a 10,000-subscriber issue takes three), and opens and
 clicks arriving on top can push a day over the limit. Move to Workers Paid ($5 a month) when your
 list passes about 3,000 subscribers, when you send more than once a day, or when the dashboard
-shows errors about daily limits. After you upgrade, delete the `WORKERS_PLAN` line from
+shows the daily-limit banner. After you upgrade, delete the `WORKERS_PLAN` line from
 `wrangler.jsonc` in your repository so each send run can make up to 900 requests.
+
+**When the writes run out.** Cloudflare refuses every database write until 00:00 UTC. MailCorgi
+keeps reading: the dashboard, sign-in state, the public website and feeds all work, a tracked link
+still redirects (the click is not counted), the open pixel still answers, and an unsubscribe page
+says it could not be recorded and asks the reader to try again later. Anything that writes answers
+`503 storage_write_limit` with that explanation, the dashboard shows one banner, and sending pauses
+without spending retries. A cron trigger in `wrangler.jsonc` wakes every store at 00:05 UTC so
+queued sends resume by themselves.
 
 ## Run with Docker
 
@@ -536,8 +546,10 @@ complaints cross the safe rate. Check its report and clean the list before you r
 **Cloudflare deploy fails with an R2 error.** Enable R2 on the account, or delete the `r2_buckets`
 block from `wrangler.jsonc` and push again.
 
-**Cloudflare requests fail late in the day.** You reached a Workers Free daily limit. It resets at
-00:00 UTC. Move to Workers Paid if it happens often.
+**Cloudflare requests fail late in the day, or the dashboard shows the daily-limit banner.** You
+reached a Workers Free daily limit, usually the 100,000 database writes shared by the whole
+account. It resets at 00:00 UTC; reading keeps working until then. Move to Workers Paid if it
+happens often.
 
 **Saved provider keys stopped working after a move.** The new install has a different `secret.key` or
 `APP_SECRET`. Restore the old one, or enter the keys again in **Admin → Email**.

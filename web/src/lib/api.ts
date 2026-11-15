@@ -31,6 +31,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!response.ok) {
     if (response.status === 401 && !path.includes('/api/auth/')) window.dispatchEvent(new Event('mc:signed-out'))
     if (data?.code === 'limit_reached' && data?.details?.billingUrl === '/settings/billing') window.dispatchEvent(new Event('mc:plan-limit'))
+    if (data?.code === 'storage_write_limit') window.dispatchEvent(new Event('mc:storage-write-limit'))
     throw new ApiError(data?.error || `Request failed (${response.status}).`, response.status, data?.code, data?.details)
   }
   return data as T

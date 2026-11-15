@@ -1,4 +1,4 @@
-import { MAX_PARAMS, type Db } from './db.ts'
+import { MAX_PARAMS, isWriteRefused, type Db } from './db.ts'
 import type { StoreCtx } from './store.ts'
 import { newId } from './ids.ts'
 import { randomToken } from './crypto.ts'
@@ -135,6 +135,9 @@ export async function runDueJobs(ctx: StoreCtx, budget: Budget, opts: RunOptions
       if (result === 'done') db.run('DELETE FROM jobs WHERE id = ? AND claim_token = ?', job.id, job.claim_token)
       else db.run('UPDATE jobs SET run_at = ?, locked_until = NULL, claim_token = NULL WHERE id = ? AND claim_token = ?', Math.max(result.again, ctx.now()), job.id, job.claim_token)
     } catch (err) {
+      // A refused write is the platform's doing, not the job's: no attempt is spent, and the
+      // alarm fails so the platform retries it. The lease expires on its own.
+      if (isWriteRefused(err)) throw err
       fail(ctx, job, err instanceof Error ? err.message : String(err), opts)
     }
   }

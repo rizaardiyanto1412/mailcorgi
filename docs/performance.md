@@ -32,18 +32,55 @@ provider writes none.
 
 ## Row writes per operation
 
-Measured by summing `changes` over every statement on the Node driver:
+`npm run budget` (`scripts/write-budget.ts`) drives `wrangler dev` through a fixed scenario and
+reads the dev-only write meter (`GET /api/dev/writes`), which sums `rowsWritten` and `rowsRead` of
+every statement plus one write per `setAlarm`, the way Cloudflare bills a Durable Object. Index
+entries are included. Measured on 2026-11-16, before and after the write-budget work:
 
-| Operation | Rows changed |
-|---|---|
-| Plan one delivery | 1 |
-| Send one email | 10 |
-| One open | 7 |
-| One click | 8 |
-| One signup | 5 |
+| Operation | Rows written, before | Rows written, after | Rows read, after |
+|---|---|---|---|
+| SPA index (`GET /`), `/healthz` | 0 | 0 | 0 |
+| `GET /api/auth/bootstrap` | 2 | 0 | 13 |
+| `contacts.list` | 3 | 0 | 13 |
+| `stats.overview` | 3 | 0 | 23 |
+| Website page view (`GET /n/<slug>/`) | 9 | 0 | 11 |
+| Website page view, second visitor | 6 | 0 | 8 |
+| Public subscribe (`POST /api/public/subscribe/…`) | 31 | 30 | 19 |
+| Import one contact (upload, start, process) | 91 | 66 | 175 |
+| Send one issue to two readers (plan, send, finish) | 133 | 114 | 214 |
+| First open (`GET /t/o/`) | 14 | 11 | 15 |
+| Repeat open of the same delivery | 6 | 0 | 8 |
+| First click (`GET /t/c/`) | 14 | 14 | 34 |
+| Idle minute, nothing queued | 0 | 0 | 0 |
+| Idle minute with a campaign scheduled for tomorrow | 0 | 0 | 0 |
 
-Cloudflare counts index entries too, so budget about double on Workers. `docs/self-hosting.md`
-turns these into a list size for Workers Free.
+The "before" column was measured on commit `b548698` with only the meter added. Every read used to
+cost two or three rows because each store invocation re-armed its alarm (one row) and the
+account-exists and session lookups at the edge re-armed the control store too. Now a store calls
+`setAlarm` only when the next wake time differs from the one it holds in memory.
+
+Deferred bookkeeping (page views, repeat opens, rate-limit counters) waits in memory and lands in
+one batch with the next alarm, within five minutes of one that is queued anyway. A flushed page
+view costs about 2 rows (the row and its index entry) plus one `daily_stats` upsert per newsletter
+and day per batch. The idle rows above are measured over one minute; over a day an idle account
+store now writes about 5 rows every 30 minutes for its stats check (about 250 a day), where it used
+to rebuild its daily stats every 5 minutes (about 25 rows each, 7,000 a day) whether anything had
+changed or not.
+
+Per email the marginal cost is about 20 rows (the delivery row and its indexes at planning, two
+status updates, the contact, the hygiene epoch, the `send` event with its four indexes); the daily,
+campaign and usage counters are now written once per batch instead of once per email. A first open
+is 11 rows, a click 14, a signup 30 (the contact has nine indexes, the event four, plus the
+confirmation mail and its job). `docs/self-hosting.md` turns these into a list size for Workers
+Free.
+
+Where the remaining rows go, and what would cut them further (not done here):
+
+- `contacts` carries nine indexes, so every new contact writes ten rows; `events` carries four.
+  Dropping the paging indexes that the contacts page does not use would save three per signup and
+  per imported row.
+- A send event per email (five rows with indexes) exists for the contact timeline; a per-campaign
+  summary would do for the report.
 
 ## What the load pass changed
 

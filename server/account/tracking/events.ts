@@ -126,6 +126,37 @@ export function recordOpen(ctx: StoreCtx, d: DeliveryWithNewsletter, at: number,
   })
 }
 
+const REPEAT_OPENS = 'tracking.repeatOpens'
+interface RepeatOpen { deliveryId: number; contactId: string; n: number; at: number; strict: boolean }
+
+/** A later open of the same delivery only bumps counters, so it waits in memory and lands in one batch. */
+export function recordRepeatOpen(ctx: StoreCtx, d: DeliveryWithNewsletter, at: number, privacyProxy = false) {
+  let pending = ctx.memory.get(REPEAT_OPENS) as Map<number, RepeatOpen> | undefined
+  if (!pending) {
+    pending = new Map()
+    ctx.memory.set(REPEAT_OPENS, pending)
+  }
+  const row = pending.get(d.id) ?? { deliveryId: d.id, contactId: d.contact_id, n: 0, at, strict: false }
+  row.n++
+  row.at = Math.max(row.at, at)
+  row.strict ||= !privacyProxy
+  pending.set(d.id, row)
+  ctx.later.add(REPEAT_OPENS, flushRepeatOpens)
+}
+
+export function flushRepeatOpens(ctx: StoreCtx) {
+  const pending = ctx.memory.get(REPEAT_OPENS) as Map<number, RepeatOpen> | undefined
+  if (!pending?.size) return
+  const rows = [...pending.values()]
+  pending.clear()
+  ctx.db.tx(() => {
+    for (const r of rows) {
+      ctx.db.run('UPDATE deliveries SET open_count = open_count + ? WHERE id = ?', r.n, r.deliveryId)
+      ctx.db.run('UPDATE contacts SET open_count = open_count + ?, last_opened_at = MAX(COALESCE(last_opened_at, 0), ?), ignored_streak = 0, strict_ignored_streak = CASE WHEN ? THEN 0 ELSE strict_ignored_streak END, updated_at = ?, engaged_score = ROUND((open_count + ? + 3.0 * click_count) / MAX(sent_count, 1), 3) WHERE id = ?', r.n, r.at, r.strict ? 1 : 0, r.at, r.n, r.contactId)
+    }
+  })
+}
+
 export const BURST_WINDOW_MS = 10_000
 
 /** Count a click; a burst that hits every link of the issue within seconds is a scanner and is undone. */

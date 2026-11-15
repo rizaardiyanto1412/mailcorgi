@@ -17,6 +17,8 @@ declare module '../rpc.ts' {
   interface ControlRpc {
     requestBlock(args: { accountId: string; evidence: { incidentId: string; reason: 'bounce_rate' | 'complaint_rate' | 'spam_trap'; at: number; total: number; bounces: number; complaints: number } }): Promise<void>
     accountExists(args: { accountId: string }): Promise<boolean>
+    /** Live account ids, oldest first, for the daily wake-up after a write quota reset. */
+    listAccountIds(args: { limit: number }): Promise<string[]>
     resolveAppHost(args: { setupOrigin?: string }): Promise<string>
   }
 }
@@ -54,6 +56,7 @@ export const adminModule = {
   register(reg: ControlRegistrar) {
     registerAlerts(reg)
     reg.rpc('accountExists', (ctx, { accountId }) => isAccountId(accountId) && !!ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', accountId))
+    reg.rpc('listAccountIds', (ctx, { limit }) => ctx.db.all<{ id: string }>('SELECT id FROM accounts WHERE deleted_at IS NULL ORDER BY created_at LIMIT ?', Math.max(1, Math.min(500, Number(limit) || 1))).map((r) => r.id))
     reg.rpc('resolveAppHost', (ctx, { setupOrigin }) => {
       let origin = appUrl(ctx) || getSettingSync(ctx, 'setup_origin')
       if (!origin && setupOrigin) {

@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import type { StoreCtx } from './store.ts'
 import type { Actor } from './actions.ts'
+import { isWriteRefused } from './db.ts'
 
 export class AppError extends Error {
   code: string
@@ -18,13 +19,20 @@ export const notFound = (what = 'That') => new AppError('not_found', `${what} wa
 export const forbidden = (message = "You can't do that.") => new AppError('forbidden', message, 403)
 export const unauthorized = (message = 'Sign in to continue.') => new AppError('unauthorized', message, 401)
 
+export const STORAGE_WRITE_LIMIT_MESSAGE = "Cloudflare's free plan allows 100,000 database writes a day and this account has used them. Reading still works. Writes resume at 00:00 UTC, or now if you upgrade to Workers Paid."
+/** The error every entry point answers when the platform refuses a row write. */
+export const storageWriteLimit = () => new AppError('storage_write_limit', STORAGE_WRITE_LIMIT_MESSAGE, 503)
+/** An `AppError` for anything the kernel can name; a refused write becomes `storage_write_limit`. */
+export const asAppError = (err: unknown): AppError | null => (err instanceof AppError ? err : isWriteRefused(err) ? storageWriteLimit() : null)
+
 export type ErrorBody = { error: string; code: string; details?: unknown }
 
 export function errorResponse(err: unknown): Response {
-  if (err instanceof AppError) {
-    const body: ErrorBody = { error: err.message, code: err.code }
-    if (err.details !== undefined) body.details = err.details
-    return Response.json(body, { status: err.status })
+  const known = asAppError(err)
+  if (known) {
+    const body: ErrorBody = { error: known.message, code: known.code }
+    if (known.details !== undefined) body.details = known.details
+    return Response.json(body, { status: known.status })
   }
   console.error('[http]', err)
   return Response.json({ error: 'Something went wrong.', code: 'internal' }, { status: 500 })

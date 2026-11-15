@@ -16,15 +16,23 @@ const recipientInput = z.object({ campaignId, status: recipientStatus, after: z.
 const recipientWhere = (status: z.output<typeof recipientStatus>) => status === 'all' ? '1 = 1' : status === 'opened' ? 'd.opened_at IS NOT NULL' : status === 'clicked' ? 'd.clicked_at IS NOT NULL' : status === 'unsubscribed' ? 'd.unsubscribed_at IS NOT NULL' : 'd.status = ?'
 const csv = (value: string | number | null) => '"' + String(value ?? '').replace(/^[\s]*[=+\-@\t\r]/, (match) => "'" + match).replaceAll('"', '""') + '"'
 
+const ROLLUP_EVERY_MS = 5 * 60_000
+const ROLLUP_IDLE_MS = 30 * 60_000
+
 export const statsModule = {
   name: 'stats',
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
     reg.maintenance((ctx) => { if (ctx.db.get("SELECT 1 FROM account_meta WHERE key = 'policy' AND json_extract(value, '$.status') != 'deleting'")) ctx.jobs.enqueue('stats.rollup', {}, { dedupeKey: 'stats.rollup' }) })
     reg.job('stats.rollup', async (ctx, _input, budget) => {
+      // Nothing to repair when nothing changed since the last run: the store stays idle and the
+      // next check waits longer. The marker lives in memory, so a restart costs one extra run.
+      const mark = ctx.db.get<{ m: string }>(`SELECT (SELECT COALESCE(MAX(id), 0) FROM events) || ':' || (SELECT COALESCE(MAX(id), 0) FROM page_views) || ':' || (SELECT COALESCE(MAX(id), 0) FROM deliveries) || ':' || (SELECT COUNT(*) FROM campaigns WHERE status IN ('sending', 'paused', 'scheduled')) || ':' || (SELECT COUNT(*) FROM provider_events) AS m`)!.m
+      if (ctx.memory.get('stats.rollup') === mark) return { again: ctx.now() + ROLLUP_IDLE_MS }
       const newsletters = ctx.db.all<{ id: string }>('SELECT id FROM newsletters WHERE archived_at IS NULL')
       for (const n of newsletters) ctx.jobs.enqueue('stats.newsletter', { newsletterId: n.id }, { dedupeKey: `stats.newsletter:${n.id}` })
-      return { again: ctx.now() + (budget.expired() ? 1000 : 5 * 60_000) }
+      ctx.memory.set('stats.rollup', mark)
+      return { again: ctx.now() + (budget.expired() ? 1000 : ROLLUP_EVERY_MS) }
     })
     reg.job<{ newsletterId: string }>('stats.newsletter', async (ctx, { newsletterId }) => {
       rebuildDaily(ctx, newsletterId, ctx.now() - ROLLUP_WINDOW_DAYS * DAY)

@@ -90,8 +90,11 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 
 No secrets are needed to deploy. R2 must be enabled on your Cloudflare account once. If you do not want
 R2, delete the `r2_buckets` block in `wrangler.jsonc` and images are stored inside the Durable Objects.
-The [Cloudflare section of the self-hosting guide](docs/self-hosting.md#run-on-cloudflare) covers custom
-domains and Workers Free limits.
+Workers Free fits a small list: its 100,000 database writes a day (shared by everything on your
+Cloudflare account) cover about 4,000 emails a day with typical opens and clicks, and when they run
+out the app keeps reading until 00:00 UTC. The [Cloudflare section of the self-hosting
+guide](docs/self-hosting.md#run-on-cloudflare) has the arithmetic, custom domains and when to move to
+Workers Paid.
 
 ### Docker
 

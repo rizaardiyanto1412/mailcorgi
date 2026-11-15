@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import type { Db, Migration } from './db.ts'
-import { migrate } from './db.ts'
+import type { Db, Meter, Migration } from './db.ts'
+import { createMeter, isWriteRefused, migrate } from './db.ts'
 import type { Platform, StoreRef } from './platform.ts'
 import { storeId } from './platform.ts'
 import type { Config } from './config.ts'
@@ -8,7 +8,7 @@ import type { Keys } from './crypto.ts'
 import { openEnvelope } from './crypto.ts'
 import { Budget, createJobs, nextWakeAt, runDueJobs, type Jobs } from './jobs.ts'
 import { runAction, type Actor, type Registry } from './actions.ts'
-import { AppError, errorResponse, jsonNotFound, readJson, withSecurityHeaders, type StoreEnv } from './http.ts'
+import { AppError, asAppError, errorResponse, jsonNotFound, readJson, withSecurityHeaders, type StoreEnv } from './http.ts'
 import type { ControlRpc } from '../control/rpc.ts'
 import type { AccountRpc } from '../account/rpc.ts'
 
@@ -28,6 +28,18 @@ export interface StoreCtx {
   now(): number
   jobs: Jobs
   registry: Registry
+  /** Rows written and read since this store instance opened (see `Meter`). */
+  meter: Meter
+  /** Writes that may wait: queued here, they run in one batch on the next alarm or after the next write. */
+  later: Later
+  /** Per-instance scratch for state that may be lost on a restart (counters, caches). */
+  memory: Map<string, unknown>
+}
+
+export interface Later {
+  /** Queue a flush under `key`; a repeat replaces it, so a module aggregates in memory and writes the total once. */
+  add(key: string, flush: (ctx: StoreCtx) => void): void
+  pending(): boolean
 }
 
 export interface StoreDeps {
@@ -38,6 +50,7 @@ export interface StoreDeps {
   config: Config
   keys: Keys
   now: () => number
+  meter?: Meter
 }
 
 export interface Store {
@@ -47,12 +60,21 @@ export interface Store {
   rpc(name: string, args: unknown): Promise<unknown>
   alarm(): Promise<void>
   nextWakeAt(): number | null
-  /** Re-arm the alarm from the jobs table. Every entry point does this on the way out. */
+  /** Re-arm the alarm when the next wake time changed. Every entry point does this on the way out. */
   rearm(): Promise<void>
+  /** Run the deferred writes now. */
+  flush(): void
+  meter: Meter
+  /** When the platform last refused a row write, or null. In memory only. */
+  writesRefusedAt(): number | null
 }
 
 /** How long one alarm run may take before handlers yield. */
 const ALARM_RUN_MS = 20_000
+/** How long deferred writes may wait before an alarm flushes them. */
+export const FLUSH_AFTER_MS = 60_000
+/** An alarm already armed this much later than that still carries the flush, so arming costs nothing extra. */
+const FLUSH_SLACK_MS = 5 * 60_000
 export const ACTOR_HEADER = 'x-mc-actor'
 export const ACTOR_TTL_MS = 60_000
 
@@ -65,8 +87,10 @@ export interface ActorEnvelope {
 /** Turn a thrown error into a JSON result that crosses the RPC boundary intact. */
 export type RpcResult = { ok: true; result: unknown } | { ok: false; code: string; message: string; status: number; details?: unknown }
 
-export const encodeRpcError = (err: unknown): RpcResult =>
-  err instanceof AppError ? { ok: false, code: err.code, message: err.message, status: err.status, details: err.details } : { ok: false, code: 'internal', message: err instanceof Error ? err.message : String(err), status: 500 }
+export const encodeRpcError = (err: unknown): RpcResult => {
+  const known = asAppError(err)
+  return known ? { ok: false, code: known.code, message: known.message, status: known.status, details: known.details } : { ok: false, code: 'internal', message: err instanceof Error ? err.message : String(err), status: 500 }
+}
 
 export function decodeRpcResult(result: RpcResult): unknown {
   if (result.ok) return result.result
@@ -76,18 +100,72 @@ export function decodeRpcResult(result: RpcResult): unknown {
 export function createStore(registry: Registry, migrations: readonly Migration[], deps: StoreDeps): Store {
   const { db, platform, ref } = deps
   const id = storeId(ref)
+  const meter = deps.meter ?? createMeter()
   migrate(db, [...migrations, ...registry.migrations], deps.now)
 
+  let refusedAt: number | null = null
+  const noteRefused = (err: unknown) => {
+    if (isWriteRefused(err)) refusedAt = deps.now()
+  }
+
+  const flushes = new Map<string, (ctx: StoreCtx) => void>()
+  let flushDueAt: number | null = null
+  const later: Later = {
+    add(key, flush) {
+      flushes.set(key, flush)
+      // The entry point that called this re-arms on the way out, so the alarm is set once.
+      if (flushDueAt === null) flushDueAt = deps.now() + FLUSH_AFTER_MS
+    },
+    pending: () => flushes.size > 0,
+  }
+  const flush = () => {
+    if (!flushes.size) return
+    const batch = [...flushes.entries()]
+    flushes.clear()
+    flushDueAt = null
+    for (const [key, fn] of batch) {
+      try {
+        fn(ctx)
+      } catch (err) {
+        noteRefused(err)
+        // The batch is lost on a refused write; the next views start a new one.
+        if (!isWriteRefused(err)) console.error('[flush]', key, err)
+      }
+    }
+  }
+  const nextWake = (): number | null => {
+    const jobsAt = nextWakeAt(db)
+    if (flushDueAt === null) return jobsAt
+    if (jobsAt !== null && jobsAt <= flushDueAt + FLUSH_SLACK_MS) return jobsAt
+    return flushDueAt
+  }
+
+  // The time the platform holds, so a store only pays for `setAlarm` when the time changes.
+  // `undefined` means "ask the platform", as after a restart.
+  let armed: number | null | undefined = undefined
   let arming: Promise<void> | null = null
   const rearm = (): Promise<void> => {
-    // Serialize writes and read the queue after earlier writes finish. Every invocation repairs
-    // a missing alarm, including when a previous registration failed or an alarm was consumed.
+    // Serialize writes and read the queue after earlier writes finish, so the last word wins.
     if (arming) return arming.catch(() => {}).then(rearm)
-    const write = async () => { await platform.setAlarm(ref, nextWakeAt(db)) }
+    const write = async () => {
+      const desired = nextWake()
+      if (armed === undefined) armed = await platform.getAlarm(ref)
+      if (desired === armed) return
+      try {
+        await platform.setAlarm(ref, desired)
+        armed = desired
+      } catch (err) {
+        armed = undefined
+        noteRefused(err)
+        throw err
+      }
+    }
     arming = write().finally(() => { arming = null })
     return arming
   }
-  const jobs = createJobs(db, deps.now, () => void rearm().catch((err) => console.error('[alarm]', err)))
+  // A refused `setAlarm` must not turn a finished request into an error; the next entry retries.
+  const rearmQuietly = () => rearm().catch((err) => { if (!isWriteRefused(err)) console.error('[alarm]', err) })
+  const jobs = createJobs(db, deps.now, () => void rearmQuietly())
 
   const ctx: StoreCtx = {
     kind: ref.kind,
@@ -100,6 +178,9 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
     now: deps.now,
     jobs,
     registry,
+    meter,
+    later,
+    memory: new Map(),
   }
 
   // Without APP_URL only the control store learns the address (at sign-in). An account store has its
@@ -123,7 +204,10 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
     c.set('actor', actor)
     await next()
   })
-  app.onError((err) => errorResponse(err))
+  app.onError((err) => {
+    noteRefused(err)
+    return errorResponse(err)
+  })
   app.post('/api/actions/:name', async (c) => {
     const actor = c.get('actor')
     if (!actor) return c.json({ error: 'Sign in to continue.', code: 'unauthorized' }, 401)
@@ -134,31 +218,48 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
   for (const mount of registry.routes) mount(app)
   app.all('*', (c) => jsonNotFound(c))
 
+  // Deferred writes ride along with an invocation that wrote anyway; an idle store waits for the alarm.
+  const leave = async (wroteBefore: number) => {
+    if (flushes.size && meter.writes > wroteBefore) flush()
+    await rearmQuietly()
+  }
+
   const store: Store = {
     ctx,
     ref,
+    meter,
+    writesRefusedAt: () => refusedAt,
+    flush,
     async fetch(request) {
+      const before = meter.writes
       try {
         await learnAppUrl()
         return withSecurityHeaders(await app.fetch(request))
       } finally {
-        await rearm()
+        await leave(before)
       }
     },
     async rpc(name, args) {
+      const before = meter.writes
       try {
         const fn = registry.rpc.get(name)
         if (!fn) throw new AppError('unknown_rpc', `Unknown RPC ${name} on the ${ref.kind} store.`, 404)
         if (name !== 'bootstrap') await learnAppUrl()
         return await fn(ctx, args)
+      } catch (err) {
+        noteRefused(err)
+        throw err
       } finally {
-        await rearm()
+        await leave(before)
       }
     },
     async alarm() {
+      // The platform consumed the alarm it held; the end of this run arms the next one.
+      armed = null
       const budget = new Budget(deps.now() + ALARM_RUN_MS, platform.limits.subrequestsPerRun, deps.now)
       try {
         await learnAppUrl()
+        flush()
         await runDueJobs(ctx, budget, {
           onDead: (ctx, job, error) => {
             if (job.kind === 'alerts.raise') return
@@ -169,17 +270,22 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
           try {
             fn(ctx)
           } catch (err) {
-            console.error('[maintenance]', err)
+            noteRefused(err)
+            if (!isWriteRefused(err)) console.error('[maintenance]', err)
           }
         }
+      } catch (err) {
+        noteRefused(err)
+        throw err
       } finally {
-        await rearm()
+        // A refused write here means the platform must retry the alarm itself, so this one may throw.
+        await rearm().catch((err) => { if (!isWriteRefused(err)) console.error('[alarm]', err) })
       }
     },
-    nextWakeAt: () => nextWakeAt(db),
+    nextWakeAt: nextWake,
     rearm,
   }
-  void rearm().catch((err) => console.error('[alarm]', err))
+  void rearmQuietly()
   return store
 }
 
