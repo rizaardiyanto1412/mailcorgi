@@ -133,7 +133,7 @@ export const contactsModule = {
         }
         return { changed: new Set(i.contactIds).size }
       }) }),
-      defineAction({ name: 'contacts.export', description: 'Export a formula-safe CSV page. Follow nextCursor until null or download the streamed CSV endpoint.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: listSchema, rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts/export' }, mcp: { title: 'Export contacts', destructive: false }, handler: exportPage }),
+      defineAction({ name: 'contacts.export', description: 'Export a formula-safe CSV page. Follow nextCursor until null or download the streamed CSV endpoint.', scope: 'account', role: 'admin', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: listSchema, rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts/export' }, mcp: { title: 'Export contacts', destructive: false }, handler: exportPage }),
     )
   },
 }

@@ -170,6 +170,10 @@ test('HTTP membership and other account access cannot leak contacts or streamed 
     assert.equal((await member.actionRaw('contacts.get', { newsletterId: a.id, contactId: contact.id })).status, 404)
     assert.equal((await member.actionRaw('contacts.list', { newsletterId: b.id })).status, 403)
     assert.equal((await member.fetch('/api/actions/contacts.export?newsletterId=' + b.id)).status, 403)
+    // Members see contacts in their own newsletter but only admins export the whole list.
+    assert.equal((await member.actionRaw('contacts.list', { newsletterId: a.id })).status, 200)
+    assert.equal((await member.fetch('/api/actions/contacts.export?newsletterId=' + a.id)).status, 403)
+    assert.equal((await member.actionRaw('contacts.export', { newsletterId: a.id })).status, 403)
     assert.equal((await install.fetch('/api/actions/contacts.export?newsletterId=' + b.id)).status, 401)
     const other = await install.signUp({ email: 'other@example.com' })
     assert.equal((await other.actionRaw('contacts.get', { newsletterId: b.id, contactId: contact.id })).status, 404)

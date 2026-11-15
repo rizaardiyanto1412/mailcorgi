@@ -28,3 +28,17 @@ own, because it was emailed to that address. `ADMIN_EMAILS` grants install admin
 First-run setup is unchanged and needs no email provider. An install with no provider can still add
 people by invite only if the admin can read the test outbox, so the self-hosting guide now says to
 configure a provider before letting others sign up.
+
+## Team roles against section 6
+
+Contract: members write and edit drafts and see stats; admins also publish, send, import, export
+and change settings.
+
+`contacts.export` and `imports.skipped` (a CSV of the skipped rows, which are contact addresses) now
+need `admin`, and the dashboard shows their download links only to admins. Members still list and
+open contacts and see import progress, because they pick audiences and read stats.
+`website.publishPost` stays at `member` on purpose: its handler already refuses `visible: true`, or
+any edit of a public post, unless the caller is an admin (`website.test.ts`, "members draft web-only
+posts; admins publish and hide them"). A member can only keep a hidden draft. `campaigns.sendTest`
+stays at `member`: a test goes to at most five addresses the writer types, never to the list, and it
+counts against the monthly limit.
