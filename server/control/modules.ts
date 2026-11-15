@@ -8,9 +8,10 @@ import { installModule } from './install/index.ts'
 import { billingModule } from './billing/index.ts'
 import { adminModule } from './admin/index.ts'
 import { suppressionModule } from './suppression/index.ts'
+import { setupModule } from './setup/index.ts'
 
 /** Every control store module, wired once. A module adds itself here and nowhere else. */
-const modules = { api: apiControlModule, auth: authModule, accounts: accountsModule, directory: directoryModule, install: installModule, billing: billingModule, admin: adminModule, suppression: suppressionModule }
+const modules = { api: apiControlModule, auth: authModule, accounts: accountsModule, directory: directoryModule, install: installModule, billing: billingModule, admin: adminModule, suppression: suppressionModule, setup: setupModule }
 
 export const controlRegistry = buildRegistry<'control', ControlRpc>('control', Object.values(modules))
 

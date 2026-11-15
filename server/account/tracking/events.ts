@@ -165,3 +165,9 @@ export function recordClick(ctx: StoreCtx, d: DeliveryWithNewsletter, link: { id
     score(ctx, d.contact_id)
   })
 }
+
+/** How many provider webhook events this store has accepted, and when the last one arrived. */
+export function providerEventStats(ctx: StoreCtx): { count: number; lastAt: number | null } {
+  const row = ctx.db.get<{ n: number; last: number | null }>('SELECT COUNT(*) AS n, MAX(received_at) AS last FROM provider_events')!
+  return { count: row.n, lastAt: row.last }
+}

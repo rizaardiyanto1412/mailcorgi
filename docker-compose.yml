@@ -1,39 +1,44 @@
-# MailCorgi: a self-hosted newsletter app.
+# MailCorgi: a self-hosted newsletter app. Guide: docs/self-hosting.md
 #
-#   Try it:          docker compose up -d                  -> http://localhost:3000
+#   Try it:          docker compose up -d                   -> http://localhost:3000
 #   Run with HTTPS:  set DOMAIN and APP_URL in .env, then
-#                    docker compose --profile https up -d   -> https://your-domain
+#                    docker compose --profile https up -d    -> https://your-domain
+#
+# Every variable in .env reaches the app, so provider keys can live there too (see .env.example).
 services:
   mailcorgi:
     build: .
     image: mailcorgi:latest
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
       # The public address of this install. Used for links in emails and for secure cookies.
       APP_URL: ${APP_URL:-http://localhost:3000}
-      # "true" turns on open sign-up with emailed codes, plans and billing.
-      CLOUD: ${CLOUD:-}
-      # Comma-separated install admins and, on self-hosted, who may sign up.
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      # The container always listens on 3000 and keeps its data in the /data volume.
+      PORT: "3000"
+      DATA_DIR: /data
     volumes:
       - mailcorgi-data:/data
     ports:
       # Only this machine can reach the port by default. Caddy (below) serves the public side.
-      - "${BIND:-127.0.0.1}:${PORT:-3000}:3000"
+      - "${BIND:-127.0.0.1}:${MAILCORGI_PORT:-3000}:3000"
 
   # Automatic HTTPS with Let's Encrypt, plus on-demand certificates for custom website hosts.
   caddy:
     profiles: ["https"]
     image: caddy:2-alpine
     restart: unless-stopped
-    depends_on: [mailcorgi]
+    depends_on:
+      mailcorgi:
+        condition: service_healthy
     environment:
       DOMAIN: ${DOMAIN:-localhost}
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
