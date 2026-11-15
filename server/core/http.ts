@@ -59,7 +59,9 @@ export async function readJson<T = Record<string, unknown>>(c: Context<any>): Pr
   }
 }
 
-export const clientIp = (c: Context<any>) => c.req.header('cf-connecting-ip') || (c.req.header('x-forwarded-for') || '').split(',')[0].trim() || c.req.header('x-real-ip') || ''
+/** Set only by the edge, from what the platform can vouch for. Client-sent forwarding headers are never read. */
+export const CLIENT_IP_HEADER = 'x-mc-ip'
+export const clientIp = (c: Context<any>) => c.req.header(CLIENT_IP_HEADER) || ''
 
 export const jsonNotFound = (c: Context<any>) => c.json({ error: 'Not found.', code: 'not_found' }, 404)
 

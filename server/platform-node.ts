@@ -79,6 +79,15 @@ export function openDriver(file: string): { driver: Driver; close(): void } {
   return { driver, close: () => db.close() }
 }
 
+const isPrivatePeer = (ip: string) => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(ip)
+
+/** A proxy on this host or network (Caddy in Compose) appends the client it saw last; anyone else is the client. */
+export function nodeClientIp(request: Request, peer: string | null): string {
+  const socket = (peer ?? '').replace(/^::ffff:/i, '')
+  if (!socket || !isPrivatePeer(socket)) return socket
+  return (request.headers.get('x-forwarded-for') ?? '').split(',').map((part) => part.trim()).filter(Boolean).at(-1) ?? socket
+}
+
 export function diskBlobs(root: string): BlobStore {
   const fileOf = (key: string) => {
     const file = path.join(root, key)
@@ -233,6 +242,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     blobs: platform.blobs,
     assets: opts.assets ?? (async () => new Response('Not found', { status: 404 })),
     now,
+    clientIp: nodeClientIp,
   })
 
   let ticking = false

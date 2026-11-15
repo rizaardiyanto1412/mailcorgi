@@ -6,7 +6,7 @@ import { createNodeApp, nodeAssets } from './platform-node.ts'
 const config = parseConfig(process.env)
 const app = await createNodeApp({ config, assets: nodeAssets(path.resolve(process.env.WEB_DIR || 'web/dist')) })
 
-const server = serve({ fetch: (request) => app.edge.fetch(request), port: config.port, hostname: config.host }, (info) => {
+const server = serve({ fetch: (request, env: { incoming?: { socket?: { remoteAddress?: string } } }) => app.edge.fetch(request, env.incoming?.socket?.remoteAddress ?? null), port: config.port, hostname: config.host }, (info) => {
   console.log(`MailCorgi is running at http://localhost:${info.port}${config.appUrl ? ` (public URL: ${config.appUrl})` : ''}`)
 })
 app.startScheduler()
