@@ -169,7 +169,12 @@ export async function runAction(ctx: StoreCtx, name: string, rawInput: unknown, 
   const input = parsed.data as Record<string, unknown>
   authorize(ctx, action, input, actor)
   ctx.registry.guard?.(ctx, action, actor)
-  return action.handler(ctx, input, actor)
+  try {
+    return await action.handler(ctx, input, actor)
+  } catch (err) {
+    if (ctx.config.cloud && err instanceof AppError && err.code === 'limit_reached') throw new AppError(err.code, err.message, err.status, { billingUrl: '/settings/billing' })
+    throw err
+  }
 }
 
 /** A typed `runAction` for a known action map, used by tests and the web client types. */

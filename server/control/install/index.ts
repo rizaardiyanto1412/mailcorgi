@@ -1,11 +1,14 @@
 import { z } from 'zod'
+import { AppError } from '../../core/http.ts'
+import { sendSystemEmail, simpleEmail } from '../../email/index.ts'
+import { takeSendPermits } from './permits.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { defineAction } from '../../core/actions.ts'
 import { decrypt, encrypt } from '../../core/crypto.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 
 /** Settings whose values are encrypted at rest and never returned to a browser. */
-export const isSecretSetting = (key: string) => /(secret|password|api_key|token)/.test(key)
+export const isSecretSetting = (key: string) => /(secret|password|api_key|token|access_key_id|smtp_user)/.test(key)
 
 /** Which env var overrides a setting: `ses_access_key_id` → `SES_ACCESS_KEY_ID`. */
 const envName = (key: string) => key.toUpperCase()
@@ -73,10 +76,45 @@ export const SETTING_KEYS = [
 
 const settingKey = z.enum(SETTING_KEYS)
 
+declare module '../rpc.ts' {
+  interface ControlRpc {
+    claimEmailDomain(args: { name: string; accountId: string; domainId: string }): Promise<{ claimed: boolean }>
+    releaseEmailDomain(args: { name: string; accountId: string; domainId: string }): Promise<void>
+  }
+}
+
+function validateSettings(values: Record<string, string>) {
+  for (const [key, value] of Object.entries(values)) {
+    if (/[\r\n\0]/.test(value)) throw new AppError('invalid_setting', 'Settings must fit on one line.', 400)
+    if (value === '') continue
+    if (key === 'email_provider' && !['test', 'ses', 'resend', 'smtp'].includes(value)) throw new AppError('invalid_setting', 'Choose a supported email provider.', 400)
+    if (key === 'email_from' && !z.email().safeParse(value).success) throw new AppError('invalid_setting', 'Enter a valid system sender address.', 400)
+    if (key === 'sending_enabled' && !['true', 'false'].includes(value)) throw new AppError('invalid_setting', 'Sending enabled must be true or false.', 400)
+    if (key === 'send_rate_per_second' && (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 10000)) throw new AppError('invalid_setting', 'Send rate must be between 0 and 10000.', 400)
+    if (key === 'smtp_port' && (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535)) throw new AppError('invalid_setting', 'Enter a valid SMTP port.', 400)
+    if (key === 'smtp_security' && !['tls', 'starttls', 'none'].includes(value)) throw new AppError('invalid_setting', 'Choose a supported SMTP security mode.', 400)
+    if (key === 'ses_region' && !/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(value)) throw new AppError('invalid_setting', 'Enter a valid SES region.', 400)
+  }
+}
+
 export const installModule = {
   name: 'install',
   register(reg: ControlRegistrar) {
     reg.rpc('getInstallSettings', (ctx, { keys }) => getSettings(ctx, keys))
+    reg.rpc('takeSendPermits', takeSendPermits)
+    reg.rpc('claimEmailDomain', (ctx, input) => ctx.db.tx(() => {
+      const key = `_email_domain:${input.name}`
+      const raw = getSettingSync(ctx, key)
+      if (raw) {
+        const claim = z.object({ accountId: z.string(), domainId: z.string() }).parse(JSON.parse(raw))
+        if (claim.accountId !== input.accountId || claim.domainId !== input.domainId) return { claimed: false }
+      }
+      ctx.db.run('INSERT INTO install_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(input))
+      return { claimed: true }
+    }))
+    reg.rpc('releaseEmailDomain', (ctx, input) => {
+      ctx.db.run('DELETE FROM install_settings WHERE key = ? AND value = ?', `_email_domain:${input.name}`, JSON.stringify(input))
+    })
     return reg.actions(
       defineAction({
         name: 'install.settings.get',
@@ -95,7 +133,7 @@ export const installModule = {
             if (isSecretSetting(key)) secretsSet[key] = value !== ''
             else values[key] = value
           }
-          return { values, secretsSet, fromEnv }
+          return { values, secretsSet, fromEnv, webhookUrls: { ses: `${appUrl(ctx)}/hooks/ses`, resend: `${appUrl(ctx)}/hooks/resend` } }
         },
       }),
       defineAction({
@@ -104,10 +142,26 @@ export const installModule = {
         scope: 'control',
         role: 'installAdmin',
         effect: 'write',
-        input: z.object({ values: z.record(settingKey, z.string().max(4000)).describe('Setting values by key') }),
+        input: z.object({ values: z.partialRecord(settingKey, z.string().max(4000)).describe('Setting values by key') }),
         mcp: { title: 'Change install settings', destructive: true },
         handler: async (ctx, { values }) => {
-          for (const [key, value] of Object.entries(values)) await setSetting(ctx, key, value)
+          validateSettings(values)
+          const stored = await Promise.all(Object.entries(values).map(async ([key, value]) => [key, isSecretSetting(key) ? await encrypt(ctx.keys.credentials, value) : value] as const))
+          ctx.db.tx(() => {
+            for (const [key, value] of stored) {
+              if (!value) ctx.db.run('DELETE FROM install_settings WHERE key = ?', key)
+              else ctx.db.run('INSERT INTO install_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value)
+            }
+          })
+          return { ok: true }
+        },
+      }),
+      defineAction({
+        name: 'install.email.test', description: 'Send a test message using the configured system sender and email provider.', scope: 'control', role: 'installAdmin', effect: 'send',
+        input: z.object({ to: z.email().describe('Recipient address for the test email') }),
+        handler: async (ctx, { to }) => {
+          const result = await sendSystemEmail(ctx, { to, subject: 'MailCorgi test email', ...simpleEmail({ title: 'Your email provider works', lines: ['MailCorgi sent this test email using your saved settings.'] }), kind: 'test' })
+          if (!result.ok) throw new AppError('email_failed', result.message, 502)
           return { ok: true }
         },
       }),

@@ -38,6 +38,7 @@ export function systemFrom(ctx: StoreCtx, settings: Record<string, string>): str
 /** Codes, invites and alerts go out through the same provider as campaigns. */
 export async function sendSystemEmail(ctx: StoreCtx, mail: SystemEmail): Promise<SendResult> {
   const settings = await providerSettings(ctx)
+  if (settings.sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
   const provider = await providerFromSettings(ctx, settings)
   const result = await provider.send({
     from: systemFrom(ctx, settings),

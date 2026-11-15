@@ -50,6 +50,7 @@ export interface EmailProvider {
 /** Install settings each provider reads. Secrets are decrypted by the install module. */
 export const PROVIDER_SETTING_KEYS = [
   'email_provider',
+  'sending_enabled',
   'email_from',
   'email_from_name',
   'send_rate_per_second',
@@ -80,6 +81,10 @@ export async function providerFromSettings(ctx: StoreCtx, settings: Record<strin
     case 'smtp':
       return (await import('./smtp.ts')).smtpProvider(ctx, settings)
     default:
-      throw new AppError('bad_provider', `Unknown email provider ${name}.`, 500)
+      throw new AppError('bad_provider', 'Unknown email provider.', 500)
   }
 }
+
+export { parseSesWebhook } from './ses-webhook.ts'
+export { parseResendWebhook } from './resend-webhook.ts'
+export { providerSettings, sendSystemEmail, simpleEmail } from './platform-email.ts'

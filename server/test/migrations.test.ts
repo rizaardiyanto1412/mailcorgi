@@ -1,6 +1,7 @@
 import { test, after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { createInstall, type Install } from './harness.ts'
+import { controlMigrations } from '../control/schema.ts'
 
 let install: Install
 before(async () => {
@@ -31,7 +32,7 @@ test('an account store has every table from the contract', async () => {
 
 test('migrations run once and a restart applies nothing new', async () => {
   const before = install.app.control.ctx.db.all<{ id: number }>('SELECT id FROM _migrations')
-  assert.equal(before.length, 1)
+  assert.equal(before.length, controlMigrations.length)
   install = await install.restart()
   const after = install.app.control.ctx.db.all<{ id: number }>('SELECT id FROM _migrations')
   assert.deepEqual(after, before)

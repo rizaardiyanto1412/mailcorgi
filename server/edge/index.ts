@@ -2,6 +2,7 @@
  * The stateless edge: works out who is asking and which store answers, then forwards the request
  * with a signed actor envelope. Section 3.5 of docs/architecture.md is the routing table.
  */
+import { handleEmailHook } from './email-hooks.ts'
 import type { Config } from '../core/config.ts'
 import { appHost } from '../core/config.ts'
 import type { Keys } from '../core/crypto.ts'
@@ -14,12 +15,12 @@ import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey } from '
 import { withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
+import { markdown } from '../api/index.ts'
 import { controlRegistry } from '../control/modules.ts'
 
 export const SESSION_COOKIE = 'mc_session'
 export const ACCOUNT_COOKIE = 'mc_account'
 export const CSRF_HEADER = 'x-mc-csrf'
-const SESSION_CACHE_MS = 30_000
 const SITE_CACHE_MS = 60_000
 
 export interface EdgeDeps {
@@ -31,6 +32,7 @@ export interface EdgeDeps {
   blobs: BlobStore | null
   assets(request: Request): Promise<Response>
   now(): number
+  fetch?: typeof fetch
 }
 
 export interface Edge {
@@ -55,7 +57,6 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export function createEdge(deps: EdgeDeps): Edge {
-  const sessionCache = new Map<string, { at: number; info: SessionInfo | null }>()
   const siteCache = new Map<string, { at: number; site: SiteRow | null }>()
 
   const trim = (map: Map<string, unknown>) => {
@@ -63,13 +64,7 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   async function resolveSession(sessionId: string, wantAccountId: string | null): Promise<SessionInfo | null> {
-    const cacheKey = `${sessionId}:${wantAccountId ?? ''}`
-    const hit = sessionCache.get(cacheKey)
-    if (hit && deps.now() - hit.at < SESSION_CACHE_MS) return hit.info
-    const info = await deps.stores.control.resolveSession({ sessionId, wantAccountId })
-    sessionCache.set(cacheKey, { at: deps.now(), info })
-    trim(sessionCache)
-    return info
+    return deps.stores.control.resolveSession({ sessionId, wantAccountId })
   }
 
   async function lookupSite(where: { slug?: string; host?: string }): Promise<SiteRow | null> {
@@ -154,13 +149,15 @@ export function createEdge(deps: EdgeDeps): Edge {
       return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id, 'x-mc-host': url.host })
     }
 
+    if (path === '/llms.txt' && method === 'GET') return new Response(markdown(accountRegistry, deps.config.appUrl), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+
     if (path === '/hooks/stripe' || path === '/hooks/polar') return forward({ kind: 'control' }, request, headers)
-    if (path === '/hooks/ses' || path === '/hooks/resend') return notFound()
+    if (path === '/hooks/ses' || path === '/hooks/resend') return handleEmailHook(deps, request)
 
     if (path.startsWith('/api/v1/') || path === '/mcp') {
       const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') || '')
       const key = bearer ? parseApiKey(bearer[1]) : null
-      if (!key) return unauthorized('Send an API key as "Authorization: Bearer mc_…".')
+      if (!key) return json({ error: { code: 'unauthorized', message: 'Send an API key as "Authorization: Bearer mc_…".' } }, 401)
       return forward({ kind: 'account', accountId: key.accountId }, request, headers)
     }
 
@@ -193,7 +190,6 @@ export function createEdge(deps: EdgeDeps): Edge {
       if (info && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && request.headers.get(CSRF_HEADER) !== info.csrf) {
         return json({ error: 'Request blocked. Reload the page and try again.', code: 'csrf' }, 403)
       }
-      if (sessionId && path.startsWith('/api/auth/') && method === 'POST') for (const key of sessionCache.keys()) if (key.startsWith(sessionId)) sessionCache.delete(key)
 
       if (isAction) {
         const name = path.slice('/api/actions/'.length)

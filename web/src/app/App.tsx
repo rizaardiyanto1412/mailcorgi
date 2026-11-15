@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Navigate, useRoutes, type RouteObject } from 'react-router-dom'
+import { Navigate, useLocation, useRoutes, type RouteObject } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, setCsrf, useActionQuery } from '../lib/api.ts'
 import { AuthContext, readLocal, SessionContext, writeLocal, type Bootstrap, type Session } from '../lib/session.tsx'
@@ -49,6 +49,7 @@ export function App() {
 }
 
 function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
+  const location = useLocation()
   const session = boot.session!
   const account = session.accounts.find((a) => a.id === session.current) ?? null
   const newsletters = useActionQuery('newsletters.list', {}, { enabled: !!account, staleTime: 30_000 })
@@ -76,7 +77,7 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
 
   const tree: RouteObject[] = [
     { path: '/welcome', element: <Welcome /> },
-    list.length === 0 && account
+    list.length === 0 && account && !['/admin', '/settings/account', '/settings/billing'].some((path) => location.pathname === path || location.pathname.startsWith(path + '/'))
       ? { path: '*', element: <Navigate to="/welcome" replace /> }
       : {
           element: <Shell />,
