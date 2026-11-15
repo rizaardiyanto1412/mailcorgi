@@ -5,7 +5,7 @@ import { getCampaignRow } from '../campaigns/index.ts'
 import { EMPTY_STATS, type CampaignStats } from '../sending/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { migrations } from './migrations.ts'
-import { DAY, dayOf, metrics, rebuildDaily, rebuildCampaign, report } from './model.ts'
+import { DAY, ROLLUP_WINDOW_DAYS, campaignsToRoll, dayOf, metrics, rebuildDaily, rebuildCampaign, report } from './model.ts'
 export { rebuild, rebuildCampaign } from './model.ts'
 
 const newsletterId = z.string().min(1).describe('The newsletter id.')
@@ -27,8 +27,8 @@ export const statsModule = {
       return { again: ctx.now() + (budget.expired() ? 1000 : 5 * 60_000) }
     })
     reg.job<{ newsletterId: string }>('stats.newsletter', async (ctx, { newsletterId }) => {
-      rebuildDaily(ctx, newsletterId)
-      for (const row of ctx.db.all<{ id: string }>('SELECT id FROM campaigns WHERE newsletter_id = ?', newsletterId)) ctx.jobs.enqueue('stats.campaign', { campaignId: row.id }, { dedupeKey: `stats.campaign:${row.id}` })
+      rebuildDaily(ctx, newsletterId, ctx.now() - ROLLUP_WINDOW_DAYS * DAY)
+      for (const id of campaignsToRoll(ctx, newsletterId, ctx.now())) ctx.jobs.enqueue('stats.campaign', { campaignId: id }, { dedupeKey: `stats.campaign:${id}` })
       return 'done'
     })
     reg.job<{ campaignId: string }>('stats.campaign', async (ctx, { campaignId }) => {

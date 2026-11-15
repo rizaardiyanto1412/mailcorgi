@@ -59,7 +59,7 @@ test(`${N.toLocaleString()} contacts: full send, rollup, hygiene scan and segmen
     assert.equal(overview.subscribers, N)
 
     await owner.action('hygiene.updateSettings', { newsletterId: nl.id, enabled: true, afterIssues: 1, waitDays: 14, strict: false, subject: 'Still with us?', body: 'Confirm below.' })
-    install.clock.advance(91 * 86_400_000)
+    ctx.db.run('UPDATE contacts SET subscribed_at = subscribed_at - ? WHERE newsletter_id = ?', 91 * 86_400_000, nl.id)
     const keep = await lap('hygiene scan', async () => {
       ctx.jobs.enqueue('hygiene.scan', { newsletterId: nl.id }, { dedupeKey: 'hygiene.scan:load' })
       await install.tick()

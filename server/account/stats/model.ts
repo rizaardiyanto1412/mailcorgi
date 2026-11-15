@@ -55,25 +55,36 @@ export function rebuildCampaign(ctx: StoreCtx, campaignId: string): CampaignStat
   })
 }
 
-export function rebuildDaily(ctx: StoreCtx, newsletterId: string) {
+/** Days the recurring rollup repairs; older days only change through a full `rebuild`. */
+export const ROLLUP_WINDOW_DAYS = 3
+
+/** Recount daily rows from `since` (ms) on, or all history when omitted. Live bumps keep today current; this repairs. */
+export function rebuildDaily(ctx: StoreCtx, newsletterId: string, since = 0) {
+  const day = dayOf(since)
   ctx.db.tx(() => {
-    ctx.db.run('DELETE FROM daily_stats WHERE newsletter_id = ?', newsletterId)
+    ctx.db.run('DELETE FROM daily_stats WHERE newsletter_id = ? AND day >= ?', newsletterId, day)
     ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, subscribed, unsubscribed, bounces, complaints)
       SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'),
         SUM(type IN ('signup','confirm') AND COALESCE(json_extract(data, '$.pending'), 0) = 0), SUM(type IN ('unsubscribe','cleaned')), SUM(type = 'bounce'), SUM(type = 'complaint')
-      FROM events WHERE newsletter_id = ? GROUP BY 1, 2`, newsletterId)
+      FROM events WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2`, newsletterId, since)
     for (const [column, timestamp] of [['sent', 'sent_at'], ['delivered', 'delivered_at'], ['opens', 'opened_at'], ['clicks', 'clicked_at']] as const) ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, ${column})
-      SELECT c.newsletter_id, strftime('%Y-%m-%d', d.${timestamp} / 1000, 'unixepoch'), COUNT(*) FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? AND d.${timestamp} IS NOT NULL GROUP BY 1, 2
-      ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = excluded.${column}`, newsletterId)
-    ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, page_views) SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), COUNT(*) FROM page_views WHERE newsletter_id = ? GROUP BY 1, 2 ON CONFLICT(newsletter_id, day) DO UPDATE SET page_views = excluded.page_views`, newsletterId)
-    ctx.db.run('DELETE FROM stats_sources WHERE newsletter_id = ?', newsletterId)
+      SELECT c.newsletter_id, strftime('%Y-%m-%d', d.${timestamp} / 1000, 'unixepoch'), COUNT(*) FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? AND d.${timestamp} >= ? GROUP BY 1, 2
+      ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = excluded.${column}`, newsletterId, since)
+    ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, page_views) SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), COUNT(*) FROM page_views WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2 ON CONFLICT(newsletter_id, day) DO UPDATE SET page_views = excluded.page_views`, newsletterId, since)
+    ctx.db.run('DELETE FROM stats_sources WHERE newsletter_id = ? AND day >= ?', newsletterId, day)
     ctx.db.run(`INSERT INTO stats_sources (newsletter_id, day, source, added, removed)
       SELECT e.newsletter_id, strftime('%Y-%m-%d', e.at / 1000, 'unixepoch'), COALESCE(json_extract(e.data, '$.source'), c.source, 'unknown'),
       SUM(e.type IN ('signup','confirm') AND COALESCE(json_extract(e.data, '$.pending'), 0) = 0), SUM(e.type IN ('unsubscribe','cleaned','bounce','complaint'))
-      FROM events e LEFT JOIN contacts c ON c.id = e.contact_id AND c.newsletter_id = e.newsletter_id WHERE e.newsletter_id = ? AND e.type IN ('signup','confirm','unsubscribe','cleaned','bounce','complaint') GROUP BY 1, 2, 3`, newsletterId)
-    ctx.db.run('DELETE FROM stats_website WHERE newsletter_id = ?', newsletterId)
-    for (const [dimension, column] of [['path', 'path'], ['referrer', 'referrer_host'], ['country', 'country']] as const) ctx.db.run(`INSERT INTO stats_website (newsletter_id, day, dimension, value, views) SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), ?, ${column}, COUNT(*) FROM page_views WHERE newsletter_id = ? GROUP BY 1, 2, 3, 4`, dimension, newsletterId)
+      FROM events e LEFT JOIN contacts c ON c.id = e.contact_id AND c.newsletter_id = e.newsletter_id WHERE e.newsletter_id = ? AND e.at >= ? AND e.type IN ('signup','confirm','unsubscribe','cleaned','bounce','complaint') GROUP BY 1, 2, 3`, newsletterId, since)
+    ctx.db.run('DELETE FROM stats_website WHERE newsletter_id = ? AND day >= ?', newsletterId, day)
+    for (const [dimension, column] of [['path', 'path'], ['referrer', 'referrer_host'], ['country', 'country']] as const) ctx.db.run(`INSERT INTO stats_website (newsletter_id, day, dimension, value, views) SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), ?, ${column}, COUNT(*) FROM page_views WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2, 3, 4`, dimension, newsletterId, since)
   })
+}
+
+/** Campaigns the recurring rollup rebuilds: in flight, sent within the window, or never cached. */
+export function campaignsToRoll(ctx: StoreCtx, newsletterId: string, now: number): string[] {
+  return ctx.db.all<{ id: string }>(`SELECT c.id FROM campaigns c LEFT JOIN stats_reports r ON r.campaign_id = c.id
+    WHERE c.newsletter_id = ? AND (c.status IN ('sending', 'paused', 'scheduled') OR c.sent_at >= ? OR r.campaign_id IS NULL)`, newsletterId, now - ROLLUP_WINDOW_DAYS * DAY).map((r) => r.id)
 }
 
 export function rebuild(ctx: StoreCtx, newsletterId: string) {

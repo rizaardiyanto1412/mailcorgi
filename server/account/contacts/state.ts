@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
-import { reserveContacts, currentPeriod } from '../usage/index.ts'
+import { reserveContacts } from '../usage/index.ts'
 import { emailHash } from './hash.ts'
 
 export const statusSchema = z.enum(['unconfirmed', 'subscribed', 'unsubscribed', 'bounced', 'complained', 'cleaned'])
@@ -126,8 +126,6 @@ export function subscribe(ctx: StoreCtx, input: SubscribeInput): { contact: Cont
     for (const tag of input.tags ?? []) ctx.db.run('INSERT OR IGNORE INTO contact_tags (contact_id, tag_id) VALUES (?, ?)', candidate.id, tag)
     if (input.consent !== 'pending' && existing?.status !== 'subscribed') setContactStatus(ctx, candidate.id, 'subscribed', { consent: input.consent, at, source: input.source })
     if (input.consent === 'confirmed' && existing?.status === 'subscribed' && !existing.confirmed_at) ctx.db.run('UPDATE contacts SET confirmed_at = ? WHERE id = ? AND newsletter_id = ?', at, candidate.id, input.newsletterId)
-    const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")!.n
-    ctx.db.run('INSERT INTO usage (period, contacts_peak) VALUES (?, ?) ON CONFLICT(period) DO UPDATE SET contacts_peak = MAX(contacts_peak, excluded.contacts_peak)', currentPeriod(ctx.now()), count)
     return result(existing?.status === 'subscribed' ? 'exists' : input.consent === 'pending' ? 'pending' : 'subscribed', !existing)
   })
 }

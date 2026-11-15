@@ -199,3 +199,49 @@ test('the test billing provider and its webhook exist only in dev mode', async (
     assert.equal(getPolicy(install.app.account(owner.accountId!).ctx).limits.maxNewsletters, 5)
   } finally { install.close() }
 })
+
+test('subscribing does not count the whole list; the hourly usage push records the peak', async () => {
+  const install = await createInstall()
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const nl = await owner.action('newsletters.create', { name: 'Weekly' })
+    const ctx = install.app.account(owner.accountId!).ctx
+    let counts = 0
+    const get = ctx.db.get
+    ctx.db.get = <T>(sql: string, ...params: Parameters<typeof get>[1][]) => { if (/COUNT\(\*\).*FROM contacts/i.test(sql)) counts++; return get.call(ctx.db, sql, ...params) as T | undefined }
+    await owner.action('contacts.create', { newsletterId: nl.id, email: 'one@example.com' })
+    await owner.action('contacts.create', { newsletterId: nl.id, email: 'two@example.com' })
+    assert.equal(counts, 0, 'a self-hosted subscribe runs no full count')
+    install.clock.advance(60 * 60_000)
+    await install.runJobs()
+    assert.equal(ctx.db.get<{ n: number }>('SELECT contacts_peak n FROM usage ORDER BY period DESC LIMIT 1')?.n, 2)
+  } finally { install.close() }
+})
+
+test('the recurring rollup repairs recent days and recent campaigns only; a full rebuild still covers everything', async () => {
+  const { campaignsToRoll, rebuildDaily } = await import('../account/stats/model.ts')
+  const { rebuildCampaign } = await import('../account/stats/index.ts')
+  const { install, owner, nl, ctx } = await sendableInstall()
+  try {
+    addContacts(ctx, nl.id, 2)
+    const old = await owner.action('campaigns.create', { newsletterId: nl.id, subject: 'Old', doc: issueDoc() as never })
+    await owner.action('campaigns.update', { campaignId: old.id, revision: old.revision, previewText: 'p' })
+    await owner.action('campaigns.send', { campaignId: old.id })
+    await install.runJobs()
+    rebuildCampaign(ctx, old.id)
+    const oldDay = new Date(install.clock.now()).toISOString().slice(0, 10)
+    install.clock.advance(10 * 86_400_000)
+    const fresh = await owner.action('campaigns.create', { newsletterId: nl.id, subject: 'Fresh', doc: issueDoc() as never })
+    await owner.action('campaigns.update', { campaignId: fresh.id, revision: fresh.revision, previewText: 'p' })
+    await owner.action('campaigns.send', { campaignId: fresh.id })
+    await install.runJobs()
+    assert.deepEqual(campaignsToRoll(ctx, nl.id, install.clock.now()), [fresh.id], 'the old, cached campaign is left alone')
+    ctx.db.run('UPDATE daily_stats SET sent = 99 WHERE newsletter_id = ? AND day = ?', nl.id, oldDay)
+    rebuildDaily(ctx, nl.id, install.clock.now() - 3 * 86_400_000)
+    assert.equal(ctx.db.get<{ sent: number }>('SELECT sent FROM daily_stats WHERE newsletter_id = ? AND day = ?', nl.id, oldDay)!.sent, 99, 'days outside the window are untouched')
+    rebuildDaily(ctx, nl.id)
+    assert.equal(ctx.db.get<{ sent: number }>('SELECT sent FROM daily_stats WHERE newsletter_id = ? AND day = ?', nl.id, oldDay)!.sent, 2, 'a full rebuild repairs old days')
+    const overview = await owner.action('stats.overview', { newsletterId: nl.id, range: 'all' })
+    assert.equal(overview.growth.reduce((n, d) => n + d.added, 0), 2)
+  } finally { install.close() }
+})
