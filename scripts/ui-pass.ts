@@ -55,7 +55,12 @@ const freePort = () =>
 
 function startServer(port: number, dataDir: string, base: string): ChildProcess {
   const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base, EMAIL_PROVIDER: 'test', SEND_RATE_PER_SECOND: '500', SEND_BATCH_SIZE: '200', ALLOWED_EMAILS: '' }
-  const child = spawn('node', ['--disable-warning=ExperimentalWarning', 'dist/index.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+  // A private copy of the build: parallel checkouts that clean up their own servers by command
+  // line (`pkill -f dist/index.js`) must not stop this one.
+  const entry = path.join(dataDir, '..', `ui-pass-server-${port}.mjs`)
+  fs.copyFileSync(path.join(root, 'dist/index.js'), entry)
+  const child = spawn('node', ['--disable-warning=ExperimentalWarning', entry], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+  child.on('exit', () => fs.rmSync(entry, { force: true }))
   const log = (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n')) {
       if (!line.trim()) continue
@@ -454,14 +459,24 @@ async function visit(context: BrowserContext, s: Seed, v: Visit, label: string, 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     if (overflow > 1) local.push(`horizontal scroll of ${overflow}px`)
     if (!v.public) {
+      const unlabeled = await page.evaluate(() => {
+        const named = (el: Element) => !!(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title') || (el as HTMLInputElement).labels?.length || el.closest('label'))
+        const out: string[] = []
+        for (const el of document.querySelectorAll('input:not([type=hidden]):not(.sr-only), select, textarea')) if (!named(el)) out.push(`${el.tagName.toLowerCase()}[${(el as HTMLInputElement).name || (el as HTMLInputElement).type || ''}] has no label`)
+        for (const el of document.querySelectorAll('img')) if (!el.hasAttribute('alt')) out.push(`img ${el.getAttribute('src')?.slice(0, 40)} has no alt`)
+        for (const el of document.querySelectorAll('button, a[href]')) if (!(el.textContent?.trim() || el.getAttribute('aria-label') || el.getAttribute('title') || el.querySelector('img[alt]'))) out.push(`${el.tagName.toLowerCase()} has no name`)
+        return [...new Set(out)]
+      })
+      for (const u of unlabeled) local.push(`a11y: ${u}`)
       const text = await page.evaluate(() => document.body.innerText)
       if (/something went wrong|unexpected error|\bundefined\b|\bNaN\b|\[object Object\]/i.test(text)) local.push('page shows an error or a raw value')
     }
     if (file) {
       fs.mkdirSync(path.dirname(file), { recursive: true })
       // The app scrolls inside <main>; let the page grow so the capture shows everything.
-      await page.addStyleTag({ content: 'html, body, #root, #root > div { height: auto !important; min-height: 100vh } main { overflow: visible !important } aside > div { position: sticky; top: 0; height: 100vh }' })
-      await page.screenshot({ path: file, fullPage: true })
+      await page.addStyleTag({ content: 'html, body, #root, #root > div { height: auto !important; min-height: 100vh } main { overflow: visible !important; min-width: 0 } #root > div > div { min-width: 0 } aside > div { position: sticky; top: 0; height: 100vh }' })
+      const height = await page.evaluate(() => document.documentElement.scrollHeight)
+      await page.screenshot({ path: file, fullPage: true, clip: { x: 0, y: 0, width: page.viewportSize()!.width, height } })
     }
   } catch (err) {
     local.push(`failed: ${err instanceof Error ? err.message.split('\n')[0] : err}`)

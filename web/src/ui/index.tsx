@@ -33,10 +33,10 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode
 }
 const BUTTON: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-white hover:bg-accent-hover shadow-card',
+  primary: 'bg-accent text-on-accent hover:bg-accent-hover shadow-card',
   secondary: 'bg-surface text-fg border border-line-strong hover:bg-sunken shadow-card',
   ghost: 'text-fg-2 hover:bg-hover hover:text-fg',
-  danger: 'bg-danger text-white hover:opacity-90 shadow-card',
+  danger: 'bg-danger text-on-danger hover:opacity-90 shadow-card',
 }
 const SIZE = { sm: 'h-7 px-2.5 text-[13px] gap-1.5', md: 'h-8 px-3 text-[13px] gap-1.5', lg: 'h-10 px-4 text-sm gap-2' }
 
