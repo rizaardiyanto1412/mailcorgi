@@ -219,7 +219,7 @@ test('provider refusals map to failed, retried and throttled deliveries', async 
 })
 
 test('gradual sending warms up never-emailed contacts in released steps', async (t) => {
-  const { install, owner, nl, ctx, accountId } = await sendableInstall()
+  const { install, owner, nl, ctx } = await sendableInstall()
   t.after(() => install.close())
   const fresh = addContacts(ctx, nl.id, 200)
   const known = addContacts(ctx, nl.id, 10, 'known')
@@ -236,7 +236,7 @@ test('gradual sending warms up never-emailed contacts in released steps', async 
   progress = await owner.action('campaigns.progress', { campaignId: issue.id })
   assert.equal(progress.counts.sent, 14)
   assert.equal(progress.counts.queued, 196)
-  assert.equal(install.app.account(accountId).nextWakeAt(), started + 30 * 60_000, 'the job sleeps until the next step')
+  assert.equal(ctx.db.get<{ run_at: number }>("SELECT run_at FROM jobs WHERE kind = 'send.batch' AND json_extract(payload, '$.campaignId') = ?", issue.id)?.run_at, started + 30 * 60_000, 'the send job sleeps until the next step')
   install.clock.advance(30 * 60_000)
   await install.runJobs()
   progress = await owner.action('campaigns.progress', { campaignId: issue.id })
@@ -348,7 +348,7 @@ test('pause, resume and stop: a resumed send continues from where it stopped', a
   const progress = await owner.action('campaigns.progress', { campaignId: issue.id })
   assert.equal(progress.counts.skipped, 20)
   assert.equal(progress.counts.sent, 100)
-  assert.equal(new Set(install.outbox(accountId).map((r) => r.to_email)).size, 100, 'nobody got the issue twice')
+  assert.equal(new Set(install.outbox(accountId).filter((r) => r.kind === 'campaign').map((r) => r.to_email)).size, 100, 'nobody got the issue twice')
 })
 
 test('past the thresholds the campaign auto-pauses; resume judges what happens next', async (t) => {

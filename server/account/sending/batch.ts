@@ -64,7 +64,7 @@ export function finishCampaign(ctx: StoreCtx, row: CampaignRow) {
     ctx.db.run(`UPDATE contacts SET engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3), updated_at = ? WHERE id IN (SELECT contact_id FROM deliveries WHERE campaign_id = ?)`, ctx.now(), row.id)
     transitionCampaign(ctx, row.id, 'sent')
     if (row.kind === 'issue') queueHygiene(ctx, row.newsletter_id)
-    if (row.kind === 'issue') notify(ctx, { kind: 'campaign_sent', tone: 'ok', title: `“${row.subject || 'Untitled issue'}” was sent`, body: `${stats.sent + stats.delivered + stats.bounced + stats.complained} emails went out.`, href: `/campaigns/${row.id}/report` })
+    if (row.kind === 'issue') notify(ctx, { kind: 'campaign_sent', tone: 'ok', title: `“${row.subject || 'Untitled issue'}” was sent`, body: `${stats.sent} emails went out.`, href: `/campaigns/${row.id}/report` })
   })
 }
 
@@ -96,6 +96,7 @@ function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, resul
     const message = result.message.slice(0, 500)
     switch (result.kind) {
       case 'permanent':
+        ctx.jobs.enqueue('alerts.raise', { kind: 'provider_refusing', title: 'Email provider refused a send', body: 'Check provider configuration and campaign delivery failures.' }, { dedupeKey: 'alerts.provider_refusing' })
         if (own('UPDATE deliveries SET status = ?, error = ?', 'failed', message)) bumpStat(ctx, d.campaign_id, 'failed')
         return null
       case 'temporary': {

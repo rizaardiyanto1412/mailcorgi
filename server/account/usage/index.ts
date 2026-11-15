@@ -1,3 +1,4 @@
+import { notify, notifyLimitNear } from '../notifications/index.ts'
 import { observeProtectionPolicy } from '../hygiene/index.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { parseJson } from '../../core/db.ts'
@@ -18,6 +19,7 @@ export const getPolicy = (ctx: StoreCtx): Policy => parseJson<Policy>(getMeta(ct
 export function applyPolicy(ctx: StoreCtx, policy: Policy): boolean {
   return ctx.db.tx(() => {
     if (policy.version <= getPolicy(ctx).version) return false
+    if (policy.status === 'blocked' && getPolicy(ctx).status !== 'blocked') notify(ctx, { kind: 'account_blocked', title: 'Your account is blocked', body: 'Sending is paused. Contact the install administrator.', href: '/settings/account' })
     setMeta(ctx, 'policy', JSON.stringify(policy))
     observeProtectionPolicy(ctx, policy)
     return true
@@ -42,11 +44,13 @@ export function reserveContacts(ctx: StoreCtx, n: number): boolean {
   const max = limits(ctx).maxContacts
   if (max === Infinity) return true
   const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")!.n
+  if (count + n >= max * 0.9) notifyLimitNear(ctx, 'contacts')
   return count + n <= max
 }
 
 export function countEmails(ctx: StoreCtx, n: number): void {
   ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, ?, 0) ON CONFLICT(period) DO UPDATE SET emails_sent = emails_sent + excluded.emails_sent', currentPeriod(ctx.now()), n)
+  if ((ctx.db.get<{ n: number }>('SELECT emails_sent n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0) >= limits(ctx).maxEmailsPerMonth * 0.9) notifyLimitNear(ctx, 'emails')
 }
 
 export const usageModule = {
@@ -84,6 +88,7 @@ export const usageModule = {
       const period = currentPeriod(ctx.now())
       const contacts = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")?.n ?? 0
       const emailsSent = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', period)?.n ?? 0
+      if (emailsSent >= limits(ctx).maxEmailsPerMonth * 0.9) notifyLimitNear(ctx, 'emails')
       await ctx.stores.control.pushUsage({ accountId: ctx.accountId!, period, contacts, emailsSent })
       return { again: ctx.now() + 60 * 60_000 }
     })
@@ -94,6 +99,7 @@ export const usageModule = {
         ctx.db.run('INSERT OR IGNORE INTO account_meta (key, value) VALUES (?, ?), (?, ?), (?, ?), (?, ?)', 'account_id', accountId, 'owner_user_id', ownerUserId, 'owner_email', ownerEmail, 'token_key', tokenKey)
         applyPolicy(ctx, policy)
         ctx.jobs.enqueue('usage.push', {}, { dedupeKey: 'usage.push' })
+        ctx.jobs.enqueue('stats.rollup', {}, { dedupeKey: 'stats.rollup' })
       })
     })
     reg.rpc('applyPolicy', (ctx, policy) => ({ applied: applyPolicy(ctx, policySchema.parse(policy)) }))

@@ -171,7 +171,7 @@ test('a global spam trap pauses before provider handoff even with no sending his
   const issue = await createIssue(owner, nl.id)
   await owner.action('campaigns.send', { campaignId: issue.id })
   await install.runJobs()
-  assert.equal(install.outbox(accountId).length, 0)
+  assert.equal(install.outbox(accountId).filter((r) => r.kind === 'campaign').length, 0)
   const health = await owner.action('hygiene.health', { newsletterId: nl.id })
   assert.equal(health.protection?.reason, 'spam_trap')
   assert.equal((await owner.action('campaigns.get', { campaignId: issue.id })).status, 'paused')

@@ -1,9 +1,11 @@
+import { raiseAdminAlert, registerAlerts } from './alerts.ts'
+export { raiseAdminAlert } from './alerts.ts'
 import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { appUrl, getSettingSync } from '../install/index.ts'
 import { AppError } from '../../core/http.ts'
-import { isAccountId, newId } from '../../core/ids.ts'
+import { isAccountId } from '../../core/ids.ts'
 import { retryDead } from '../../core/jobs.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 import { pushPolicy, requestDeletion, type AccountRow } from '../accounts/index.ts'
@@ -19,9 +21,7 @@ declare module '../rpc.ts' {
   }
 }
 
-export function raiseAlert(ctx: StoreCtx, alert: { kind: string; accountId?: string | null; title: string; body?: string }) {
-  ctx.db.run('INSERT INTO admin_alerts (id, kind, account_id, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?)', newId('alr'), alert.kind, alert.accountId ?? null, alert.title, alert.body ?? '', ctx.now())
-}
+export const raiseAlert = raiseAdminAlert
 const accountId = z.string().min(1).describe('The account id.')
 const settingsKeys = ['signup_mode', 'allowed_emails', 'stripe_secret_key', 'stripe_webhook_secret', 'polar_access_token', 'polar_webhook_secret', 'polar_products'] as const
 const settingKey = z.enum(settingsKeys)
@@ -39,6 +39,7 @@ export function blockAccount(ctx: StoreCtx, id: string, reason: string | null) {
     if (reason !== null) {
       if (a.status !== 'blocked') ctx.db.run('UPDATE accounts SET blocked_at = ? WHERE id = ?', ctx.now(), id)
       pushPolicy(ctx, id, { status: 'blocked', block_reason: reason })
+      if (a.status !== 'blocked') raiseAdminAlert(ctx, { kind: 'account_blocked', accountId: id, title: 'Account blocked', body: reason })
       ctx.jobs.enqueue('billing.blockedExpire', { accountId: id }, { runAt: (a.blocked_at ?? ctx.now()) + BLOCK_CANCEL_MS, dedupeKey: `billing.blockedExpire:${id}` })
     } else {
       pushPolicy(ctx, id, { status: 'active', block_reason: null })
@@ -51,6 +52,7 @@ export function blockAccount(ctx: StoreCtx, id: string, reason: string | null) {
 export const adminModule = {
   name: 'admin',
   register(reg: ControlRegistrar) {
+    registerAlerts(reg)
     reg.rpc('accountExists', (ctx, { accountId }) => isAccountId(accountId) && !!ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', accountId))
     reg.rpc('resolveAppHost', (ctx, { setupOrigin }) => {
       let origin = appUrl(ctx) || getSettingSync(ctx, 'setup_origin')

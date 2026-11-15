@@ -7,6 +7,7 @@ import { AppError } from '../../core/http.ts'
 import { getMeta, setMeta, getPolicy } from '../usage/index.ts'
 import { resetRateBaseline } from '../sending/index.ts'
 import { transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
+import { notify } from '../notifications/index.ts'
 
 export const protectionSchema = z.object({
   incidentId: z.string(), reason: z.enum(['bounce_rate', 'complaint_rate', 'spam_trap']),
@@ -47,7 +48,7 @@ export function checkProtection(ctx: StoreCtx, spamTrap = false): boolean {
       ctx.jobs.cancelByKey(`send.start:${row.id}`)
       ctx.jobs.cancelByKey(`send.batch:${row.id}`)
     }
-    ctx.db.run('INSERT INTO notifications (id, user_id, kind, tone, title, body, href, created_at) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)', newId('ntf'), 'account_protection', 'danger', 'Sending is paused', 'Bounce or complaint rates crossed the account safety limit, or a spam trap was detected. Review list health before resuming.', '/list-health', ctx.now())
+    notify(ctx, { kind: 'account_protection', title: 'Sending is paused', body: 'Bounce or complaint rates crossed the account safety limit, or a spam trap was detected. Review list health before resuming.', href: '/list-health' })
     ctx.jobs.enqueue('hygiene.reportProtection', evidence, { dedupeKey: `hygiene.report:${evidence.incidentId}` })
   })
   return true
