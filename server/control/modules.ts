@@ -1,5 +1,6 @@
 import { buildRegistry, type ActionsOf, type AnyAction } from '../core/actions.ts'
 import type { ControlRpc } from './rpc.ts'
+import { apiControlModule } from '../api/control.ts'
 import { authModule } from './auth/index.ts'
 import { accountsModule } from './accounts/index.ts'
 import { directoryModule } from './directory/index.ts'
@@ -9,7 +10,7 @@ import { adminModule } from './admin/index.ts'
 import { suppressionModule } from './suppression/index.ts'
 
 /** Every control store module, wired once. A module adds itself here and nowhere else. */
-const modules = { auth: authModule, accounts: accountsModule, directory: directoryModule, install: installModule, billing: billingModule, admin: adminModule, suppression: suppressionModule }
+const modules = { api: apiControlModule, auth: authModule, accounts: accountsModule, directory: directoryModule, install: installModule, billing: billingModule, admin: adminModule, suppression: suppressionModule }
 
 export const controlRegistry = buildRegistry<'control', ControlRpc>('control', Object.values(modules))
 

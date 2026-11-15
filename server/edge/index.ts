@@ -15,6 +15,7 @@ import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey } from '
 import { withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
+import { markdown } from '../api/index.ts'
 import { controlRegistry } from '../control/modules.ts'
 
 export const SESSION_COOKIE = 'mc_session'
@@ -156,13 +157,15 @@ export function createEdge(deps: EdgeDeps): Edge {
       return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id, 'x-mc-host': url.host })
     }
 
+    if (path === '/llms.txt' && method === 'GET') return new Response(markdown(accountRegistry, deps.config.appUrl), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+
     if (path === '/hooks/stripe' || path === '/hooks/polar') return forward({ kind: 'control' }, request, headers)
     if (path === '/hooks/ses' || path === '/hooks/resend') return handleEmailHook(deps, request)
 
     if (path.startsWith('/api/v1/') || path === '/mcp') {
       const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') || '')
       const key = bearer ? parseApiKey(bearer[1]) : null
-      if (!key) return unauthorized('Send an API key as "Authorization: Bearer mc_…".')
+      if (!key) return json({ error: { code: 'unauthorized', message: 'Send an API key as "Authorization: Bearer mc_…".' } }, 401)
       return forward({ kind: 'account', accountId: key.accountId }, request, headers)
     }
 
