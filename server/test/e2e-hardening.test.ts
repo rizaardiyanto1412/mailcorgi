@@ -7,6 +7,7 @@ import { parseConfig } from '../core/config.ts'
 import { dnsResolver } from '../core/platform.ts'
 import { createInstall, expectError, type Install } from './harness.ts'
 import { getPolicy } from '../account/usage/index.ts'
+import { sendableInstall, addContacts, issueDoc } from './sending-setup.ts'
 
 const DNS = JSON.stringify({ 'TXT:example.com': ['v=spf1 mx ~all'], 'MX:example.com': ['mx.example.com'] })
 
@@ -161,5 +162,20 @@ test('account deletion destroys the account store file and survives a retry', as
       assert.equal(again.app.accountIds().includes(accountId), false)
       assert.equal(getPolicy(again.app.account(other.accountId!).ctx).status, 'active')
     } finally { again.close() }
+  } finally { install.close() }
+})
+
+test('send now works on a clock that moves between reading the time and writing the transition', async () => {
+  let at = Date.UTC(2026, 0, 15, 12, 0, 0)
+  // Every read of the clock is a millisecond later, as a real clock behaves under load.
+  const clock = { now: () => ++at, advance: (ms: number) => void (at += ms), set: (ms: number) => void (at = ms) }
+  const { install, owner, nl, ctx } = await sendableInstall({ clock })
+  try {
+    addContacts(ctx, nl.id, 3)
+    const draft = await owner.action('campaigns.create', { newsletterId: nl.id, subject: 'Now', doc: issueDoc() as never })
+    await owner.action('campaigns.update', { campaignId: draft.id, revision: draft.revision, previewText: 'A preview' })
+    const sent = await owner.action('campaigns.send', { campaignId: draft.id })
+    assert.equal(sent.planned, 3)
+    assert.equal(sent.campaign.status, 'sending')
   } finally { install.close() }
 })

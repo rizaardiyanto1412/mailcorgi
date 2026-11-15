@@ -4,6 +4,8 @@ import { AppError, notFound } from '../../core/http.ts'
 import { emptyDoc, nodeSchema, parseDoc } from '../render/index.ts'
 
 export const statusSchema = z.enum(['draft', 'scheduled', 'sending', 'paused', 'sent', 'canceled'])
+/** How far in the past a scheduled time may be and still count as now. */
+export const SCHEDULE_DRIFT_MS = 5_000
 export type CampaignStatus = z.infer<typeof statusSchema>
 export const audienceSchema = z.object({
   all: z.boolean().optional(),
@@ -85,7 +87,8 @@ export function transitionCampaign(ctx: StoreCtx, campaignId: string, status: Ca
     const row = getCampaignRow(ctx, campaignId)
     if (row.status === status) return serializeCampaign(row)
     if (!transitions[row.status].includes(status)) throw new AppError('invalid_transition', `Cannot move a ${row.status} campaign to ${status}.`, 409)
-    if (status === 'scheduled' && (!detail.scheduledAt || detail.scheduledAt < ctx.now())) throw new AppError('invalid_schedule', 'Choose a send time in the future.', 400)
+    // "Send now" schedules for the moment the caller read the clock; a real clock has moved on by the time this runs.
+    if (status === 'scheduled' && (!detail.scheduledAt || detail.scheduledAt < ctx.now() - SCHEDULE_DRIFT_MS)) throw new AppError('invalid_schedule', 'Choose a send time in the future.', 400)
     const now = ctx.now()
     ctx.db.run(`UPDATE campaigns SET status = ?, scheduled_at = ?, send_started_at = ?, sent_at = ?, pause_reason = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ?`,
       status, status === 'scheduled' ? detail.scheduledAt : row.scheduled_at, status === 'sending' ? row.send_started_at ?? now : row.send_started_at, status === 'sent' ? now : row.sent_at,

@@ -30,10 +30,10 @@ interface Env {
 const CODE_HEADER = 'x-mc-code'
 const codeStamp = (env: Env) => Date.parse(env.CF_VERSION_METADATA?.timestamp || '') || 0
 const stringEnv = (env: Env) => Object.fromEntries(Object.entries(env).filter(([, v]) => typeof v === 'string')) as Record<string, string>
-/** A deployed Worker carries a version timestamp; `wrangler dev` does not. Test DNS answers only exist in dev. */
+/** Workers have no NODE_ENV: test DNS answers exist only when the app URL is a loopback address, as under `wrangler dev`. */
 const workerConfig = (env: Env): Config => {
   const config = parseConfig(stringEnv(env))
-  if (codeStamp(env)) config.testDns = null
+  if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(config.appUrl)) config.testDns = null
   return config
 }
 const toBuffer = (value: unknown) => (value instanceof Uint8Array ? value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) : value)
