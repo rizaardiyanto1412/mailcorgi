@@ -1,3 +1,4 @@
+import { observeProtectionPolicy } from '../hygiene/index.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { parseJson } from '../../core/db.ts'
 import { z } from 'zod'
@@ -18,6 +19,7 @@ export function applyPolicy(ctx: StoreCtx, policy: Policy): boolean {
   return ctx.db.tx(() => {
     if (policy.version <= getPolicy(ctx).version) return false
     setMeta(ctx, 'policy', JSON.stringify(policy))
+    observeProtectionPolicy(ctx, policy)
     return true
   })
 }

@@ -1,0 +1,3 @@
+email,name,status,created_at,attribs
+active@example.com,Reader,enabled,2024-01-02T03:04:05Z,{}
+optout@example.com,Reader,blocklisted,2024-01-02T03:04:05Z,{}

@@ -1,3 +1,4 @@
+import { keepIssuedAt } from '../hygiene/index.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { EmailMessage } from '../../email/index.ts'
 import { parseJson } from '../../core/db.ts'
@@ -6,7 +7,7 @@ import { getNewsletterRow, type NewsletterRow } from '../newsletters/index.ts'
 import { parseTheme, renderEmail } from '../render/index.ts'
 import { serializeCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { verifiedSenderFor } from '../domains/index.ts'
-import { publicUrl, signToken } from '../tracking/tokens.ts'
+import { publicUrl, signToken } from '../tracking/index.ts'
 
 export interface SendContext {
   campaign: ReturnType<typeof serializeCampaign>
@@ -61,7 +62,9 @@ export async function buildMessage(ctx: StoreCtx, send: SendContext, recipient: 
   const wrapped = new Map<string, string>()
   if (deliveryId !== null && send.tracking.clicks) for (const link of send.links) wrapped.set(link.url, publicUrl(ctx, `/t/c/${await signToken(ctx, 'c', [deliveryId, link.id])}`))
   const openPixel = deliveryId !== null && send.tracking.opens ? publicUrl(ctx, `/t/o/${await signToken(ctx, 'o', [deliveryId])}`) : undefined
-  const rendered = renderEmail({ campaign: send.campaign, newsletter: send.newsletter, theme: send.theme, recipient: { contact: { name: contact.name, email: contact.email, fields: contact.fields }, links: { unsubscribe, preferences, web: send.webUrl, openPixel, wrap: (url) => wrapped.get(url) ?? url } } })
+  const keep = send.row.kind === 'keep' ? publicUrl(ctx, `/keep/${await signToken(ctx, 'k', [contact.id, keepIssuedAt(ctx, campaignId, contact.id)])}`) : ''
+  const campaign = keep ? { ...send.campaign, source: send.campaign.source.replaceAll('{{keep_url}}', keep) } : send.campaign
+  const rendered = renderEmail({ campaign, newsletter: send.newsletter, theme: send.theme, recipient: { contact: { name: contact.name, email: contact.email, fields: contact.fields }, links: { unsubscribe, preferences, web: send.webUrl, openPixel, wrap: (url) => wrapped.get(url) ?? url } } })
   const accountId = ctx.accountId!
   return {
     from: send.sender.from, to: contact.email, replyTo: send.sender.replyTo,

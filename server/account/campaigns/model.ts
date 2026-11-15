@@ -75,7 +75,7 @@ export function assertRevision(row: CampaignRow, revision: number) {
   if (row.revision !== revision) throw new AppError('revision_conflict', 'A newer version is available. Reload it before saving.', 409, { revision: row.revision })
 }
 const transitions: Record<CampaignStatus, CampaignStatus[]> = {
-  draft: ['scheduled', 'canceled'], scheduled: ['sending', 'canceled'], sending: ['paused', 'sent'], paused: ['sending'], sent: [], canceled: [],
+  draft: ['scheduled', 'canceled'], scheduled: ['sending', 'paused', 'canceled'], sending: ['paused', 'sent'], paused: ['sending', 'scheduled'], sent: [], canceled: [],
 }
 export function transitionCampaign(ctx: StoreCtx, campaignId: string, status: CampaignStatus, detail: {
   scheduledAt?: number
