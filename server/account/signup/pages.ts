@@ -1,0 +1,13 @@
+import { escapeHtml as e, fontStacks, parseTheme } from '../render/index.ts'
+import type { NewsletterRow } from '../newsletters/index.ts'
+import type { FormSettings } from './settings.ts'
+
+export function page(nl: NewsletterRow, body: string) {
+  const t = parseTheme(nl.theme)
+  return `<!doctype html><html lang="${e(nl.language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(nl.name)}</title><style>html{color-scheme:light dark}body{margin:0;background:${t.background};color:${t.text};font:17px/1.5 ${fontStacks[t.font]}}main{box-sizing:border-box;max-width:560px;margin:8vh auto;padding:28px;background:${t.surface};border-radius:16px}h1{font-size:28px}label{display:block;margin:16px 0 4px}input,button{box-sizing:border-box;max-width:100%;font:inherit;border-radius:6px;padding:12px}input:not([type=checkbox]){width:100%;background:${t.surface};color:${t.text};border:1px solid ${t.muted}}button{margin-top:20px;border:0;background:${t.buttonColor};color:${t.buttonText};cursor:pointer}a{color:${t.accent}}.inline{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.inline label{flex:1;min-width:160px}.hp{position:absolute;left:-10000px} @media(max-width:600px){main{margin:16px;padding:20px}}</style></head><body><main><h1>${e(nl.name)}</h1>${body}</main></body></html>`
+}
+export function hostedForm(input: { nl: NewsletterRow; settings: FormSettings; formToken: string; fields: { key: string; label: string; type: string }[]; siteKey?: string; base: string }) {
+  const { nl, settings: s } = input
+  const fields = input.fields.filter((f) => s.fieldKeys.includes(f.key)).map((f) => `<label>${e(f.label)}<input name="field.${e(f.key)}" type="${f.type === 'boolean' ? 'checkbox' : f.type === 'text' ? 'text' : f.type}"${f.type === 'boolean' ? ' value="true"' : ''}></label>`).join('')
+  return page(nl, `<p>${e(nl.description)}</p><form class="${s.style}" method="post" action="${e(input.base)}/api/public/subscribe/${e(nl.key)}"><input type="hidden" name="formToken" value="${e(input.formToken)}"><label>Email<input name="email" type="email" autocomplete="email" required maxlength="320"></label>${s.showName ? '<label>Name<input name="name" autocomplete="name" maxlength="200"></label>' : ''}${fields}<label class="hp" aria-hidden="true">Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label>${input.siteKey ? `<div class="cf-turnstile" data-sitekey="${e(input.siteKey)}"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>` : ''}<button type="submit">${e(s.buttonLabel)}</button></form>`)
+}
