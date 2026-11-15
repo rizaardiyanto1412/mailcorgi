@@ -5,7 +5,7 @@ import { AuthorsPage } from './Authors.tsx'
 import { SenderSettings, NewsletterImages } from './SenderSettings.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useDocumentTitle, useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, EmptyState, Field, Input, Textarea, useFeedback } from '../../ui/index.tsx'
+import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Textarea, useFeedback } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
 
 function NewsletterSettings() {
@@ -13,7 +13,7 @@ function NewsletterSettings() {
   const all = useActionQuery('newsletters.list', { includeArchived: true })
   const restore = useAction('newsletters.unarchive', { invalidate: ['newsletters.list'] })
   const archived = all.data?.newsletters.filter((n) => n.archivedAt !== null) ?? []
-  return <div className="flex flex-col gap-5">{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
+  return <div className="flex flex-col gap-5"><PageHeader title="Newsletter" description={current ? `Name, address, sender and images for ${current.name}.` : 'Name, address, sender and images.'} />{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
 }
 
 function NewsletterForm() {

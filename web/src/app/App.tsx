@@ -7,7 +7,7 @@ import { Spinner } from '../ui/index.tsx'
 import { Shell } from './Shell.tsx'
 import { SettingsLayout } from './Settings.tsx'
 import { Welcome } from './Welcome.tsx'
-import { appRoutes, publicRoutes, settingsNav, settingsRoutes } from './routes.tsx'
+import { appRoutes, publicRoutes, settingsRoutes } from './routes.tsx'
 import { InvitePage } from '../features/auth/Invite.tsx'
 import { SetupPage } from '../features/auth/index.tsx'
 
@@ -89,7 +89,7 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
             {
               path: 'settings',
               element: <SettingsLayout />,
-              children: [{ index: true, element: <Navigate to={settingsNav[0]?.to ?? '/'} replace /> }, ...settingsRoutes],
+              children: [{ index: true, element: <Navigate to="/settings/newsletter" replace /> }, ...settingsRoutes],
             },
             { path: '*', element: <Navigate to="/" replace /> },
           ],

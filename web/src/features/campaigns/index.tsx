@@ -1,16 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { Send } from 'lucide-react'
+import { ChartColumn, Plus, Send } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Feature } from '../../app/feature.ts'
 import type { Campaign, CampaignStatus } from '../../../../server/account/campaigns/index.ts'
 import { nodeSchema } from '../../../../server/account/render/doc.ts'
 import { useSession, useDocumentTitle } from '../../lib/session.tsx'
 import { callAction, useAction, useActionQuery, actionKey, ApiError } from '../../lib/api.ts'
-import { Badge, Banner, Button, EmptyState, Field, Input, Select, Spinner, Table, Tabs, Textarea, useFeedback } from '../../ui/index.tsx'
+import { BackLink, Banner, Button, EmptyState, Field, Input, LinkButton, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Textarea, useFeedback } from '../../ui/index.tsx'
 import { Preview } from './Preview.tsx'
 import { AudiencePicker } from './Audience.tsx'
-import { designFeature } from '../design/index.tsx'
 import { Progress, SendStep, TestSend } from './SendStep.tsx'
 
 const CampaignEditor = lazy(() => import('./Editor.tsx').then((module) => ({ default: module.CampaignEditor })))
@@ -25,8 +24,8 @@ function CampaignList() {
   const list = useActionQuery('campaigns.list', { newsletterId: current?.id ?? '', status: status === 'all' ? undefined : status, search, offset }, { enabled: !!current })
   const create = useAction('campaigns.create', { invalidate: ['campaigns.list'], onSuccess: (c) => navigate(`/campaigns/${c.id}`) })
   if (!current) return <EmptyState title="Choose a newsletter" body="Create your first newsletter to start writing." action={<Link to="/welcome">Create a newsletter</Link>} />
-  return <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
-    <div className="flex items-center justify-between gap-3"><h1 className="text-xl font-semibold">Campaigns</h1><Button variant="primary" loading={create.isPending} onClick={() => create.mutate({ newsletterId: current.id })}>Write an issue</Button></div>
+  return <div className="flex flex-col gap-5">
+    <PageHeader title="Campaigns" description="Write, schedule and send issues of your newsletter." action={<Button variant="primary" icon={<Plus />} loading={create.isPending} onClick={() => create.mutate({ newsletterId: current.id })}>Write an issue</Button>} />
     {create.error && <Banner kind="danger">{create.error.message}</Banner>}
     <div className="overflow-x-auto"><Tabs value={status} onChange={(value) => {
       setStatus(value)
@@ -37,7 +36,7 @@ function CampaignList() {
       setOffset(0)
     }} />
     {list.isPending ? <Spinner /> : list.error ? <Banner kind="danger">{list.error.message}</Banner> : !list.data.campaigns.length ? <EmptyState icon={<Send />} title={search || status !== 'all' ? 'No matching campaigns' : 'Your first issue starts here'} body="Write an issue, review it, and send it to your subscribers." action={<Button onClick={() => create.mutate({ newsletterId: current.id })}>Write an issue</Button>} /> : <>
-      <Table head={<tr><th>Subject</th><th>Status</th><th>Updated</th></tr>}>{list.data.campaigns.map((c) => <tr key={c.id}><td><Link className="font-medium hover:underline" to={`/campaigns/${c.id}`}>{c.subject || 'Untitled issue'}</Link></td><td><Badge>{c.status}</Badge></td><td className="whitespace-nowrap text-fg-3">{new Date(c.updatedAt).toLocaleDateString()}</td></tr>)}</Table>
+      <Table head={<tr><th>Subject</th><th>Status</th><th>Updated</th></tr>}>{list.data.campaigns.map((c) => <tr key={c.id}><td><Link className="font-medium hover:underline" to={`/campaigns/${c.id}`}>{c.subject || 'Untitled issue'}</Link></td><td><StatusBadge status={c.status} /></td><td className="whitespace-nowrap text-fg-3">{new Date(c.updatedAt).toLocaleDateString()}</td></tr>)}</Table>
       <div className="flex items-center justify-between"><span className="text-sm text-fg-3">{list.data.total} campaigns</span><div className="flex gap-2"><Button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 30))}>Previous</Button><Button disabled={offset + 30 >= list.data.total} onClick={() => setOffset(offset + 30)}>Next</Button></div></div>
     </>}
   </div>
@@ -108,13 +107,9 @@ function Draft({ initial, reload }: {
   const [actionError, setActionError] = useState('')
   const duplicate = useAction('campaigns.duplicate', { onSuccess: (c) => navigate(`/campaigns/${c.id}`) })
   const remove = useAction('campaigns.delete', { onSuccess: () => navigate('/campaigns') })
-  return <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><Link to="/campaigns" className="text-sm text-fg-3" onClick={async (event) => {
-      if (serialized !== saved) {
-        event.preventDefault()
-        if (await save()) navigate('/campaigns')
-      }
-    }}>← Campaigns</Link><div className="flex items-center gap-2"><Badge>{initial.status}</Badge><span role="status" className="text-xs text-fg-3">{serialized !== saved && saveState === 'Saved' ? 'Unsaved changes' : saveState}</span>{editable && <Button size="sm" onClick={() => void save()}>Save</Button>}</div></div>
+  return <div className="flex flex-col gap-5">
+    <BackLink to="/campaigns">Campaigns</BackLink>
+    <PageHeader title={draft.subject || 'Untitled issue'} description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={initial.status} /><span role="status">{editable ? (serialized !== saved && saveState === 'Saved' ? 'Unsaved changes' : saveState) : initial.status === 'sent' ? 'Sent to your audience.' : 'This issue can no longer be edited.'}</span></span>} action={<div className="flex gap-2">{initial.status === 'sent' && <LinkButton to={`/campaigns/${initial.id}/report`} icon={<ChartColumn />}>View report</LinkButton>}{editable && <Button onClick={() => void save()}>Save</Button>}</div>} />
     <Tabs value={step} onChange={(value) => {
       setStep(value)
       if (serialized !== saved) void save()
@@ -159,5 +154,4 @@ function Draft({ initial, reload }: {
 export const campaignsFeature: Feature = {
   name: 'campaigns', nav: [{ to: '/campaigns', label: 'Campaigns', icon: Send }],
   routes: [{ path: 'campaigns', element: <CampaignList /> }, { path: 'campaigns/:id', element: <CampaignPage /> }],
-  settings: designFeature.settings, settingsRoutes: designFeature.settingsRoutes,
 }

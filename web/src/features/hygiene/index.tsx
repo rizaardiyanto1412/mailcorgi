@@ -4,11 +4,12 @@ import { Link } from 'react-router-dom'
 import type { Feature } from '../../app/feature.ts'
 import type { ActionOutput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Spinner, Switch, Table, Textarea, useFeedback } from '../../ui/index.tsx'
+import { useCanAdmin, useSession } from '../../lib/session.tsx'
+import { Banner, Button, Card, EmptyState, Field, Input, LinkButton, Meter, NoAccess, PageHeader, Spinner, StatusBadge, Switch, Table, Textarea, useFeedback } from '../../ui/index.tsx'
 
 export function ListHealthPage() {
   const { current, account, boot } = useSession()
+  const canAdmin = useCanAdmin()
   const query = useActionQuery('hygiene.health', { newsletterId: current?.id ?? '' }, { enabled: !!current })
   const resume = useAction('hygiene.resume', { invalidate: ['hygiene.health'] })
   const feedback = useFeedback()
@@ -18,7 +19,7 @@ export function ListHealthPage() {
   const h = query.data
   if (!h) return null
   return <div className="flex flex-col gap-5">
-    <PageHeader title="List health" description="See who is subscribed and whether your sending reputation needs attention." action={<Link to="/settings/hygiene" className="text-sm text-accent-fg">Hygiene settings</Link>} />
+    <PageHeader title="List health" description="See who is subscribed and whether your sending reputation needs attention." action={canAdmin && <LinkButton to="/settings/hygiene">Hygiene settings</LinkButton>} />
     {resume.error && <Banner kind="danger">{resume.error.message}</Banner>}
     {h.protection && <Banner kind="danger"><p className="font-medium">Sending is paused</p><p className="mt-1">{h.protection.reason === 'spam_trap' ? 'A recipient matched the global spam-trap list.' : 'Your account crossed a bounce or complaint limit.'} Review how these addresses joined your lists and remove unwanted or invalid addresses.{boot.cloud ? ' Ask the install administrator to unblock the account, then resume here.' : ' Resume only after reviewing the cause.'}</p>{account?.owner && <Button className="mt-3" loading={resume.isPending} onClick={async () => { if (await feedback.confirm({ title: 'Resume sending?', body: 'Confirm you have reviewed your lists and addressed the cause. This resumes sends held by account protection.', confirmLabel: 'Resume sending' })) resume.mutate({ accountId: account.id, confirmation: 'RESUME' }) }}>Resume sending</Button>}</Banner>}
     {!h.enabled && <Banner kind="warn">Automatic list hygiene is off. Account reputation protection remains on.</Banner>}
@@ -27,8 +28,8 @@ export function ListHealthPage() {
       ['Waiting for a reply', h.awaitingReply, `A keep-subscription email was sent. No confirmation within ${h.waitDays} days means cleaning.`],
       ['Cleaned in 90 days', h.cleanedLast90Days, 'Removed from this newsletter after no reply. They can sign up and confirm again.'],
     ].map(([label, count, text]) => <Card key={label} className="p-4"><h2 className="text-sm text-fg-3">{label}</h2><p className="my-2 text-2xl font-semibold">{count}</p><p className="text-sm text-fg-3">{text}</p></Card>)}</div>
-    <Card className="p-4"><h2 className="font-semibold">{h.ratesScope === 'account' ? 'Account' : 'Newsletter'} reputation</h2><p className="mt-1 text-sm text-fg-3">The latest {h.rates.total.toLocaleString()} sent emails since the last explicit resume, up to 1,000. Account protection pauses sends above 5% hard bounces or 0.3% complaints once 1,000 emails are available.</p><div className="mt-4 grid gap-4 sm:grid-cols-2"><div><p className="text-sm">Hard bounces: {(h.rates.bounceRate * 100).toFixed(2)}% / 5% limit</p><progress aria-label="Hard bounce rate against limit" className="mt-2 w-full accent-[var(--accent)]" max={h.rates.bounceLimit} value={h.rates.bounceRate} /></div><div><p className="text-sm">Complaints: {(h.rates.complaintRate * 100).toFixed(2)}% / 0.3% limit</p><progress aria-label="Complaint rate against limit" className="mt-2 w-full accent-[var(--accent)]" max={h.rates.complaintLimit} value={h.rates.complaintRate} /></div></div>{h.rates.total < h.rates.minimum && <p className="mt-3 text-sm text-fg-3">There is not enough sending history to judge rates yet. A spam-trap hit pauses sending immediately.</p>}</Card>
-    {h.statuses.length ? <Table head={<tr><th>Status</th><th>Contacts</th></tr>}>{h.statuses.map((row) => <tr key={row.status}><td>{row.status}</td><td>{row.count.toLocaleString()}</td></tr>)}</Table> : <Card><EmptyState title="No contacts yet" body="Add subscribers or import a list with consent to start tracking list health." action={<Link to="/contacts" className="text-accent-fg">Go to contacts</Link>} /></Card>}
+    <Card className="p-4"><h2 className="font-semibold">{h.ratesScope === 'account' ? 'Account' : 'Newsletter'} reputation</h2><p className="mt-1 text-sm text-fg-3">The latest {h.rates.total.toLocaleString()} sent emails since the last explicit resume, up to 1,000. Account protection pauses sends above 5% hard bounces or 0.3% complaints once 1,000 emails are available.</p><div className="mt-4 grid gap-4 sm:grid-cols-2"><div><p className="text-sm">Hard bounces: {(h.rates.bounceRate * 100).toFixed(2)}% / 5% limit</p><div className="mt-2"><Meter label="Hard bounce rate against limit" max={h.rates.bounceLimit} value={h.rates.bounceRate} tone={h.rates.bounceRate >= h.rates.bounceLimit * 0.8 ? 'danger' : 'ok'} /></div></div><div><p className="text-sm">Complaints: {(h.rates.complaintRate * 100).toFixed(2)}% / 0.3% limit</p><div className="mt-2"><Meter label="Complaint rate against limit" max={h.rates.complaintLimit} value={h.rates.complaintRate} tone={h.rates.complaintRate >= h.rates.complaintLimit * 0.8 ? 'danger' : 'ok'} /></div></div></div>{h.rates.total < h.rates.minimum && <p className="mt-3 text-sm text-fg-3">There is not enough sending history to judge rates yet. A spam-trap hit pauses sending immediately.</p>}</Card>
+    {h.statuses.length ? <Table head={<tr><th>Status</th><th>Contacts</th></tr>}>{h.statuses.map((row) => <tr key={row.status}><td><StatusBadge status={row.status} /></td><td>{row.count.toLocaleString()}</td></tr>)}</Table> : <Card><EmptyState title="No contacts yet" body="Add subscribers or import a list with consent to start tracking list health." action={<Link to="/contacts" className="text-accent-fg">Go to contacts</Link>} /></Card>}
   </div>
 }
 
@@ -51,14 +52,17 @@ function SettingsForm({ newsletterId, initial }: { newsletterId: string; initial
 }
 export function HygieneSettingsPage() {
   const { current } = useSession()
-  const query = useActionQuery('hygiene.settings', { newsletterId: current?.id ?? '' }, { enabled: !!current })
+  const canAdmin = useCanAdmin()
+  const query = useActionQuery('hygiene.settings', { newsletterId: current?.id ?? '' }, { enabled: !!current && canAdmin })
   if (!current) return <EmptyState title="Choose a newsletter" body="Create or select a newsletter to configure hygiene." />
-  return <div className="flex flex-col gap-5"><PageHeader title="List hygiene" description="Keep your list active without emailing people who no longer want it." />{query.isPending && <Spinner />}{query.error && <Banner kind="danger">{query.error.message}</Banner>}{query.data && <SettingsForm key={current.id} newsletterId={current.id} initial={query.data} />}</div>
+  const header = <PageHeader title="List hygiene" description="Keep your list active without emailing people who no longer want it." />
+  if (!canAdmin) return <div className="flex flex-col gap-5">{header}<NoAccess title="Newsletter admins manage list hygiene" body="Ask an admin or the owner to change these settings." /></div>
+  return <div className="flex flex-col gap-5">{header}{query.isPending && <Spinner />}{query.error && <Banner kind="danger">{query.error.message}</Banner>}{query.data && <SettingsForm key={current.id} newsletterId={current.id} initial={query.data} />}</div>
 }
 export const hygieneFeature: Feature = {
   name: 'hygiene',
   nav: [{ to: '/list-health', label: 'List health', icon: HeartPulse }],
   routes: [{ path: 'list-health', element: <ListHealthPage /> }],
-  settings: [{ to: '/settings/hygiene', label: 'List hygiene' }],
+  settings: [{ to: '/settings/hygiene', label: 'List hygiene', role: 'admin' }],
   settingsRoutes: [{ path: 'hygiene', element: <HygieneSettingsPage /> }],
 }

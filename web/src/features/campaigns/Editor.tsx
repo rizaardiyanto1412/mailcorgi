@@ -108,7 +108,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     },
     onUpdate: ({ editor: e }) => onChange(e.getJSON()),
   })
-  const stats = useEditorState({ editor, selector: ({ editor: e }) => e ? { words: e.getText().trim().split(/\s+/).filter(Boolean).length } : { words: 0 } })
+  const stats = useEditorState({ editor, selector: ({ editor: e }) => ({ words: e?.schema ? e.state.doc.textBetween(0, e.state.doc.content.size, ' ').split(/\s+/).filter(Boolean).length : 0 }) })
   if (!editor) return null
   const insert = (type: string) => {
     setSlash(false)
