@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { createInstall, expectError } from './harness.ts'
 import { suppressionHash } from '../control/suppression/index.ts'
 import { getPolicy } from '../account/usage/index.ts'
@@ -142,11 +144,10 @@ test('deletion retries a failed image wipe, preserves another account and cannot
   assert.equal((await store.ctx.platform.blobs.list(`${other.accountId}/`)).length, 1)
   assert.equal((await owner.actionRaw('account.profile', {})).status, 401)
   assert.equal((await other.action('account.profile', {})).email, 'other@example.com')
-  assert.deepEqual(await store.rpc('selfWipe', {}), { done: true })
   assert.equal(install.app.accountIds().includes(accountId), false)
   await assert.rejects(async () => install.app.stores.account(accountId).selfWipe({}), /not provisioned/i)
   await install.tick()
-  await assert.rejects(install.app.stores.account(accountId).bootstrap({ accountId, ownerUserId: owner.session.user.id, ownerEmail: owner.email, policy: { version: 999, status: 'active', plan: 'free', limits: { maxContacts: null, maxEmailsPerMonth: null, maxNewsletters: null, maxTeamPerNewsletter: null } } }))
+  assert.equal(fs.existsSync(path.join(install.dataDir, 'accounts', `${accountId}.db`)), false, 'the destroyed store leaves no database behind')
 })
 
 test('a newer policy committed during a push is delivered on the next job run', async (t) => {

@@ -1,27 +1,37 @@
 /**
- * Drives a running instance over HTTP: first-run setup, sign in, create a newsletter, read it
- * back, /healthz. With --url it targets that instance; without, it starts the Node build and a
- * `wrangler dev` Worker in turn on random free ports and runs against each.
+ * Drives a running instance over HTTP through every step in scripts/smoke/ (self-hosted) and
+ * scripts/smoke/cloud/ (CLOUD=true). With --url it targets that instance; without, it starts the
+ * Node build and a `wrangler dev` Worker in turn on random free ports and runs both modes against
+ * each. Flags: --selfhosted or --cloud (one mode), --only node|wrangler (one target), --dev (Vite).
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { createSmokeContext } from './smoke-context.ts'
+import { createSmokeContext, SMOKE_DNS } from './smoke-context.ts'
 
 const root = path.resolve(import.meta.dirname, '..')
 const argUrl = process.argv.includes('--url') ? process.argv[process.argv.indexOf('--url') + 1] : null
+type Mode = 'selfhosted' | 'cloud'
+const argMode: Mode = process.argv.includes('--cloud') ? 'cloud' : 'selfhosted'
+const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null
 
-async function scenario(base: string) {
-  const context = createSmokeContext(base)
-  const directory = new URL('./smoke/', import.meta.url)
+/** Self-hosted steps live in scripts/smoke/, cloud steps in scripts/smoke/cloud/. Both run in filename order. */
+async function scenario(base: string, mode: Mode) {
+  const context = createSmokeContext(base, mode)
+  const directory = new URL(mode === 'cloud' ? './smoke/cloud/' : './smoke/', import.meta.url)
   const files = fs.readdirSync(directory).filter((file) => file.endsWith('.ts')).sort()
   for (const file of files) {
     const { default: step } = await import(new URL(file, directory).href)
     if (typeof step !== 'function') throw new Error(`smoke: ${file} must export a default async function`)
+    const started = Date.now()
     await step(context)
+    if (process.env.SMOKE_VERBOSE) console.log(`[${mode}] ${file} ok (${Date.now() - started} ms)`)
   }
 }
+
+/** Dev-only switches every server under test gets: canned DNS and the dev outbox endpoints. */
+const devEnv = (mode: Mode) => ({ MC_TEST_DNS: JSON.stringify(SMOKE_DNS), ...(mode === 'cloud' ? { CLOUD: 'true', ADMIN_EMAILS: 'smoke@example.com', BILLING_PROVIDER: 'test' } : {}) })
 
 const freePort = () =>
   new Promise<number>((resolve, reject) => {
@@ -70,16 +80,16 @@ function stop(child: ChildProcess) {
   }, 3000).unref()
 }
 
-async function runNode() {
+async function runNode(mode: Mode) {
   if (!fs.existsSync(path.join(root, 'dist/index.js')) || !fs.existsSync(path.join(root, 'web/dist/index.html'))) throw new Error('smoke: run "npm run build" first')
   const port = await freePort()
   const dataDir = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-node-'))
   const base = `http://127.0.0.1:${port}`
-  const child = start('node', ['--disable-warning=ExperimentalWarning', 'dist/index.js'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base }, 'node')
+  const child = start('node', ['--disable-warning=ExperimentalWarning', 'dist/index.js'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base, ...devEnv(mode) }, 'node')
   try {
     await waitFor(`${base}/healthz`, child, 20_000)
-    await scenario(base)
-    console.log(`smoke: node ok (${base})`)
+    await scenario(base, mode)
+    console.log(`smoke: node ${mode} ok (${base})`)
   } finally {
     stop(child)
     fs.rmSync(dataDir, { recursive: true, force: true })
@@ -91,11 +101,11 @@ async function runDev() {
   const webPort = await freePort()
   const dataDir = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-dev-'))
   const base = `http://127.0.0.1:${webPort}`
-  const api = start('npx', ['tsx', 'server/index.ts'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base }, 'dev-api')
+  const api = start('npx', ['tsx', 'server/index.ts'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base, ...devEnv(argMode) }, 'dev-api')
   const web = start('npx', ['vite', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], { PORT: String(port), WEB_PORT: String(webPort) }, 'dev-web')
   try {
     await waitFor(`${base}/healthz`, web, 20_000)
-    await scenario(base)
+    await scenario(base, argMode)
     console.log(`smoke: Vite dev pages and actions ok (${base})`)
   } finally {
     stop(web)
@@ -104,21 +114,22 @@ async function runDev() {
   }
 }
 
-async function runWrangler() {
+async function runWrangler(mode: Mode) {
   const port = await freePort()
   const inspector = await freePort()
   const persist = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-cf-'))
   const base = `http://127.0.0.1:${port}`
+  const vars = Object.entries({ APP_URL: base, ...devEnv(mode) }).flatMap(([key, value]) => ['--var', `${key}:${value}`])
   const child = start(
     'npx',
-    ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(inspector), '--persist-to', persist, '--var', `APP_URL:${base}`, '--show-interactive-dev-session=false', '--log-level', 'warn'],
+    ['wrangler', 'dev', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(inspector), '--persist-to', persist, ...vars, '--show-interactive-dev-session=false', '--log-level', 'warn'],
     { CI: '1', WRANGLER_SEND_METRICS: 'false' },
     'wrangler',
   )
   try {
     await waitFor(`${base}/healthz`, child, 90_000)
-    await scenario(base)
-    console.log(`smoke: wrangler dev ok (${base})`)
+    await scenario(base, mode)
+    console.log(`smoke: wrangler dev ${mode} ok (${base})`)
   } finally {
     stop(child)
     fs.rmSync(persist, { recursive: true, force: true })
@@ -129,13 +140,17 @@ fs.mkdirSync(path.join(root, '.audit'), { recursive: true })
 
 try {
   if (argUrl) {
-    await scenario(argUrl)
-    console.log(`smoke: ok (${argUrl})`)
+    await scenario(argUrl, argMode)
+    console.log(`smoke: ${argMode} ok (${argUrl})`)
   } else if (process.argv.includes('--dev')) {
     await runDev()
   } else {
-    await runNode()
-    await runWrangler()
+    // --only node|wrangler narrows the targets; both modes always run on each target.
+    const modes: Mode[] = process.argv.includes('--cloud') ? ['cloud'] : process.argv.includes('--selfhosted') ? ['selfhosted'] : ['selfhosted', 'cloud']
+    for (const mode of modes) {
+      if (only !== 'wrangler') await runNode(mode)
+      if (only !== 'node') await runWrangler(mode)
+    }
   }
 } catch (err) {
   console.error(err instanceof Error ? err.message : err)

@@ -8,7 +8,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { Config } from './core/config.ts'
 import { createDb, type Driver, type SqlValue } from './core/db.ts'
 import { deriveKeys, randomHex, type Keys } from './core/crypto.ts'
-import { resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from './core/platform.ts'
+import { dnsResolver, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from './core/platform.ts'
 import { storeId } from './core/platform.ts'
 import { createStore, createStores, type Store, type Stores } from './core/store.ts'
 import { controlRegistry } from './control/modules.ts'
@@ -198,20 +198,33 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
       if (at === null) alarms.delete(storeId(ref))
       else alarms.set(storeId(ref), at)
     },
-    resolveDns: opts.resolveDns ?? ((name, type) => resolveDnsOverHttps(fetchFn, name, type)),
+    resolveDns: opts.resolveDns ?? dnsResolver(config.testDns, (name, type) => resolveDnsOverHttps(fetchFn, name, type)),
     waitUntil: (p) => void p.catch((err) => console.error('[waitUntil]', err)),
     limits: { subrequestsPerRun: 900 },
+    async destroyStore(ref) {
+      if (ref.kind !== 'account') throw new AppError('invalid_store', 'The control store cannot be destroyed.', 400)
+      const store = accounts.get(ref.accountId)
+      if (store) {
+        accounts.delete(ref.accountId)
+        alarms.delete(ref.accountId)
+        closers.get(store)?.()
+        closers.delete(store)
+      }
+      const file = path.join(accountsDir, `${ref.accountId}.db`)
+      for (const suffix of ['', '-wal', '-shm']) fs.rmSync(file + suffix, { force: true })
+    },
   }
 
-  const closers: (() => void)[] = []
+  const closers = new Map<Store, () => void>()
   const stores = createStores((ref, name, args) => (ref.kind === 'account' && name === 'bootstrap' ? account(ref.accountId, true) : storeFor(ref)).rpc(name, args))
   const open = (ref: StoreRef): Store => {
     const file = ref.kind === 'control' ? path.join(dataDir, 'control.db') : path.join(accountsDir, `${ref.accountId}.db`)
     const { driver, close } = openDriver(file)
-    closers.push(close)
     const registry = ref.kind === 'control' ? controlRegistry : accountRegistry
     const migrations = ref.kind === 'control' ? controlMigrations : accountMigrations
-    return createStore(registry, migrations, { ref, db: createDb(driver), platform, stores, config, keys, now })
+    const store = createStore(registry, migrations, { ref, db: createDb(driver), platform, stores, config, keys, now })
+    closers.set(store, close)
+    return store
   }
   const control = open({ kind: 'control' })
   const accounts = new Map<string, Store>()
@@ -290,7 +303,8 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     close() {
       if (timer) clearInterval(timer)
       timer = null
-      for (const close of closers) close()
+      for (const close of closers.values()) close()
+      closers.clear()
     },
   }
 }

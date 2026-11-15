@@ -31,9 +31,16 @@ export function registerAccountJobs(reg: ControlRegistrar) {
       await (await getBillingProvider(ctx, a.billing_provider)).cancel(a.billing_subscription_id, job.id)
       ctx.db.run('UPDATE accounts SET billing_subscription_id = NULL, billing_status = ? WHERE id = ?', 'canceled', a.id)
     }
-    await ctx.stores.account(a.id).applyPolicy({ version: a.policy_version, status: 'deleting', plan: a.plan, limits: { maxContacts: 0, maxEmailsPerMonth: 0, maxNewsletters: 0, maxTeamPerNewsletter: 0 } })
-    const wiped = await ctx.stores.account(a.id).selfWipe({})
-    if (!wiped.done) return { again: ctx.now() + 1000 }
+    // A retry after the store was destroyed finds no store: that wipe is complete.
+    const gone = (err: unknown) => err instanceof AppError && err.status === 404
+    try {
+      await ctx.stores.account(a.id).applyPolicy({ version: a.policy_version, status: 'deleting', plan: a.plan, limits: { maxContacts: 0, maxEmailsPerMonth: 0, maxNewsletters: 0, maxTeamPerNewsletter: 0 } })
+      const wiped = await ctx.stores.account(a.id).selfWipe({})
+      if (!wiped.done) return { again: ctx.now() + 1000 }
+    } catch (err) {
+      if (!gone(err)) throw err
+    }
+    await ctx.platform.destroyStore({ kind: 'account', accountId: a.id })
     ctx.db.tx(() => {
       const user = ctx.db.get<{ email: string }>('SELECT email FROM users WHERE id = ?', a.owner_user_id)
       ctx.db.run('DELETE FROM sites WHERE account_id = ?', a.id)

@@ -8,7 +8,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { parseConfig, type Config } from '../server/core/config.ts'
 import { createDb, type Driver } from '../server/core/db.ts'
 import { deriveKeys, randomHex, type Keys } from '../server/core/crypto.ts'
-import { memoryBlobs, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from '../server/core/platform.ts'
+import { dnsResolver, memoryBlobs, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from '../server/core/platform.ts'
 import { storeId } from '../server/core/platform.ts'
 import { createStore, createStores, decodeRpcResult, encodeRpcError, type RpcResult, type Store, type Stores } from '../server/core/store.ts'
 import { controlRegistry } from '../server/control/modules.ts'
@@ -30,6 +30,12 @@ interface Env {
 const CODE_HEADER = 'x-mc-code'
 const codeStamp = (env: Env) => Date.parse(env.CF_VERSION_METADATA?.timestamp || '') || 0
 const stringEnv = (env: Env) => Object.fromEntries(Object.entries(env).filter(([, v]) => typeof v === 'string')) as Record<string, string>
+/** Workers have no NODE_ENV: test DNS answers exist only when the app URL is a loopback address, as under `wrangler dev`. */
+const workerConfig = (env: Env): Config => {
+  const config = parseConfig(stringEnv(env))
+  if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(config.appUrl)) config.testDns = null
+  return config
+}
 const toBuffer = (value: unknown) => (value instanceof Uint8Array ? value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) : value)
 
 function sqlDriver(ctx: DurableObjectState): Driver {
@@ -124,7 +130,7 @@ abstract class BaseStore extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
-    this.config = parseConfig(stringEnv(env))
+    this.config = workerConfig(env)
   }
 
   protected abstract ref(): StoreRef
@@ -140,9 +146,13 @@ abstract class BaseStore extends DurableObject<Env> {
         if (at === null) await this.ctx.storage.deleteAlarm()
         else await this.ctx.storage.setAlarm(Math.max(at, Date.now() + 50))
       },
-      resolveDns: (name, type) => resolveDnsOverHttps(fetch, name, type),
+      resolveDns: dnsResolver(this.config.testDns, (name, type) => resolveDnsOverHttps(fetch, name, type)),
       waitUntil: (p) => this.ctx.waitUntil(p),
       limits: limitsFor(this.env),
+      destroyStore: async (target) => {
+        if (target.kind !== 'account') throw new AppError('invalid_store', 'The control store cannot be destroyed.', 400)
+        decodeRpcResult(await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(target.accountId)).destroy(target.accountId))
+      },
     }
     const registry = ref.kind === 'control' ? controlRegistry : accountRegistry
     const migrations = ref.kind === 'control' ? controlMigrations : accountMigrations
@@ -251,6 +261,20 @@ export class AccountStore extends BaseStore {
       return encodeRpcError(err)
     }
   }
+
+  /** Drop every table, key and alarm. The control store calls this once the account's data is wiped. */
+  async destroy(accountId: string): Promise<RpcResult> {
+    try {
+      if (!isAccountId(accountId) || (this.accountId && this.accountId !== accountId)) throw new AppError('not_found', 'Not found.', 404)
+      await this.ctx.storage.deleteAlarm()
+      await this.ctx.storage.deleteAll()
+      this.store = null
+      this.accountId = null
+      return { ok: true, result: null }
+    } catch (err) {
+      return encodeRpcError(err)
+    }
+  }
 }
 
 let edge: Edge | null = null
@@ -258,7 +282,7 @@ let keysPromise: Promise<Keys> | null = null
 
 function edgeFor(env: Env): Edge {
   if (edge) return edge
-  const config = parseConfig(stringEnv(env))
+  const config = workerConfig(env)
   const mine = codeStamp(env)
   const stub = (ref: StoreRef) => (ref.kind === 'control' ? env.CONTROL.get(env.CONTROL.idFromName('control')) : env.ACCOUNT.get(env.ACCOUNT.idFromName(ref.accountId)))
   edge = createEdge({

@@ -9,6 +9,7 @@ import { plans, planNames, planLimits } from './plans.ts'
 import type { BillingProvider, ProviderName, BillingEvent } from './provider.ts'
 import { stripeProvider } from './stripe.ts'
 import { polarProvider } from './polar.ts'
+import { testBillingProvider } from './test.ts'
 export { plans, planLimits, unlimited } from './plans.ts'
 export type { BillingProvider, BillingEvent } from './provider.ts'
 
@@ -24,6 +25,7 @@ export async function getBillingProvider(ctx: StoreCtx, name = ctx.config.billin
   requireCloud(ctx)
   if (name === 'stripe') return stripeProvider({ fetch: ctx.platform.fetch, secretKey: await getSetting(ctx, 'stripe_secret_key'), webhookSecret: await getSetting(ctx, 'stripe_webhook_secret') })
   if (name === 'polar') return polarProvider({ fetch: ctx.platform.fetch, accessToken: await getSetting(ctx, 'polar_access_token'), webhookSecret: await getSetting(ctx, 'polar_webhook_secret'), products: z.record(z.string(), z.string()).parse(JSON.parse(await getSetting(ctx, 'polar_products') || '{}')) })
+  if (name === 'test' && ctx.config.testDns) return testBillingProvider(ctx.now)
   throw new AppError('billing_unconfigured', 'The install admin has not configured billing.', 503)
 }
 export function queueBillingSync(ctx: StoreCtx, id: string) {
@@ -67,9 +69,10 @@ export const billingModule = {
       ctx.db.run('INSERT INTO usage_snapshots (account_id, period, contacts, emails_sent, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(account_id, period) DO UPDATE SET contacts = excluded.contacts, emails_sent = MAX(emails_sent, excluded.emails_sent), updated_at = excluded.updated_at', input.accountId, input.period, input.contacts, input.emailsSent, ctx.now())
     })
     reg.routes((app) => {
-      for (const name of ['stripe', 'polar'] satisfies ProviderName[]) app.post(`/hooks/${name}`, async (c) => {
+      for (const name of ['stripe', 'polar', 'test'] satisfies ProviderName[]) app.post(`/hooks/${name}`, async (c) => {
         const ctx = c.get('ctx')
         requireCloud(ctx)
+        if (name === 'test' && !ctx.config.testDns) throw new AppError('not_found', 'Not found.', 404)
         const provider = await getBillingProvider(ctx, name)
         let events: BillingEvent[]
         try { events = await provider.verifyAndParseWebhook(c.req.raw, ctx.now()) } catch (err) {

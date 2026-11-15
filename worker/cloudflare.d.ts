@@ -23,6 +23,8 @@ interface DurableObjectState {
     getAlarm(): Promise<number | null>
     setAlarm(time: number): Promise<void>
     deleteAlarm(): Promise<void>
+    /** Removes every key and SQL table of a SQLite-backed object. */
+    deleteAll(): Promise<void>
   }
 }
 interface DurableObjectId {

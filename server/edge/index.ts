@@ -183,7 +183,9 @@ export function createEdge(deps: EdgeDeps): Edge {
     }
     if (path === '/llms.txt' && method === 'GET') return new Response(markdown(accountRegistry, deps.config.appUrl), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
 
-    if (path === '/hooks/stripe' || path === '/hooks/polar') return forward({ kind: 'control' }, request, headers)
+    if (path === '/hooks/stripe' || path === '/hooks/polar' || (path === '/hooks/test' && deps.config.testDns)) return forward({ kind: 'control' }, request, headers)
+    // Dev mode only: the newest sign-in code for an address, so an unattended cloud journey can sign up.
+    if (path === '/api/dev/code' && deps.config.testDns) return forward({ kind: 'control' }, request, headers)
     if (path === '/hooks/ses' || path === '/hooks/resend') return handleEmailHook(deps, request, accountExists)
 
     if (path.startsWith('/api/v1/') || path === '/mcp') {

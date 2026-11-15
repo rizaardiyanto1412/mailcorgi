@@ -87,6 +87,8 @@ export const usageModule = {
       if (budget.take(1) < 1) return { again: ctx.now() + 1000 }
       const period = currentPeriod(ctx.now())
       const contacts = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status IN ('subscribed', 'unconfirmed')")?.n ?? 0
+      // One count an hour records the month's peak; counting on every subscribe made imports quadratic.
+      ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, 0, ?) ON CONFLICT(period) DO UPDATE SET contacts_peak = MAX(contacts_peak, excluded.contacts_peak)', period, contacts)
       const emailsSent = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', period)?.n ?? 0
       if (emailsSent >= limits(ctx).maxEmailsPerMonth * 0.9) notifyLimitNear(ctx, 'emails')
       await ctx.stores.control.pushUsage({ accountId: ctx.accountId!, period, contacts, emailsSent })

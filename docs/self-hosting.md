@@ -67,13 +67,27 @@ Workers Free costs nothing and fits a small newsletter. These limits apply per C
 | Durable Object rows read | 5 million a day | Lists, reports and sending |
 | Durable Object storage | 5 GB in total | Contacts, issues, events and, without R2, images |
 
-When a daily limit runs out, requests fail until 00:00 UTC. In practice that caps a Free install at a
-few thousand emails a day, less when many readers open and click.
+When a daily limit runs out, requests fail until 00:00 UTC.
 
-Move to Workers Paid ($5 a month) when your list passes about 2,000 subscribers, when you send more
-than once a day, or when the dashboard shows errors about daily limits. After you upgrade, delete the
-`WORKERS_PLAN` line from `wrangler.jsonc` in your repository so each send run can make up to 900
-requests.
+**What list size fits.** The row-write limit is the one that binds. Measured on the Node build
+(`npm run test:slow`), one sent email changes 11 rows (the queued delivery, its two status
+updates, the contact, the event, the daily and campaign counters, usage, and the job rows); one
+open changes 7, one click 8, one signup 6. Cloudflare also counts every index entry a write
+touches, which roughly doubles those numbers, so budget about 22 row writes per email, 14 per open
+and 16 per click:
+
+- 100,000 ÷ 22 ≈ 4,500 emails a day with nobody opening.
+- With a typical 40% open rate and 5% click rate, each email costs about 22 + 0.4 × 14 + 0.05 × 16 ≈ 28
+  row writes, so about 3,500 emails a day.
+- Outbound requests do not bind: each send run makes at most 40 (one settings read, one suppression
+  check, one permit call and 37 emails), and runs repeat as often as the alarm fires.
+
+So a Free install sends to about 3,500 subscribers a day. A larger list still works but a single
+issue then takes several days to go out (a 10,000-subscriber issue takes three), and opens and
+clicks arriving on top can push a day over the limit. Move to Workers Paid ($5 a month) when your
+list passes about 3,000 subscribers, when you send more than once a day, or when the dashboard
+shows errors about daily limits. After you upgrade, delete the `WORKERS_PLAN` line from
+`wrangler.jsonc` in your repository so each send run can make up to 900 requests.
 
 ## Run with Docker
 
@@ -376,7 +390,6 @@ a variable that is missing here.
 | `APP_SECRET` (secret) | Both | generated on first boot | Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable. |
 | `IMAGES_PUBLIC_URL` | Both | `APP_URL/img` | Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them. |
 | `SEND_BATCH_SIZE` | Both | 100 | Most emails one send run claims. The platform limit can lower it. |
-| `MAX_NEWSLETTERS` | Both | 3 | Read for older installs. It sets no limit: self-hosted accounts have unlimited newsletters and cloud plans set their own. |
 | `TURNSTILE_SITE_KEY` | Both |  | Cloudflare Turnstile site key for signup forms. Needs `TURNSTILE_SECRET_KEY` too. |
 | `TURNSTILE_SECRET_KEY` (secret) | Both |  | Cloudflare Turnstile secret key for signup forms. |
 
@@ -430,7 +443,8 @@ a variable that is missing here.
 | `HOST` | Node | 0.0.0.0 | Interface to listen on. |
 | `DATA_DIR` | Node | `./data` (`/data` in Docker) | Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`. |
 | `WEB_DIR` | Node | `web/dist` | Folder with the built web app. |
-| `NODE_ENV` | Node | `production` in Docker | Read into the config. No behavior depends on it today. |
+| `NODE_ENV` | Node | `production` in Docker | `production` turns off every development-only switch, such as `MC_TEST_DNS`. |
+| `MC_TEST_DNS` | Both |  | Development and tests only: a JSON object of canned DNS answers keyed `TYPE:name`, such as `{"TXT:example.com":["v=spf1 mx ~all"]}`. It replaces real lookups, turns on the dev outbox endpoints for install admins, and is ignored when `NODE_ENV` is `production` or the Worker is deployed. Never set it on a real install. |
 
 <!-- env-reference:end -->
 

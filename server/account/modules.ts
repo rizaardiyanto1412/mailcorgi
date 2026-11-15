@@ -20,6 +20,7 @@ import { teamModule } from './team/index.ts'
 import { notificationsModule } from './notifications/index.ts'
 import { apikeysModule } from './apikeys/index.ts'
 import { setupModule } from './setup/index.ts'
+import { devModule } from './dev/index.ts'
 
 /** Jobs and RPC every account store has, whatever modules are built. */
 const kernelModule = {
@@ -57,6 +58,7 @@ const modules = {
   notifications: notificationsModule,
   apikeys: apikeysModule,
   setup: setupModule,
+  dev: devModule,
 }
 
 export const accountRegistry = buildRegistry<'account', AccountRpc>('account', Object.values(modules), (ctx, action) => {

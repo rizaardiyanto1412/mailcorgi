@@ -1,3 +1,27 @@
+/**
+ * Canned DNS answers for the full journey (`MC_TEST_DNS`). Both runners pass them to the server
+ * under test; production never sets the flag.
+ */
+export const SMOKE_DNS = {
+  'TXT:smoke.example.com': ['v=spf1 mx ~all'],
+  'TXT:_dmarc.smoke.example.com': ['v=DMARC1; p=none'],
+  'MX:smoke.example.com': ['mx.smoke.example.com'],
+  'MX:example.com': ['mx.example.com'],
+}
+
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Poll `probe` until it returns a value, for at most `ms`. */
+export async function waitUntil<T>(label: string, ms: number, probe: () => Promise<T | null | undefined | false>, every = 250): Promise<T> {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    const value = await probe()
+    if (value) return value
+    await sleep(every)
+  }
+  throw new Error(`smoke: ${label} did not happen within ${ms} ms`)
+}
+
 export class Jar {
   cookies: Record<string, string> = {}
   csrf = ''
@@ -31,7 +55,7 @@ export const expect = (ok: unknown, message: string) => {
   if (!ok) throw new Error(`smoke: ${message}`)
 }
 
-export function createSmokeContext(base: string) {
+export function createSmokeContext(base: string, mode: 'selfhosted' | 'cloud' = 'selfhosted') {
   const jar = new Jar()
   const json = async (method: string, p: string, body?: unknown, status = 200) => {
     const r = await call(base, jar, method, p, body)
@@ -39,7 +63,9 @@ export function createSmokeContext(base: string) {
     expect(r.status === status, `${method} ${p} answered ${r.status}: ${JSON.stringify(data)}`)
     return data
   }
-  return { base, jar, json, call: (method: string, p: string, body?: unknown) => call(base, jar, method, p, body), expect, state: new Map<string, unknown>() }
+  /** Call an action as the signed-in user; `status` is the expected HTTP status. */
+  const action = (name: string, input: unknown = {}, status = 200) => json('POST', `/api/actions/${name}`, input, status)
+  return { base, mode, jar, json, action, call: (method: string, p: string, body?: unknown) => call(base, jar, method, p, body), expect, state: new Map<string, unknown>() }
 }
 
 export type SmokeContext = ReturnType<typeof createSmokeContext>
