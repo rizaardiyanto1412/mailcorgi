@@ -56,15 +56,52 @@ export function named(sql: string, params: Record<string, Param>): { sql: string
   return { sql: positional, params: values }
 }
 
-/** Apply the migrations that are not yet in `_migrations`. Returns how many ran. */
-export function migrate(db: Db, migrations: readonly string[], now: () => number = Date.now): number {
-  db.exec('CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)')
-  const applied = db.get<{ n: number }>('SELECT COALESCE(MAX(id), 0) AS n FROM _migrations')?.n ?? 0
+export interface Migration {
+  id: string
+  sql: string
+}
+
+export function validateMigrations(migrations: readonly Migration[]): void {
+  const ids = new Set<string>()
+  for (const { id } of migrations) {
+    if (!/^\d{4}-base$/.test(id) && !/^\d{4}-\d{2}-\d{2}-[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/.test(id)) throw new Error(`Malformed migration id: ${id}`)
+    if (!/^\d{4}-base$/.test(id)) {
+      const date = id.slice(0, 10)
+      const timestamp = Date.parse(`${date}T00:00:00Z`)
+      if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== date) throw new Error(`Malformed migration id: ${id}`)
+    }
+    if (ids.has(id)) throw new Error(`Duplicate migration id: ${id}`)
+    ids.add(id)
+  }
+}
+
+/** Base ids retain their old positions; module ids are independent of registration order. */
+export function migrate(db: Db, migrations: readonly Migration[], now: () => number = Date.now): number {
+  validateMigrations(migrations)
+  const base = migrations.filter((m) => /^\d{4}-base$/.test(m.id)).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  const modules = migrations.filter((m) => !/^\d{4}-base$/.test(m.id)).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  db.tx(() => {
+    const columns = db.all<{ name: string; type: string }>('PRAGMA table_info(_migrations)')
+    if (columns.some((c) => c.name === 'id' && c.type.toUpperCase() === 'INTEGER')) {
+      const recorded = db.all<{ id: number; applied_at: number }>('SELECT id, applied_at FROM _migrations')
+      for (const row of recorded) {
+        if (!Number.isInteger(row.id) || row.id < 1 || row.id > base.length) throw new Error(`Unknown legacy migration position: ${row.id}`)
+      }
+      db.exec('ALTER TABLE _migrations RENAME TO _migrations_positional')
+      db.exec('CREATE TABLE _migrations (id TEXT PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL)')
+      for (const row of recorded) db.run('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)', base[row.id - 1].id, row.applied_at)
+      db.exec('DROP TABLE _migrations_positional')
+    } else {
+      db.exec('CREATE TABLE IF NOT EXISTS _migrations (id TEXT PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL)')
+    }
+  })
+  const applied = new Set(db.all<{ id: string }>('SELECT id FROM _migrations').map((row) => row.id))
   let ran = 0
-  for (let i = applied; i < migrations.length; i++) {
+  for (const migration of [...base, ...modules]) {
+    if (applied.has(migration.id)) continue
     db.tx(() => {
-      db.exec(migrations[i])
-      db.run('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)', i + 1, now())
+      db.exec(migration.sql)
+      db.run('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)', migration.id, now())
     })
     ran++
   }

@@ -79,9 +79,34 @@ Arguments and results are JSON. An `AppError` thrown inside arrives intact on th
 
 ### Migrations
 
-Migration 1 of each store already creates every table in architecture section 5. Add a column or
-index by appending a new string to `server/account/schema.ts` or `server/control/schema.ts`. Never
-edit an earlier entry. Keep statements under 100 bound parameters (`insertMany` chunks for you).
+The fixed base migrations in each store's `schema.ts` create the existing tables. Do not edit or
+append to those arrays. A feature unit follows this pattern:
+
+1. Create `server/<store>/<module>/migrations.ts`, exporting `migrations: readonly Migration[]` (`Migration` comes from `../../core/db.ts`).
+2. Give each `{ id, sql }` a unique id such as `2026-11-16-imports-add-foo`; import the list in the module's `index.ts` and call `reg.migrations(migrations)` inside `register(reg)`.
+3. Add a behavior test; never change a shipped id or SQL. Base migrations run first, then pending module ids in lexical order, each transactionally and once.
+
+The id starts with a real `YYYY-MM-DD` date, the registering module's name, and a lowercase
+hyphen-separated description. Duplicate ids within a store and malformed ids fail registration.
+A migration may touch only its module's tables or add columns/indexes it owns. It must be safe after
+any other module's migrations: do not depend on their order or on their new schema. Earlier-sorting
+ids added later still run. Keep statements under 100 bound parameters (`insertMany` chunks for you).
+Legacy integer history is converted to base ids on first startup, preserving timestamps and data.
+
+### Smoke steps
+
+1. Add a uniquely named file `scripts/smoke/<number>-<unit>.ts`; the runner discovers `.ts` files in filename order.
+2. Export one default async function receiving `SmokeContext` from `../smoke-context.ts`; use `base`, `json`, `call`, `jar`, `expect`, and `state`.
+3. Check your feature over HTTP and run `npm run smoke`; add your own file, never edit another step or the runner.
+
+`json(method, path, body?, status = 200)` checks the response status and returns JSON. `call` uses
+the shared cookie jar and CSRF token. `state` is a `Map<string, unknown>` for earlier results; validate
+values before using them. `20-newsletter.ts` stores the created newsletter under `newsletter`.
+Setup runs at `10`, newsletter creation at `20`, API checks at `30`, and session teardown at `90`;
+place authenticated feature checks between `30` and `90`. Each target gets a fresh context.
+
+Record deviations from the architecture contract in `docs/decisions/<unit>.md`; feature units do not
+edit `docs/architecture.md` directly.
 
 ## The web file
 

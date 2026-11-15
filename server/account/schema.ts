@@ -1,8 +1,9 @@
+import type { Migration } from '../core/db.ts'
 import { JOBS_SQL } from '../core/jobs.ts'
 
-/** Account store migrations. Append only once merged to main. */
-export const accountMigrations: readonly string[] = [
-  `
+/** Account store base migrations. Fixed ids preserve the legacy positional history. */
+export const accountMigrations: readonly Migration[] = [
+  { id: '0001-base', sql: `
   CREATE TABLE account_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -329,8 +330,8 @@ export const accountMigrations: readonly string[] = [
     PRIMARY KEY (key, seq)
   ) WITHOUT ROWID;
   ${JOBS_SQL}
-  `,
-  `
+  ` },
+  { id: '0002-base', sql: `
   CREATE TABLE api_idempotency (
     key TEXT PRIMARY KEY,
     fingerprint TEXT NOT NULL,
@@ -339,8 +340,8 @@ export const accountMigrations: readonly string[] = [
     expires_at INTEGER NOT NULL
   );
   CREATE INDEX api_idempotency_expiry ON api_idempotency(expires_at);
-  `,
-  `
+  ` },
+  { id: '0003-base', sql: `
   CREATE INDEX contacts_created_page ON contacts(newsletter_id, created_at, id);
   CREATE INDEX contacts_name_page ON contacts(newsletter_id, name, id);
   CREATE INDEX contacts_email_page ON contacts(newsletter_id, email, id);
@@ -349,5 +350,5 @@ export const accountMigrations: readonly string[] = [
   CREATE INDEX events_contact_page ON events(newsletter_id, contact_id, id);
   CREATE INDEX deliveries_contact_campaign ON deliveries(contact_id, campaign_id);
   CREATE INDEX campaigns_recent_issues ON campaigns(newsletter_id, kind, status, sent_at, id);
-  `,
+  ` },
 ]

@@ -7,104 +7,20 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { createSmokeContext } from './smoke-context.ts'
 
 const root = path.resolve(import.meta.dirname, '..')
 const argUrl = process.argv.includes('--url') ? process.argv[process.argv.indexOf('--url') + 1] : null
 
-class Jar {
-  cookies: Record<string, string> = {}
-  csrf = ''
-  absorb(response: Response) {
-    for (const line of response.headers.getSetCookie()) {
-      const [pair, ...attrs] = line.split(';')
-      const eq = pair.indexOf('=')
-      const name = pair.slice(0, eq).trim()
-      const value = pair.slice(eq + 1).trim()
-      if (attrs.some((a) => /max-age=0/i.test(a)) || !value) delete this.cookies[name]
-      else this.cookies[name] = value
-    }
-  }
-  header() {
-    return Object.entries(this.cookies)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ')
-  }
-}
-
-async function call(base: string, jar: Jar, method: string, p: string, body?: unknown) {
-  const headers: Record<string, string> = { cookie: jar.header() }
-  if (body !== undefined) headers['content-type'] = 'application/json'
-  if (jar.csrf && method !== 'GET') headers['x-mc-csrf'] = jar.csrf
-  const response = await fetch(base + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual' })
-  jar.absorb(response)
-  return response
-}
-
-const expect = (ok: unknown, message: string) => {
-  if (!ok) throw new Error(`smoke: ${message}`)
-}
-
 async function scenario(base: string) {
-  const jar = new Jar()
-  const json = async (method: string, p: string, body?: unknown, status = 200) => {
-    const r = await call(base, jar, method, p, body)
-    const data = await r.json().catch(() => null)
-    expect(r.status === status, `${method} ${p} answered ${r.status}: ${JSON.stringify(data)}`)
-    return data
+  const context = createSmokeContext(base)
+  const directory = new URL('./smoke/', import.meta.url)
+  const files = fs.readdirSync(directory).filter((file) => file.endsWith('.ts')).sort()
+  for (const file of files) {
+    const { default: step } = await import(new URL(file, directory).href)
+    if (typeof step !== 'function') throw new Error(`smoke: ${file} must export a default async function`)
+    await step(context)
   }
-  const health = await json('GET', '/healthz')
-  expect(health.ok === true, '/healthz ok')
-  const index = await call(base, jar, 'GET', '/')
-  expect(index.status === 200 && (await index.text()).includes('id="root"'), 'the SPA index is served')
-  const boot = await json('GET', '/api/auth/bootstrap')
-  expect(boot.setupRequired === true, 'a fresh install needs setup')
-  await json('POST', '/api/auth/setup', { name: 'Smoke Tester', email: 'smoke@example.com', password: 'smoke test password' })
-  const session = (await json('GET', '/api/auth/bootstrap')).session
-  expect(session?.user?.email === 'smoke@example.com' && session.current, 'setup created a session and an account')
-  jar.csrf = session.csrf
-  expect((await json('POST', '/api/actions/newsletters.list', {})).newsletters.length === 0, 'no newsletters yet, so the app lands on /welcome')
-  const created = await json('POST', '/api/actions/newsletters.create', { name: 'Smoke Weekly' })
-  expect(created.slug === 'smoke-weekly', 'the newsletter got its slug')
-  const read = await json('POST', '/api/actions/newsletters.get', { newsletterId: created.id })
-  expect(read.name === 'Smoke Weekly', 'the newsletter reads back')
-  const list = await json('POST', '/api/actions/newsletters.list', {})
-  expect(list.newsletters.length === 1, 'the list has one newsletter')
-  const key = await json('POST', '/api/actions/apikeys.create', { name: 'Smoke API', access: 'full' })
-  const apiHeaders = { authorization: `Bearer ${key.secret}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
-  const api = await fetch(`${base}/api/v1/newsletters`, { headers: apiHeaders })
-  expect(api.ok && (await api.json()).newsletters[0].id === created.id, 'API key reads newsletters')
-  const mcp = async (id: number, method: string, params: unknown = {}) => {
-    const response = await fetch(`${base}/mcp`, { method: 'POST', headers: apiHeaders, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) })
-    expect(response.ok, `MCP ${method} answered ${response.status}`)
-    return response.json()
-  }
-  const initialized = await mcp(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'MailCorgi smoke', version: '1' } })
-  expect(initialized.result?.protocolVersion === '2025-06-18', 'MCP initializes')
-  const tools = await mcp(2, 'tools/list')
-  expect(tools.result?.tools.some((tool: { name: string }) => tool.name === 'newsletters_list'), 'MCP lists registry tools')
-  const tool = await mcp(3, 'tools/call', { name: 'newsletters_list', arguments: {} })
-  expect(tool.result?.isError === false && tool.result.structuredContent.newsletters[0].id === created.id, 'MCP calls a tool')
-  const docs = await json('POST', '/api/actions/api.reference', {})
-  expect(docs.endpoints.some((endpoint: { name: string }) => endpoint.name === 'newsletters.list'), 'API reference reads the registry')
-  const keys = await json('POST', '/api/actions/apikeys.list', {})
-  expect(keys.keys.some((item: { id: string }) => item.id === key.id), 'API settings lists the created key')
-  for (const page of ['/settings/api', '/docs/api']) {
-    const response = await call(base, jar, 'GET', page)
-    expect(response.ok && (await response.text()).includes('id="root"'), `${page} serves the SPA`)
-  }
-  const llms = await fetch(`${base}/llms.txt`)
-  expect(llms.ok && (await llms.text()).includes('newsletters_list'), 'llms.txt serves the generated reference')
-  await json('POST', '/api/actions/apikeys.revoke', { keyId: key.id })
-  expect((await fetch(`${base}/api/v1/newsletters`, { headers: apiHeaders })).status === 401, 'revoked API keys are refused')
-  const deepLink = await call(base, jar, 'GET', '/campaigns')
-  expect(deepLink.status === 200, 'client-side routes fall back to the SPA')
-  await json('POST', '/api/auth/signout', {})
-  expect((await json('GET', '/api/auth/bootstrap')).session === null, 'signed out')
-  await json('POST', '/api/auth/signin', { email: 'smoke@example.com', password: 'smoke test password' })
-  const again = (await json('GET', '/api/auth/bootstrap')).session
-  expect(again?.user?.email === 'smoke@example.com', 'signed in again')
-  const forged = await call(base, jar, 'POST', '/api/actions/newsletters.list', {})
-  expect(forged.status === 403, 'a request without the CSRF header is refused')
 }
 
 const freePort = () =>
