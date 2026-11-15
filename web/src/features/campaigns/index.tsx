@@ -11,8 +11,9 @@ import { BackLink, Banner, Button, EmptyState, Field, Input, LinkButton, PageHea
 import { Preview } from './Preview.tsx'
 import { AudiencePicker } from './Audience.tsx'
 import { Progress, SendStep, TestSend } from './SendStep.tsx'
+import { loadChunk } from '../../lib/reload.ts'
 
-const CampaignEditor = lazy(() => import('./Editor.tsx').then((module) => ({ default: module.CampaignEditor })))
+const CampaignEditor = lazy(loadChunk(() => import('./Editor.tsx').then((module) => ({ default: module.CampaignEditor }))))
 
 function CampaignList() {
   useDocumentTitle('Campaigns')

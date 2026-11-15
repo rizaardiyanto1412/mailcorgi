@@ -18,6 +18,7 @@ import { accountMigrations } from './account/schema.ts'
 import { AppError } from './core/http.ts'
 import { isAccountId } from './core/ids.ts'
 import { createEdge, type Edge } from './edge/index.ts'
+import { isSpaRoute } from './edge/assets.ts'
 
 export interface NodeOptions {
   config: Config
@@ -171,9 +172,11 @@ export function nodeAssets(webRoot: string): (request: Request) => Promise<Respo
     const requested = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '')
     let file = path.join(webRoot, requested)
     if (!file.startsWith(webRoot)) return new Response('Not found', { status: 404 })
+    // `_headers` is Cloudflare's asset config, not a page.
+    if (path.basename(file) === '_headers') return new Response('Not found', { status: 404 })
     const isAsset = fs.existsSync(file) && fs.statSync(file).isFile()
     if (!isAsset) {
-      if (path.extname(requested)) return new Response('Not found', { status: 404 })
+      if (!isSpaRoute(requested.split(path.sep).join('/'))) return new Response('Not found', { status: 404 })
       file = path.join(webRoot, 'index.html')
       if (!fs.existsSync(file)) return new Response('The web app is not built yet. Run "npm run build", or use "npm run dev" and open the Vite URL.', { status: 503 })
     }
