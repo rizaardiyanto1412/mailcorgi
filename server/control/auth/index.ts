@@ -7,7 +7,7 @@ import { newId } from '../../core/ids.ts'
 import { AppError, clientIp, readJson, validate, type StoreEnv } from '../../core/http.ts'
 import { allowRate, clearRate } from '../../core/ratelimit.ts'
 import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
-import { appUrl, learnAppUrl } from '../install/index.ts'
+import { appUrl, learnAppUrl, getSettingSync } from '../install/index.ts'
 import { createAccountForUser, isInstallAdmin, resolveSession } from '../accounts/index.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 
@@ -118,12 +118,15 @@ function consumeCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin
   if (!accepted) throw new AppError('bad_code', 'That code is wrong or has expired. Ask for a new one.', 400)
 }
 
-export const signupOpen = (ctx: StoreCtx) => ctx.config.cloud || ctx.config.allowedEmails.length > 0
+export const signupOpen = (ctx: StoreCtx) => getSettingSync(ctx, 'signup_mode') !== 'closed' && (ctx.config.cloud || allowedEmails(ctx).length > 0)
+const allowedEmails = (ctx: StoreCtx) => [...ctx.config.allowedEmails, ...getSettingSync(ctx, 'allowed_emails').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
 
 /** Whether an address may sign itself up. Invitations are handled by the team unit. */
 function mayJoin(ctx: StoreCtx, address: string) {
-  if (ctx.config.cloud) return true
-  return ctx.config.allowedEmails.includes(address) || ctx.config.adminEmails.includes(address)
+  const mode = getSettingSync(ctx, 'signup_mode')
+  if (mode === 'closed') return false
+  if (ctx.config.cloud && mode !== 'allowlist') return true
+  return allowedEmails(ctx).includes(address) || ctx.config.adminEmails.includes(address)
 }
 
 function createUser(ctx: StoreCtx, input: { email: string; name: string; passwordHash: string; verified: boolean; installAdmin?: boolean }): UserRow {

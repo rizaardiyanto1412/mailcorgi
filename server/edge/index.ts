@@ -21,7 +21,6 @@ import { controlRegistry } from '../control/modules.ts'
 export const SESSION_COOKIE = 'mc_session'
 export const ACCOUNT_COOKIE = 'mc_account'
 export const CSRF_HEADER = 'x-mc-csrf'
-const SESSION_CACHE_MS = 30_000
 const SITE_CACHE_MS = 60_000
 
 export interface EdgeDeps {
@@ -58,7 +57,6 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export function createEdge(deps: EdgeDeps): Edge {
-  const sessionCache = new Map<string, { at: number; info: SessionInfo | null }>()
   const siteCache = new Map<string, { at: number; site: SiteRow | null }>()
 
   const trim = (map: Map<string, unknown>) => {
@@ -66,13 +64,7 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   async function resolveSession(sessionId: string, wantAccountId: string | null): Promise<SessionInfo | null> {
-    const cacheKey = `${sessionId}:${wantAccountId ?? ''}`
-    const hit = sessionCache.get(cacheKey)
-    if (hit && deps.now() - hit.at < SESSION_CACHE_MS) return hit.info
-    const info = await deps.stores.control.resolveSession({ sessionId, wantAccountId })
-    sessionCache.set(cacheKey, { at: deps.now(), info })
-    trim(sessionCache)
-    return info
+    return deps.stores.control.resolveSession({ sessionId, wantAccountId })
   }
 
   async function lookupSite(where: { slug?: string; host?: string }): Promise<SiteRow | null> {
@@ -198,7 +190,6 @@ export function createEdge(deps: EdgeDeps): Edge {
       if (info && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && request.headers.get(CSRF_HEADER) !== info.csrf) {
         return json({ error: 'Request blocked. Reload the page and try again.', code: 'csrf' }, 403)
       }
-      if (sessionId && path.startsWith('/api/auth/') && method === 'POST') for (const key of sessionCache.keys()) if (key.startsWith(sessionId)) sessionCache.delete(key)
 
       if (isAction) {
         const name = path.slice('/api/actions/'.length)
