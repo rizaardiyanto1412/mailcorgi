@@ -1,3 +1,4 @@
+import { validateMigrations, type Migration } from './db.ts'
 import type { z } from 'zod'
 import type { Hono } from 'hono'
 import type { StoreCtx } from './store.ts'
@@ -62,6 +63,7 @@ export interface Registry {
   rpc: Map<string, RpcFn>
   routes: RouteMount[]
   resolvers: Map<ResourceType, Resolver>
+  migrations: Migration[]
   maintenance: Maintenance[]
   /** Runs before every handler. The account store uses it to refuse sends while blocked. */
   guard?: (ctx: StoreCtx, action: AnyAction, actor: Actor) => void
@@ -78,6 +80,7 @@ export interface Registrar<S extends Scope, R extends RpcShape> {
   rpc<K extends keyof R & string>(name: K, fn: (ctx: StoreCtx, args: Parameters<R[K]>[0]) => Awaited<ReturnType<R[K]>> | Promise<Awaited<ReturnType<R[K]>>>): void
   routes(mount: RouteMount): void
   resolver(type: ResourceType, fn: Resolver): void
+  migrations(migrations: readonly Migration[]): void
   maintenance(fn: Maintenance): void
 }
 
@@ -87,8 +90,8 @@ export interface Module<S extends Scope, R extends RpcShape> {
 }
 
 export function buildRegistry<S extends Scope, R extends RpcShape>(scope: S, modules: Module<S, R>[], guard?: Registry['guard']): Registry {
-  const registry: Registry = { scope, actions: new Map(), jobs: new Map(), rpc: new Map(), routes: [], resolvers: new Map(), maintenance: [], guard }
-  const reg: Registrar<S, R> = {
+  const registry: Registry = { scope, actions: new Map(), jobs: new Map(), rpc: new Map(), routes: [], resolvers: new Map(), maintenance: [], migrations: [], guard }
+  const reg: Omit<Registrar<S, R>, 'migrations'> = {
     scope,
     actions: (...defs) => {
       for (const def of defs as readonly AnyAction[]) {
@@ -113,7 +116,20 @@ export function buildRegistry<S extends Scope, R extends RpcShape>(scope: S, mod
     },
     maintenance: (fn) => void registry.maintenance.push(fn),
   }
-  for (const m of modules) m.register(reg)
+  for (const m of modules) {
+    m.register({
+      ...reg,
+      migrations: (migrations) => {
+        validateMigrations(migrations)
+        for (const migration of migrations) {
+          const prefix = migration.id.slice(0, 11)
+          if (!/^\d{4}-\d{2}-\d{2}-$/.test(prefix) || !migration.id.startsWith(`${prefix}${m.name}-`)) throw new Error(`Malformed migration id for module ${m.name}: ${migration.id}`)
+        }
+        registry.migrations.push(...migrations)
+        validateMigrations(registry.migrations)
+      },
+    })
+  }
   return registry
 }
 

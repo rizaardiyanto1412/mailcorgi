@@ -1,8 +1,9 @@
+import type { Migration } from '../core/db.ts'
 import { JOBS_SQL } from '../core/jobs.ts'
 
-/** Control store migrations. Append only once merged to main. */
-export const controlMigrations: readonly string[] = [
-  `
+/** Control store base migrations. Fixed ids preserve the legacy positional history. */
+export const controlMigrations: readonly Migration[] = [
+  { id: '0001-base', sql: `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -124,8 +125,8 @@ export const controlMigrations: readonly string[] = [
     created_at INTEGER NOT NULL
   );
   ${JOBS_SQL}
-  `,
-  `
+  ` },
+  { id: '0002-base', sql: `
   ALTER TABLE accounts ADD COLUMN billing_event_at INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE accounts ADD COLUMN billing_grace_until INTEGER;
   ALTER TABLE accounts ADD COLUMN blocked_at INTEGER;
@@ -136,5 +137,5 @@ export const controlMigrations: readonly string[] = [
     expires_at INTEGER NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0
   );
-  `,
+  ` },
 ]

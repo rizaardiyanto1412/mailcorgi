@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Db } from './db.ts'
+import type { Db, Migration } from './db.ts'
 import { migrate } from './db.ts'
 import type { Platform, StoreRef } from './platform.ts'
 import { storeId } from './platform.ts'
@@ -73,10 +73,10 @@ export function decodeRpcResult(result: RpcResult): unknown {
   throw new AppError(result.code, result.message, result.status, result.details)
 }
 
-export function createStore(registry: Registry, migrations: readonly string[], deps: StoreDeps): Store {
+export function createStore(registry: Registry, migrations: readonly Migration[], deps: StoreDeps): Store {
   const { db, platform, ref } = deps
   const id = storeId(ref)
-  migrate(db, migrations, deps.now)
+  migrate(db, [...migrations, ...registry.migrations], deps.now)
 
   let arming: Promise<void> | null = null
   const rearm = (): Promise<void> => {

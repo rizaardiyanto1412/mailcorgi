@@ -1,6 +1,13 @@
 import { test, after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { createInstall, type Install } from './harness.ts'
+import { createStore } from '../core/store.ts'
+import { createDb, migrate } from '../core/db.ts'
+import { buildRegistry, type Module } from '../core/actions.ts'
+import { openDriver } from '../platform-node.ts'
+import { accountMigrations } from '../account/schema.ts'
+import { accountRegistry } from '../account/modules.ts'
+import { controlRegistry } from '../control/modules.ts'
 import { controlMigrations } from '../control/schema.ts'
 
 let install: Install
@@ -31,10 +38,10 @@ test('an account store has every table from the contract', async () => {
 })
 
 test('migrations run once and a restart applies nothing new', async () => {
-  const before = install.app.control.ctx.db.all<{ id: number }>('SELECT id FROM _migrations')
+  const before = install.app.control.ctx.db.all<{ id: string }>('SELECT id FROM _migrations')
   assert.equal(before.length, controlMigrations.length)
   install = await install.restart()
-  const after = install.app.control.ctx.db.all<{ id: number }>('SELECT id FROM _migrations')
+  const after = install.app.control.ctx.db.all<{ id: string }>('SELECT id FROM _migrations')
   assert.deepEqual(after, before)
 })
 
@@ -45,3 +52,104 @@ test('bulk inserts stay under the parameter limit', async () => {
   assert.equal(insertMany(db, 'rate_limits', ['key', 'window_start', 'count'], rows), 250)
   assert.equal(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'k%'")!.n, 250)
 })
+
+for (const [store, base, registry] of [
+  ['control', controlMigrations, controlRegistry],
+  ['account', accountMigrations, accountRegistry],
+] as const) {
+  test(`${store}: fresh schema includes every registered migration`, () => {
+    const connection = openDriver(':memory:')
+    try {
+      const db = createDb(connection.driver)
+      const migrations = [...base, ...registry.migrations]
+      assert.equal(migrate(db, migrations), migrations.length)
+      assert.deepEqual(db.all<{ id: string }>('SELECT id FROM _migrations ORDER BY id').map((r) => r.id), migrations.map((m) => m.id).sort())
+      assert.equal(migrate(db, migrations), 0)
+    } finally { connection.close() }
+  })
+
+  for (const count of [1, base.length]) {
+    test(`${store}: upgrades ${count} positional migrations without replay or data loss`, () => {
+      const connection = openDriver(':memory:')
+      try {
+        const db = createDb(connection.driver)
+        db.exec('CREATE TABLE _migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)')
+        for (let i = 0; i < count; i++) {
+          db.exec(base[i].sql)
+          db.run('INSERT INTO _migrations VALUES (?, ?)', i + 1, 123)
+        }
+        const table = store === 'control' ? 'install_settings' : 'account_meta'
+        db.run(`INSERT INTO ${table} (key, value) VALUES (?, ?)`, 'upgrade-test', 'preserved')
+        assert.equal(migrate(db, base), base.length - count)
+        assert.equal(db.get<{ value: string }>(`SELECT value FROM ${table} WHERE key = ?`, 'upgrade-test')?.value, 'preserved')
+        assert.equal(db.get<{ applied_at: number }>('SELECT applied_at FROM _migrations WHERE id = ?', base[0].id)?.applied_at, 123)
+        assert.equal(migrate(db, base), 0)
+      } finally { connection.close() }
+    })
+  }
+
+  test(`${store}: module order is stable and a later earlier-sorting id applies once`, () => {
+    const connection = openDriver(':memory:')
+    try {
+      const db = createDb(connection.driver)
+      const modules = [
+        { id: '2026-11-16-imports-second', sql: "INSERT INTO imports_probe VALUES ('second')" },
+        { id: '2026-11-16-imports-first', sql: 'CREATE TABLE imports_probe (value TEXT)' },
+        { id: '2026-11-16-stats-first', sql: 'CREATE TABLE stats_probe (value TEXT)' },
+      ]
+      assert.equal(migrate(db, [...modules, ...base]), base.length + 3)
+      const later = { id: '2026-11-15-imports-later', sql: "INSERT INTO imports_probe VALUES ('later')" }
+      assert.equal(migrate(db, [...base, later, ...modules.reverse()]), 1)
+      assert.equal(migrate(db, [...base, ...modules, later]), 0)
+      assert.deepEqual(db.all<{ value: string }>('SELECT value FROM imports_probe ORDER BY rowid').map((r) => r.value), ['second', 'later'])
+    } finally { connection.close() }
+  })
+
+  test(`${store}: duplicate and malformed module ids are rejected at registration`, () => {
+    const module = (id: string): Module<typeof store, Record<string, (args: unknown) => Promise<unknown>>> => ({
+      name: 'imports',
+      register(reg) { reg.migrations([{ id, sql: 'SELECT 1' }]) },
+    })
+    const id = '2026-11-16-imports-add-foo'
+    assert.throws(() => buildRegistry(store, [module(id), module(id)]), /Duplicate migration id/)
+    for (const bad of ['0001-base', 'imports-add-foo', '2026-11-16-stats-add-foo', '2026-02-30-imports-add-foo', '2026-13-01-imports-add-foo', '2026-11-16-imports-']) {
+      assert.throws(() => buildRegistry(store, [module(bad)]))
+    }
+  })
+
+  test(`${store}: failed migration rolls back its SQL and remains pending`, () => {
+    const connection = openDriver(':memory:')
+    try {
+      const db = createDb(connection.driver)
+      migrate(db, base)
+      const id = '2026-11-16-imports-rollback'
+      assert.throws(() => migrate(db, [...base, { id, sql: 'CREATE TABLE imports_probe (value TEXT); INSERT INTO missing_table VALUES (1)' }]))
+      assert.equal(db.get('SELECT id FROM _migrations WHERE id = ?', id), undefined)
+      assert.equal(db.get("SELECT name FROM sqlite_master WHERE name = 'imports_probe'"), undefined)
+      assert.equal(migrate(db, [...base, { id, sql: 'CREATE TABLE imports_probe (value TEXT)' }]), 1)
+    } finally { connection.close() }
+  })
+}
+
+for (const scope of ['control', 'account'] as const) {
+  test(`${scope}: module registration migrates before HTTP routes run`, async () => {
+    const connection = openDriver(':memory:')
+    try {
+      const registry = buildRegistry(scope, [{
+        name: 'probe',
+        register(reg) {
+          reg.migrations([{ id: '2026-11-16-probe-create', sql: "CREATE TABLE probe (value TEXT); INSERT INTO probe VALUES ('ready')" }])
+          reg.routes((app) => app.get('/probe', (c) => c.json(c.get('ctx').db.get('SELECT value FROM probe'))))
+        },
+      }])
+      const ctx = install.app.control.ctx
+      const store = createStore(registry, scope === 'control' ? controlMigrations : accountMigrations, {
+        ref: scope === 'control' ? { kind: 'control' } : { kind: 'account', accountId: 'migration-probe' },
+        db: createDb(connection.driver), platform: ctx.platform, stores: ctx.stores, config: ctx.config, keys: ctx.keys, now: ctx.now,
+      })
+      const response = await store.fetch(new Request('http://example.com/probe'))
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), { value: 'ready' })
+    } finally { connection.close() }
+  })
+}
