@@ -8,6 +8,7 @@ import { compileFilter, filterSchema, type Filter } from '../segments/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { contactRow, deleteContact, emailSchema, fieldValuesSchema, serializeContact, statusSchema, subscribe, unsubscribe, validateFields, validateTags, type ContactRow } from './state.ts'
 import { taxonomyActions } from './taxonomy.ts'
+import { contactLimitError } from '../usage/index.ts'
 import { emailHash } from './hash.ts'
 import { migrations } from './migrations.ts'
 export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider, validateFields } from './state.ts'
@@ -110,7 +111,11 @@ export const contactsModule = {
     return reg.actions(
       ...taxonomyActions,
       defineAction({ name: 'contacts.list', description: 'Search and page through contacts in a newsletter.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: listSchema, rest: { method: 'GET', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'List contacts', destructive: false }, handler: listContacts }),
-      defineAction({ name: 'contacts.create', description: 'Add a contact with asserted consent. Suppressed addresses stay suppressed.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId: newsletterIdSchema, email: emailSchema.describe('The email address'), name: z.string().trim().max(200).optional().describe('The contact name'), fields: fieldValuesSchema.optional().describe('Typed custom field values'), tags: z.array(z.string()).max(100).optional().describe('Tag ids from this newsletter'), source: z.string().max(100).default('manual').describe('How the contact was added') }), rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'Add a contact', destructive: false }, handler: (ctx, i) => subscribe(ctx, { ...i, consent: 'asserted' }) }),
+      defineAction({ name: 'contacts.create', description: 'Add a contact with asserted consent. Suppressed addresses stay suppressed (outcome suppressed). Past the plan contact limit the call fails with limit_reached and nothing is added.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId: newsletterIdSchema, email: emailSchema.describe('The email address'), name: z.string().trim().max(200).optional().describe('The contact name'), fields: fieldValuesSchema.optional().describe('Typed custom field values'), tags: z.array(z.string()).max(100).optional().describe('Tag ids from this newsletter'), source: z.string().max(100).default('manual').describe('How the contact was added') }), rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'Add a contact', destructive: false }, handler: (ctx, i) => {
+        const result = subscribe(ctx, { ...i, consent: 'asserted' })
+        if (result.outcome === 'limit') throw contactLimitError(ctx)
+        return result
+      } }),
       defineAction({ name: 'contacts.get', description: 'Read a contact with their tags and recent timeline.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'contact', param: 'contactId' }, input: z.object({ newsletterId: newsletterIdSchema, contactId, beforeEventId: z.number().int().positive().optional().describe('Load events older than this event id') }), rest: { method: 'GET', path: '/newsletters/:newsletterId/contacts/:contactId' }, mcp: { title: 'Get a contact', destructive: false }, handler: (ctx, i) => {
         const row = contactRow(ctx, i.contactId, i.newsletterId)
         const events = ctx.db.all<{ id: number; type: string; data: string; at: number; campaign_id: string | null }>('SELECT id, type, data, at, campaign_id FROM events WHERE newsletter_id = ? AND contact_id = ? AND id < ? ORDER BY id DESC LIMIT 101', i.newsletterId, row.id, i.beforeEventId ?? Number.MAX_SAFE_INTEGER)

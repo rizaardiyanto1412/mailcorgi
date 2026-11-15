@@ -55,6 +55,31 @@ export function rateBreach(stats: CampaignStats, min: number): 'bounce_rate' | '
   return null
 }
 
+export interface StepGateBreach {
+  reason: 'bounce_rate' | 'complaint_rate'
+  rate: number
+  limit: number
+  sent: number
+}
+
+/**
+ * The gate for releasing another step. It reads the whole campaign, not the counters since the last
+ * resume, so pausing and resuming cannot wipe out the evidence that the warm-up is bouncing.
+ */
+export function stepGate(stats: CampaignStats): StepGateBreach | null {
+  const sent = attempted(stats)
+  if (sent < GATE_MIN_SENT) return null
+  if (stats.bounced / sent > HARD_BOUNCE_LIMIT) return { reason: 'bounce_rate', rate: stats.bounced / sent, limit: HARD_BOUNCE_LIMIT, sent }
+  if (stats.complained / sent > COMPLAINT_LIMIT) return { reason: 'complaint_rate', rate: stats.complained / sent, limit: COMPLAINT_LIMIT, sent }
+  return null
+}
+
+const percent = (n: number) => `${Number((n * 100).toFixed(2))}%`
+export function stepGateMessage(g: StepGateBreach): string {
+  const what = g.reason === 'bounce_rate' ? 'Hard bounces are' : 'Spam complaints are'
+  return `${what} at ${percent(g.rate)} of the ${g.sent.toLocaleString('en-US')} emails sent, above the ${percent(g.limit)} limit, so the next step stays held. Stop the send to skip the rest.`
+}
+
 /** Called on resume: rates are measured from here on. */
 export function resetRateBaseline(ctx: StoreCtx, campaignId: string) {
   const s = readStats(ctx, campaignId)

@@ -8,7 +8,7 @@ import { getCampaignRow, transitionCampaign, type CampaignRow } from '../campaig
 import { countEmails, getPolicy } from '../usage/index.ts'
 import { buildMessage, recordLinks, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
-import { AUTO_PAUSE_MIN_SENT, GATE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats } from './stats.ts'
+import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats, stepGate } from './stats.ts'
 
 export const STUCK_AFTER_MS = 10 * 60_000
 const MAX_TEMPORARY_ATTEMPTS = 3
@@ -47,9 +47,9 @@ function reconcileStuck(ctx: StoreCtx, campaignId: string, idempotent: boolean, 
 function releaseDueSteps(ctx: StoreCtx, row: CampaignRow, now: number): 'paused' | 'ok' {
   const due = ctx.db.all<{ id: string }>("SELECT id FROM campaign_sends WHERE campaign_id = ? AND state = 'pending' AND release_at IS NOT NULL AND release_at <= ?", row.id, now)
   if (!due.length) return 'ok'
-  const breach = rateBreach(readStats(ctx, row.id), GATE_MIN_SENT)
+  const breach = stepGate(readStats(ctx, row.id))
   if (breach) {
-    pauseCampaign(ctx, row, breach)
+    pauseCampaign(ctx, row, breach.reason)
     return 'paused'
   }
   for (const step of due) ctx.db.run("UPDATE campaign_sends SET state = 'released' WHERE id = ?", step.id)

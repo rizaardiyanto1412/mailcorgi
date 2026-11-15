@@ -60,7 +60,7 @@ function checkCapacity(ctx: StoreCtx, input: { accountId: string; newsletterId: 
   const limit = planLimits(account.plan, ctx.config.cloud).maxTeamPerNewsletter ?? (ctx.config.cloud ? 5 : Infinity)
   const members = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM memberships WHERE account_id = ? AND newsletter_id = ?', input.accountId, input.newsletterId)!.n
   const pending = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM invites WHERE account_id = ? AND newsletter_id = ? AND accepted_at IS NULL AND expires_at > ? AND id != ?', input.accountId, input.newsletterId, ctx.now(), omitInvite)!.n
-  if (members + pending >= limit) throw new AppError('limit_reached', 'This newsletter has reached its team limit. Remove a member or revoke a pending invitation.', 403)
+  if (members + pending >= limit) throw new AppError('limit_reached', `This newsletter has reached its team limit: ${members + pending} of ${limit} seats used by members and pending invitations. Remove a member or revoke a pending invitation.`, 403, { resource: 'team', used: members + pending, limit })
 }
 
 function limitInvites(ctx: StoreCtx, email: string, ownerId: string) {

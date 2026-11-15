@@ -190,7 +190,7 @@ export async function runAction(ctx: StoreCtx, name: string, rawInput: unknown, 
   try {
     return await action.handler(ctx, input, actor)
   } catch (err) {
-    if (ctx.config.cloud && err instanceof AppError && err.code === 'limit_reached') throw new AppError(err.code, err.message, err.status, { billingUrl: '/settings/billing' })
+    if (ctx.config.cloud && err instanceof AppError && err.code === 'limit_reached') throw new AppError(err.code, err.message, err.status, { ...(err.details && typeof err.details === 'object' ? err.details : {}), billingUrl: '/settings/billing' })
     throw err
   }
 }

@@ -126,6 +126,8 @@ const syncDirectory = (ctx: StoreCtx, newsletterId: string) => ctx.jobs.enqueue(
 
 const newsletterId = z.string().min(1).describe('The newsletter id')
 
+const newsletterLimitError = (ctx: StoreCtx, used: number) => new AppError('limit_reached', `This account has reached its newsletter limit: ${used} of ${limits(ctx).maxNewsletters} active newsletters. Archive one or change your plan.`, 403, { resource: 'newsletters', used, limit: limits(ctx).maxNewsletters })
+
 export const newslettersModule = {
   name: 'newsletters',
   register(reg: AccountRegistrar) {
@@ -181,14 +183,17 @@ export const newslettersModule = {
         mcp: { title: 'Create a newsletter', destructive: false },
         handler: async (ctx, input) => {
           const active = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n
-          if (active >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+          if (active >= limits(ctx).maxNewsletters) throw newsletterLimitError(ctx, active)
           const wanted = input.slug ?? slugify(input.name)
           if (wanted.length < 3) throw new AppError('invalid_input', 'slug: Use 3 to 60 letters, digits and dashes.', 400)
           await assertSlugFree(ctx, wanted, null)
           const id = newId('nl')
           const now = ctx.now()
           ctx.db.tx(() => {
-            if (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+            {
+              const live = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n
+              if (live >= limits(ctx).maxNewsletters) throw newsletterLimitError(ctx, live)
+            }
             assertLocalSlugFree(ctx, wanted, null)
             ctx.db.run('INSERT INTO newsletters (id, key, name, slug, from_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', id, newNewsletterKey(ctx.accountId!), input.name, wanted, input.name, now, now)
             syncDirectory(ctx, id)
@@ -326,12 +331,15 @@ export const newslettersModule = {
           if (!row) throw notFound('That newsletter')
           if (row.archived_at !== null) {
             const active = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n
-            if (active >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+            if (active >= limits(ctx).maxNewsletters) throw newsletterLimitError(ctx, active)
             await assertSlugFree(ctx, row.slug, row.id)
             ctx.db.tx(() => {
               const current = getNewsletterRow(ctx, input.newsletterId)
               if (!current || current.archived_at === null) return
-              if (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+              {
+              const live = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n
+              if (live >= limits(ctx).maxNewsletters) throw newsletterLimitError(ctx, live)
+            }
               assertLocalSlugFree(ctx, row.slug, row.id)
               ctx.db.run('UPDATE newsletters SET archived_at = NULL, updated_at = ? WHERE id = ?', ctx.now(), input.newsletterId)
               syncDirectory(ctx, input.newsletterId)

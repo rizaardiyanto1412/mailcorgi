@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { ControlRegistrar } from '../rpc.ts'
-import { getSetting, getSettingSync, TEST_EMAIL_KEY } from '../install/index.ts'
+import { getSetting, getSettingSync, missingCredentials, PROVIDER_NAMES, TEST_EMAIL_KEY } from '../install/index.ts'
 
 export type ChecklistState = 'done' | 'todo' | 'skipped'
 export interface ChecklistItem {
@@ -15,12 +15,6 @@ export interface ChecklistItem {
 /** Account stores asked per check. Self-hosted installs have a handful; cloud installs stop at the first hit. */
 const ACCOUNTS_SCANNED = 50
 
-const PROVIDER_NAMES: Record<string, string> = { ses: 'Amazon SES', resend: 'Resend', smtp: 'SMTP' }
-const REQUIRED: Record<string, string[]> = {
-  ses: ['ses_region', 'ses_access_key_id', 'ses_secret_access_key'],
-  resend: ['resend_api_key'],
-  smtp: ['smtp_host'],
-}
 const WEBHOOK_SETTING: Record<string, string> = { ses: 'ses_sns_topic_arn', resend: 'resend_webhook_secret' }
 
 async function accountFacts(ctx: StoreCtx) {
@@ -43,10 +37,8 @@ async function accountFacts(ctx: StoreCtx) {
 }
 
 export async function setupChecklist(ctx: StoreCtx): Promise<{ provider: string; items: ChecklistItem[]; complete: boolean }> {
-  const provider = (await getSetting(ctx, 'email_provider')) || 'test'
+  const { provider, missing } = await missingCredentials(ctx)
   const name = PROVIDER_NAMES[provider]
-  const missing: string[] = []
-  for (const key of REQUIRED[provider] ?? []) if (!(await getSetting(ctx, key))) missing.push(key)
   const configured = !!name && missing.length === 0
 
   let lastTest: { provider?: string; at?: number } = {}
