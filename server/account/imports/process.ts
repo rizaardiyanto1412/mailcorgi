@@ -7,7 +7,7 @@ import { reserveContacts } from '../usage/index.ts'
 import { notify } from '../notifications/index.ts'
 import { cleanEmail } from './cleaning.ts'
 import { mapStatus, parseSignupDate } from './presets.ts'
-import { mappingSchema, optionsSchema, rowsSchema, skipCountsSchema, type ImportRow, type CsvRow } from './model.ts'
+import { addedBreakdown, mappingSchema, optionsSchema, rowsSchema, skipCountsSchema, type AddedKind, type ImportRow, type CsvRow } from './model.ts'
 
 interface Chunk { seq: number; rows: string; position: number; done: number }
 const again = (ctx: StoreCtx): JobResult => ({ again: ctx.now() + 1000 })
@@ -19,7 +19,9 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
   if (!chunk) {
     ctx.db.tx(() => {
       if (!ctx.db.run("UPDATE imports SET status = 'completed', finished_at = ? WHERE id = ? AND newsletter_id = ? AND status IN ('queued', 'processing')", ctx.now(), imp.id, imp.newsletter_id).changes) return
-      notify(ctx, { userId: imp.created_by, kind: 'import_finished', title: 'Import finished', body: `${imp.added} contacts added. ${imp.processed_rows - imp.added - imp.updated} rows skipped.`, href: '/imports?import=' + imp.id })
+      const split = addedBreakdown(imp)
+      const added = split && split.unconfirmed ? `${split.subscribed} contacts added and subscribed. ${split.note}` : `${imp.added} contacts added.`
+      notify(ctx, { userId: imp.created_by, kind: 'import_finished', title: 'Import finished', body: `${added} ${imp.processed_rows - imp.added - imp.updated} rows skipped.`, href: '/imports?import=' + imp.id })
       ctx.db.run('DELETE FROM import_seen WHERE import_id = ?', imp.id)
     })
     return 'done'
@@ -62,6 +64,7 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
       if (!current || !['queued', 'processing'].includes(current.status)) return false
       if (position !== pos) return true
       let added = 0
+      let addedKind: AddedKind | null = null
       let finalReason = reason
       const existing = ctx.db.get<{ id: string; status: string }>('SELECT id, status FROM contacts WHERE newsletter_id = ? AND email = ?', imp.newsletter_id, cleaned.email)
       if (inactive && cleaned.reason !== 'invalid_syntax') {
@@ -108,7 +111,10 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
             const result = insertActive()
             if (result.outcome === 'limit') finalReason = 'contact_limit'
             else if (result.outcome === 'suppressed') finalReason = 'suppressed_or_deleted'
-            else if (result.created) added = 1
+            else if (result.created) {
+              added = 1
+              addedKind = result.outcome === 'subscribed' ? 'subscribed' : status === 'subscribed' ? 'no_consent' : mapping.status ? 'pending_in_file' : 'no_status_column'
+            }
             else finalReason = 'duplicate_existing'
           } catch (error) {
             if (error instanceof ZodError || error instanceof Error && ('status' in error ? error.status === 400 : error.message.startsWith('Invalid'))) finalReason = 'invalid_field'
@@ -122,7 +128,9 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
         counts[finalReason] = (counts[finalReason] ?? 0) + 1
         ctx.db.run('INSERT OR IGNORE INTO import_skips (import_id, row_number, row, reason, suggestion) VALUES (?, ?, ?, ?, ?)', imp.id, current.processed_rows + 1, JSON.stringify(row), finalReason, cleaned.suggestion)
       }
-      ctx.db.run('UPDATE imports SET processed_rows = processed_rows + 1, added = added + ?, skipped = ? WHERE id = ? AND newsletter_id = ?', added, JSON.stringify(counts), imp.id, imp.newsletter_id)
+      const detail = JSON.parse(current.added_detail || '{}') as Record<string, number>
+      if (addedKind) detail[addedKind] = (detail[addedKind] ?? 0) + 1
+      ctx.db.run('UPDATE imports SET processed_rows = processed_rows + 1, added = added + ?, added_detail = ?, skipped = ? WHERE id = ? AND newsletter_id = ?', added, JSON.stringify(detail), JSON.stringify(counts), imp.id, imp.newsletter_id)
       ctx.db.run('UPDATE import_chunks SET position = ?, done = ? WHERE import_id = ? AND seq = ?', pos + 1, pos + 1 === rows.length ? 1 : 0, imp.id, chunk.seq)
       return true
     })

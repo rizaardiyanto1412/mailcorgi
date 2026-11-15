@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import type { StoreCtx } from '../core/store.ts'
 import { createInstall, expectError } from './harness.ts'
 import { addContacts, createIssue, sendableInstall } from './sending-setup.ts'
+import { finish, upload } from './imports-setup.ts'
+import { statusOutcome } from '../account/imports/model.ts'
 
 type Sendable = Awaited<ReturnType<typeof sendableInstall>>
 
@@ -122,4 +124,44 @@ test('gap 2: choosing an email provider needs its credentials, checked against s
   await owner.action('install.settings.set', { values: { email_provider: 'test', resend_api_key: '' } })
   settings = await owner.action('install.settings.get', {})
   assert.equal(settings.values.email_provider, 'test')
+})
+
+test('gap 3: an import with consent but no status column says plainly who ends up unconfirmed', async (t) => {
+  const install = await createInstall()
+  t.after(() => install.close())
+  install.dns.set('example.com', 'MX', ['10 mx.example.com'])
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  const nl = await owner.action('newsletters.create', { name: 'Imports' })
+  const rows = [{ email: 'one@example.com' }, { email: 'two@example.com' }]
+  const id = await upload(owner, nl.id, rows, { mapping: { email: 'email', fields: {} }, options: { consent: true, tagIds: [], statuses: 'preserve', defaultStatus: 'pending' } })
+  const report = await finish(install, owner, nl.id, id)
+  assert.equal(report.added, 2)
+  assert.deepEqual(report.addedBreakdown && { subscribed: report.addedBreakdown.subscribed, unconfirmed: report.addedBreakdown.unconfirmed, reasons: report.addedBreakdown.unconfirmedReasons }, { subscribed: 0, unconfirmed: 2, reasons: { no_status_column: 2 } })
+  assert.match(report.addedBreakdown!.note!, /2 contacts were added as unconfirmed because no status column was mapped/)
+  assert.match(report.addedBreakdown!.note!, /receive no issues/)
+  const note = install.app.account(owner.accountId!).ctx.db.get<{ body: string }>("SELECT body FROM notifications WHERE kind = 'import_finished'")!.body
+  assert.match(note, /0 contacts added and subscribed\. 2 contacts were added as unconfirmed/)
+
+  const mixed = await upload(owner, nl.id, [{ email: 'three@example.com', status: 'subscribed' }, { email: 'four@example.com', status: 'pending' }], { mapping: { email: 'email', status: 'status', fields: {} } })
+  const split = (await finish(install, owner, nl.id, mixed)).addedBreakdown!
+  assert.deepEqual([split.subscribed, split.unconfirmed, split.unconfirmedReasons], [1, 1, { pending_in_file: 1 }])
+
+  const noConsent = await upload(owner, nl.id, [{ email: 'five@example.com' }], { mapping: { email: 'email', fields: {} }, options: { consent: false, tagIds: [], statuses: 'preserve', defaultStatus: 'subscribed' } })
+  assert.deepEqual((await finish(install, owner, nl.id, noConsent)).addedBreakdown!.unconfirmedReasons, { no_consent: 1 })
+
+  const outcome = statusOutcome({}, { consent: true, defaultStatus: 'pending', statuses: 'preserve' })
+  assert.equal(outcome.tone, 'warn')
+  assert.match(outcome.text, /every row is added as unconfirmed\. Unconfirmed contacts receive no issues/)
+  assert.equal(statusOutcome({}, { consent: true, defaultStatus: 'subscribed', statuses: 'preserve' }).tone, 'ok')
+})
+
+test('gap 3: the import options tell REST and MCP callers what an unmapped status means', async (t) => {
+  const install = await createInstall()
+  t.after(() => install.close())
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  const key = await owner.action('apikeys.create', { name: 'Docs', access: 'read' })
+  const response = await install.fetch('/api/v1/openapi.json', { headers: { authorization: `Bearer ${key.secret}` } })
+  const doc = JSON.stringify(await response.json())
+  assert.match(doc, /adds contacts as unconfirmed: they receive no issues and no confirmation email/)
+  assert.match(doc, /every other active row is added as unconfirmed and receives no email/)
 })
