@@ -6,7 +6,7 @@ import { isAccountId } from '../server/core/ids.ts'
 import { AppError } from '../server/core/http.ts'
 import { DurableObject } from 'cloudflare:workers'
 import { parseConfig, type Config } from '../server/core/config.ts'
-import { createDb, createMeter, isWriteRefused, type Driver, type Meter } from '../server/core/db.ts'
+import { createDb, createMeter, isWriteRefused, meterStatement, type Driver, type Meter } from '../server/core/db.ts'
 import { deriveKeys, randomHex, type Keys } from '../server/core/crypto.ts'
 import { dnsResolver, memoryBlobs, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from '../server/core/platform.ts'
 import { storeId } from '../server/core/platform.ts'
@@ -42,28 +42,25 @@ const toBuffer = (value: unknown) => (value instanceof Uint8Array ? value.buffer
 /** Counts rows as Cloudflare bills them: `rowsWritten` includes index entries. */
 function sqlDriver(ctx: DurableObjectState, meter: Meter): Driver {
   const { sql } = ctx.storage
-  const count = (cursor: SqlCursor) => {
-    meter.writes += cursor.rowsWritten
-    meter.reads += cursor.rowsRead
-  }
+  const count = (query: string, cursor: SqlCursor) => meterStatement(meter, query, cursor.rowsWritten, cursor.rowsRead)
   return {
     all: (query, params) => {
       const cursor = sql.exec(query, ...params.map(toBuffer))
       const rows = cursor.toArray()
-      count(cursor)
+      count(query, cursor)
       return rows
     },
     run: (query, params) => {
       const cursor = sql.exec(query, ...params.map(toBuffer))
       cursor.toArray()
-      count(cursor)
+      count(query, cursor)
       const row = sql.exec('SELECT last_insert_rowid() AS id, changes() AS changes').one()
       return { id: Number(row.id), changes: Number(row.changes) }
     },
     exec: (query) => {
       const cursor = sql.exec(query)
       cursor.toArray()
-      count(cursor)
+      count(query, cursor)
     },
     transaction: (fn) => ctx.storage.transactionSync(fn),
   }
@@ -161,7 +158,7 @@ abstract class BaseStore extends DurableObject<Env> {
       blobs,
       fetch: (input, init) => fetch(input, init),
       setAlarm: async (_ref, at) => {
-        this.storeMeter.writes++
+        meterStatement(this.storeMeter, 'setAlarm', 1, 0)
         if (at === null) await this.ctx.storage.deleteAlarm()
         else await this.ctx.storage.setAlarm(Math.max(at, Date.now() + 50))
       },
@@ -228,7 +225,7 @@ abstract class BaseStore extends DurableObject<Env> {
 
   /** Rows this object wrote and read since it started. Dev mode only; reads nothing from storage. */
   async meter(): Promise<Meter> {
-    return { ...this.storeMeter }
+    return { ...this.storeMeter, statements: { ...this.storeMeter.statements } }
   }
 }
 

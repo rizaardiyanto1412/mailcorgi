@@ -19,8 +19,19 @@ export interface Driver {
 export interface Meter {
   writes: number
   reads: number
+  /** The same counts per statement (whitespace-collapsed SQL, or `setAlarm`), for `npm run budget`. */
+  statements: Record<string, { writes: number; reads: number }>
 }
-export const createMeter = (): Meter => ({ writes: 0, reads: 0 })
+export const createMeter = (): Meter => ({ writes: 0, reads: 0, statements: {} })
+/** Add one statement's rows to the meter. A statement is keyed by its text, so a loop shows as one line with a big count. */
+export function meterStatement(meter: Meter, sql: string, writes: number, reads: number) {
+  meter.writes += writes
+  meter.reads += reads
+  const key = sql.replace(/\s+/g, ' ').trim().slice(0, 200)
+  const entry = meter.statements[key] ?? (meter.statements[key] = { writes: 0, reads: 0 })
+  entry.writes += writes
+  entry.reads += reads
+}
 
 /** The message Cloudflare returns once the day's row writes are used up, and the other ways a write can be refused. */
 export const isWriteRefused = (err: unknown): boolean => {

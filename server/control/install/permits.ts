@@ -23,7 +23,16 @@ export function takeSendPermits(ctx: StoreCtx, input: { accountId: string; want:
     // A waiting account keeps its turn across another account's faster polling; abandoned turns expire.
     bucket.queue = bucket.queue.filter((entry) => now - entry.at < 5000)
     if (!bucket.queue.some((entry) => entry.accountId === input.accountId)) bucket.queue.push({ accountId: input.accountId, at: now })
-    let granted = bucket.queue[0]?.accountId === input.accountId ? Math.min(want, Math.floor(bucket.tokens), Math.max(1, Math.ceil(capacity / bucket.queue.length))) : 0
+    // A batch is granted whole or not at all: granting the few tokens that trickled in since the last
+    // call made the sender loop every few milliseconds, paying its per-batch rows for a handful of
+    // emails. The caller is told when the whole batch will fit and sleeps until then.
+    const target = Math.min(want, Math.max(1, Math.ceil(capacity / bucket.queue.length)))
+    const myTurn = bucket.queue[0]?.accountId === input.accountId
+    let granted = myTurn && Math.floor(bucket.tokens) >= target ? target : 0
+    if (myTurn && !granted) {
+      ctx.db.run('INSERT INTO install_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', KEY, JSON.stringify(bucket))
+      return { granted: 0, retryAt: now + Math.max(1, Math.ceil((target - bucket.tokens) * 1000 / rate)) }
+    }
     if (ctx.config.cloud) {
       const period = new Date(now).toISOString().slice(0, 7)
       const key = `_send_reserved:${input.accountId}:${period}`

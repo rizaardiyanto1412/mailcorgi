@@ -50,14 +50,52 @@ export function inboxProvider(email: string): string {
 function event(ctx: StoreCtx, contact: ContactRow, type: string, detail: Record<string, unknown>, at: number) {
   ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, data, at) VALUES (?, ?, ?, ?, ?, ?)', type, contact.newsletter_id, contact.id, typeof detail.campaignId === 'string' ? detail.campaignId : null, JSON.stringify(detail), at)
 }
-function daily(ctx: StoreCtx, newsletterId: string, column: 'subscribed' | 'unsubscribed' | 'bounces' | 'complaints', at: number) {
-  ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, ${column}) VALUES (?, ?, 1) ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = ${column} + 1`, newsletterId, new Date(at).toISOString().slice(0, 10))
+type DailyColumn = 'subscribed' | 'unsubscribed' | 'bounces' | 'complaints'
+const DAILY_TALLY = 'contacts.dailyTally'
+function daily(ctx: StoreCtx, newsletterId: string, column: DailyColumn, at: number, n = 1) {
+  const tally = ctx.memory.get(DAILY_TALLY) as Map<string, number> | undefined
+  const day = new Date(at).toISOString().slice(0, 10)
+  if (tally) {
+    const key = `${newsletterId}\n${day}\n${column}`
+    tally.set(key, (tally.get(key) ?? 0) + n)
+    return
+  }
+  ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, ${column}) VALUES (?, ?, ?) ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = ${column} + excluded.${column}`, newsletterId, day, n)
+}
+/**
+ * Run a bulk step (an import batch) with the daily counters collected in memory and written once per
+ * newsletter, day and column at the end, inside the same transaction. Nested calls share the outer tally.
+ */
+export function withDailyTally<T>(ctx: StoreCtx, fn: () => T): T {
+  if (ctx.memory.has(DAILY_TALLY)) return fn()
+  const tally = new Map<string, number>()
+  ctx.memory.set(DAILY_TALLY, tally)
+  try {
+    return ctx.db.tx(() => {
+      const result = fn()
+      ctx.memory.delete(DAILY_TALLY)
+      for (const [key, n] of tally) {
+        const [newsletterId, day, column] = key.split('\n')
+        daily(ctx, newsletterId, column as DailyColumn, Date.parse(day), n)
+      }
+      return result
+    })
+  } finally {
+    ctx.memory.delete(DAILY_TALLY)
+  }
 }
 export function isSuppressed(ctx: StoreCtx, email: string, newsletterId: string): boolean {
   return !!ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND (newsletter_id IS NULL OR newsletter_id = ?) LIMIT 1', email.trim().toLowerCase(), newsletterId)
 }
 function addSuppression(ctx: StoreCtx, email: string, newsletterId: string | null, reason: string) {
   ctx.db.run('INSERT OR IGNORE INTO suppressions (id, email, newsletter_id, reason, created_at) VALUES (?, ?, ?, ?, ?)', newId('sup'), email, newsletterId, reason, ctx.now())
+}
+/** The timeline event and daily counter every status change writes (architecture 5.3). */
+function recordStatusChange(ctx: StoreCtx, c: ContactRow, status: ContactStatus, detail: Record<string, unknown>, at: number) {
+  const confirmed = detail.consent === 'confirmed'
+  const type = status === 'subscribed' ? (confirmed ? 'confirm' : 'signup') : status === 'unsubscribed' ? 'unsubscribe' : status === 'bounced' ? 'bounce' : status === 'complained' ? 'complaint' : 'cleaned'
+  event(ctx, c, type, detail, at)
+  daily(ctx, c.newsletter_id, status === 'subscribed' ? 'subscribed' : status === 'bounced' ? 'bounces' : status === 'complained' ? 'complaints' : 'unsubscribed', at)
 }
 export function setContactStatus(ctx: StoreCtx, contactId: string, status: ContactStatus, detail: Record<string, unknown> = {}): void {
   ctx.db.tx(() => {
@@ -70,11 +108,10 @@ export function setContactStatus(ctx: StoreCtx, contactId: string, status: Conta
     if (active(status) && !active(c.status) && !reserveContacts(ctx, 1)) throw contactLimitError(ctx)
     const at = typeof detail.at === 'number' ? detail.at : ctx.now()
     const timeColumn = status === 'subscribed' ? 'subscribed_at' : status === 'bounced' ? 'bounced_at' : status === 'complained' ? 'complained_at' : 'unsubscribed_at'
-    ctx.db.run(`UPDATE contacts SET status = ?, ${timeColumn} = ?, updated_at = ?, confirmed_at = CASE WHEN ? THEN ? ELSE confirmed_at END, unsubscribe_reason = CASE WHEN ? THEN ? ELSE unsubscribe_reason END WHERE id = ? AND newsletter_id = ?`, status, at, ctx.now(), confirmed, at, status === 'unsubscribed', typeof detail.reason === 'string' ? detail.reason : '', c.id, c.newsletter_id)
-    if (status === 'subscribed') ctx.db.run('UPDATE contacts SET ignored_streak = 0, strict_ignored_streak = 0, keep_asked_at = NULL WHERE id = ? AND newsletter_id = ?', c.id, c.newsletter_id)
-    const type = status === 'subscribed' ? (confirmed ? 'confirm' : 'signup') : status === 'unsubscribed' ? 'unsubscribe' : status === 'bounced' ? 'bounce' : status === 'complained' ? 'complaint' : 'cleaned'
-    event(ctx, c, type, detail, at)
-    daily(ctx, c.newsletter_id, status === 'subscribed' ? 'subscribed' : status === 'bounced' ? 'bounces' : status === 'complained' ? 'complaints' : 'unsubscribed', at)
+    // One statement: the streak reset for a (re)subscription rides along instead of a second row write.
+    const streaks = status === 'subscribed' ? ', ignored_streak = 0, strict_ignored_streak = 0, keep_asked_at = NULL' : ''
+    ctx.db.run(`UPDATE contacts SET status = ?, ${timeColumn} = ?, updated_at = ?, confirmed_at = CASE WHEN ? THEN ? ELSE confirmed_at END, unsubscribe_reason = CASE WHEN ? THEN ? ELSE unsubscribe_reason END${streaks} WHERE id = ? AND newsletter_id = ?`, status, at, ctx.now(), confirmed, at, status === 'unsubscribed', typeof detail.reason === 'string' ? detail.reason : '', c.id, c.newsletter_id)
+    recordStatusChange(ctx, c, status, detail, at)
     if (status === 'unsubscribed' || status === 'cleaned') addSuppression(ctx, c.email, c.newsletter_id, status)
     if (status === 'bounced' || status === 'complained') {
       addSuppression(ctx, c.email, null, status === 'bounced' ? 'hard_bounce' : 'complaint')
@@ -118,13 +155,18 @@ export function subscribe(ctx: StoreCtx, input: SubscribeInput): { contact: Cont
       ctx.db.run('DELETE FROM deleted_contacts WHERE email_hash = ? AND newsletter_id = ?', hash, input.newsletterId)
     }
     if (!existing) {
-      ctx.db.run('INSERT INTO contacts (id, newsletter_id, email, name, source, fields, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', candidate.id, input.newsletterId, email, candidate.name, input.source, JSON.stringify(fields), candidate.provider, at, ctx.now())
-      if (input.consent === 'pending') event(ctx, candidate, 'signup', { source: input.source, pending: true }, at)
+      // A new contact with consent is inserted already subscribed: one row with its index entries,
+      // instead of an unconfirmed insert followed by a status update that rewrites them.
+      const direct = input.consent !== 'pending'
+      const detail = { consent: input.consent, at, source: input.source }
+      ctx.db.run('INSERT INTO contacts (id, newsletter_id, email, name, source, fields, provider, created_at, updated_at, status, subscribed_at, confirmed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', candidate.id, input.newsletterId, email, candidate.name, input.source, JSON.stringify(fields), candidate.provider, at, ctx.now(), direct ? 'subscribed' : 'unconfirmed', direct ? at : null, direct && input.consent === 'confirmed' ? at : null)
+      if (direct) recordStatusChange(ctx, { ...candidate, status: 'subscribed' }, 'subscribed', detail, at)
+      else event(ctx, candidate, 'signup', { source: input.source, pending: true }, at)
     } else {
       ctx.db.run('UPDATE contacts SET name = ?, fields = ?, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.name ?? existing.name, JSON.stringify({ ...fieldValuesSchema.parse(JSON.parse(existing.fields)), ...fields }), ctx.now(), existing.id, input.newsletterId)
     }
     for (const tag of input.tags ?? []) ctx.db.run('INSERT OR IGNORE INTO contact_tags (contact_id, tag_id) VALUES (?, ?)', candidate.id, tag)
-    if (input.consent !== 'pending' && existing?.status !== 'subscribed') setContactStatus(ctx, candidate.id, 'subscribed', { consent: input.consent, at, source: input.source })
+    if (input.consent !== 'pending' && existing && existing.status !== 'subscribed') setContactStatus(ctx, candidate.id, 'subscribed', { consent: input.consent, at, source: input.source })
     if (input.consent === 'confirmed' && existing?.status === 'subscribed' && !existing.confirmed_at) ctx.db.run('UPDATE contacts SET confirmed_at = ? WHERE id = ? AND newsletter_id = ?', at, candidate.id, input.newsletterId)
     return result(existing?.status === 'subscribed' ? 'exists' : input.consent === 'pending' ? 'pending' : 'subscribed', !existing)
   })

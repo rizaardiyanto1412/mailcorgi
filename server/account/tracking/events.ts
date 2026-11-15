@@ -1,6 +1,6 @@
 import type { StoreCtx } from '../../core/store.ts'
 import type { ProviderEvent } from '../../email/index.ts'
-import { checkProtection } from '../hygiene/index.ts'
+import { checkProtection, hygieneEpoch } from '../hygiene/index.ts'
 import { setContactStatus } from '../contacts/index.ts'
 import { getCampaignRow } from '../campaigns/index.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, markSentEffects, pauseCampaign, rateBreach, readStats } from '../sending/index.ts'
@@ -27,7 +27,7 @@ const deliveryByMessage = (ctx: StoreCtx, messageId: string) => ctx.db.get<Deliv
 /** An event that arrives before the send result is stored still means the email left (architecture 11.6). */
 function ensureSent(ctx: StoreCtx, d: DeliveryWithNewsletter, messageId: string, at: number) {
   if (d.status !== 'sending') return
-  if (ctx.db.run("UPDATE deliveries SET status = 'sent', sent_at = ?, provider_message_id = COALESCE(provider_message_id, ?) WHERE id = ? AND status = 'sending'", at, messageId, d.id).changes) {
+  if (ctx.db.run("UPDATE deliveries SET status = 'sent', sent_at = ?, provider_message_id = COALESCE(provider_message_id, ?), hygiene_epoch = ? WHERE id = ? AND status = 'sending'", at, messageId, hygieneEpoch(ctx), d.id).changes) {
     markSentEffects(ctx, d, d.newsletter_id, at)
     d.status = 'sent'
   }
@@ -76,7 +76,7 @@ function applyEvent(ctx: StoreCtx, e: ProviderEvent): boolean {
       if (!['sent', 'delivered'].includes(d.status)) return false
       ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, data, at) VALUES (?, ?, ?, ?, ?, ?, ?)', 'soft_bounce', d.newsletter_id, d.contact_id, d.campaign_id, d.id, JSON.stringify({ reason: reason.slice(0, 200) }), at)
       bumpStat(ctx, d.campaign_id, 'softBounces')
-      const soft = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE contact_id = ? AND type = 'soft_bounce'", d.contact_id)!.n
+      const soft = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE newsletter_id = ? AND contact_id = ? AND type = 'soft_bounce'", d.newsletter_id, d.contact_id)!.n
       if (soft >= SOFT_BOUNCES_BEFORE_HARD) {
         hardBounce(ctx, d, `${SOFT_BOUNCES_BEFORE_HARD} soft bounces: ${reason}`, at)
         checkAutoPause(ctx, d.campaign_id)
@@ -110,17 +110,19 @@ export function ingestProviderEvents(ctx: StoreCtx, events: ProviderEvent[]): { 
   return { applied }
 }
 
-const score = (ctx: StoreCtx, contactId: string) => ctx.db.run('UPDATE contacts SET engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3) WHERE id = ?', contactId)
+/** The engagement score, recomputed in the same statement as the counters it depends on. */
+const SCORE = 'engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3)'
 
+/**
+ * A first open of a delivery (a later one waits in memory, see `recordRepeatOpen`). The delivery's
+ * `opened_at` is the record the timeline and the reports read; no `events` row is written.
+ */
 export function recordOpen(ctx: StoreCtx, d: DeliveryWithNewsletter, at: number, privacyProxy = false) {
   ctx.db.tx(() => {
     const first = !d.opened_at
     ctx.db.run('UPDATE deliveries SET open_count = open_count + 1, opened_at = COALESCE(opened_at, ?) WHERE id = ?', at, d.id)
-    ctx.db.run('UPDATE contacts SET open_count = open_count + 1, last_opened_at = ?, ignored_streak = 0, updated_at = ? WHERE id = ?', at, at, d.contact_id)
-    if (!privacyProxy) ctx.db.run('UPDATE contacts SET strict_ignored_streak = 0 WHERE id = ?', d.contact_id)
-    score(ctx, d.contact_id)
+    ctx.db.run(`UPDATE contacts SET open_count = open_count + 1, last_opened_at = ?, ignored_streak = 0, strict_ignored_streak = CASE WHEN ? THEN 0 ELSE strict_ignored_streak END, updated_at = ?, ${SCORE} WHERE id = ?`, at, privacyProxy ? 0 : 1, at, d.contact_id)
     if (!first) return
-    ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, data, at) VALUES (?, ?, ?, ?, ?, ?, ?)', 'open', d.newsletter_id, d.contact_id, d.campaign_id, d.id, JSON.stringify({ privacyProxy }), at)
     bumpStat(ctx, d.campaign_id, 'opens')
     daily(ctx, d.newsletter_id, 'opens', at)
   })
@@ -159,28 +161,30 @@ export function flushRepeatOpens(ctx: StoreCtx) {
 
 export const BURST_WINDOW_MS = 10_000
 
-/** Count a click; a burst that hits every link of the issue within seconds is a scanner and is undone. */
+/**
+ * Count a click; a burst that hits every link of the issue within seconds is a scanner and is undone.
+ * Click events stay in `events` (per-link uniqueness and the burst check need them) and are read
+ * through the contact's timeline index, so no index on `delivery_id` is kept.
+ */
 export function recordClick(ctx: StoreCtx, d: DeliveryWithNewsletter, link: { id: string }, at: number) {
   ctx.db.tx(() => {
-    const before = ctx.db.all<{ id: number; link: string; at: number }>("SELECT id, json_extract(data, '$.link') AS link, at FROM events WHERE delivery_id = ? AND type = 'click' AND at >= ?", d.id, at - BURST_WINDOW_MS)
-    const firstOnLink = !ctx.db.get("SELECT 1 FROM events WHERE delivery_id = ? AND type = 'click' AND json_extract(data, '$.link') = ?", d.id, link.id)
+    const clicksOf = "FROM events WHERE newsletter_id = ? AND contact_id = ? AND delivery_id = ? AND type = 'click'"
+    const before = ctx.db.all<{ id: number; link: string; at: number }>(`SELECT id, json_extract(data, '$.link') AS link, at ${clicksOf} AND at >= ?`, d.newsletter_id, d.contact_id, d.id, at - BURST_WINDOW_MS)
+    const firstOnLink = !ctx.db.get(`SELECT 1 ${clicksOf} AND json_extract(data, '$.link') = ?`, d.newsletter_id, d.contact_id, d.id, link.id)
     const firstOnDelivery = !d.clicked_at
+    const total = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM links WHERE campaign_id = ?', d.campaign_id)!.n
+    const hit = new Set([...before.map((b) => b.link), link.id])
+    const human = total < 2 || hit.size < total
     ctx.db.run('UPDATE deliveries SET click_count = click_count + 1, clicked_at = COALESCE(clicked_at, ?) WHERE id = ?', at, d.id)
-    ctx.db.run('UPDATE contacts SET click_count = click_count + 1, last_clicked_at = ?, ignored_streak = 0, updated_at = ? WHERE id = ?', at, at, d.contact_id)
+    ctx.db.run(`UPDATE contacts SET click_count = click_count + 1, last_clicked_at = ?, ignored_streak = 0, strict_ignored_streak = CASE WHEN ? THEN 0 ELSE strict_ignored_streak END, updated_at = ?, ${SCORE} WHERE id = ?`, at, human ? 1 : 0, at, d.contact_id)
     ctx.db.run('UPDATE links SET clicks = clicks + 1, unique_clicks = unique_clicks + ? WHERE id = ?', firstOnLink ? 1 : 0, link.id)
     ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, data, at) VALUES (?, ?, ?, ?, ?, ?, ?)', 'click', d.newsletter_id, d.contact_id, d.campaign_id, d.id, JSON.stringify({ link: link.id, first: firstOnDelivery, firstOnLink }), at)
     if (firstOnDelivery) {
       bumpStat(ctx, d.campaign_id, 'clicks')
       daily(ctx, d.newsletter_id, 'clicks', at)
     }
-    score(ctx, d.contact_id)
-    const total = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM links WHERE campaign_id = ?', d.campaign_id)!.n
-    const hit = new Set([...before.map((b) => b.link), link.id])
-    if (total < 2 || hit.size < total) {
-      ctx.db.run('UPDATE contacts SET strict_ignored_streak = 0 WHERE id = ?', d.contact_id)
-      return
-    }
-    const burst = ctx.db.all<{ id: number; data: string; at: number }>("SELECT id, data, at FROM events WHERE delivery_id = ? AND type = 'click' AND at >= ?", d.id, at - BURST_WINDOW_MS)
+    if (human) return
+    const burst = ctx.db.all<{ id: number; data: string; at: number }>(`SELECT id, data, at ${clicksOf} AND at >= ?`, d.newsletter_id, d.contact_id, d.id, at - BURST_WINDOW_MS)
     for (const b of burst) {
       const data = JSON.parse(b.data) as { link: string; first: boolean; firstOnLink: boolean }
       ctx.db.run('UPDATE links SET clicks = clicks - 1, unique_clicks = unique_clicks - ? WHERE id = ?', data.firstOnLink ? 1 : 0, data.link)
@@ -192,8 +196,7 @@ export function recordClick(ctx: StoreCtx, d: DeliveryWithNewsletter, link: { id
       ctx.db.run('DELETE FROM events WHERE id = ?', b.id)
     }
     ctx.db.run('UPDATE deliveries SET click_count = MAX(0, click_count - ?) WHERE id = ?', burst.length, d.id)
-    ctx.db.run('UPDATE contacts SET click_count = MAX(0, click_count - ?), last_clicked_at = (SELECT MAX(at) FROM events WHERE contact_id = contacts.id AND type = ?) WHERE id = ?', burst.length, 'click', d.contact_id)
-    score(ctx, d.contact_id)
+    ctx.db.run(`UPDATE contacts SET click_count = MAX(0, click_count - ?), last_clicked_at = (SELECT MAX(at) FROM events WHERE newsletter_id = ? AND contact_id = contacts.id AND type = 'click'), ${SCORE} WHERE id = ?`, burst.length, d.newsletter_id, d.contact_id)
   })
 }
 

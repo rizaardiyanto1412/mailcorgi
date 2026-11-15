@@ -16,9 +16,10 @@ import { audienceCount, startSending, type SendOptions } from './plan.ts'
 import { buildMessage, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBaseline, stepGate, stepGateMessage } from './stats.ts'
+import { OPEN_ROWS } from './batch.ts'
 export { sendHooks } from './provider.ts'
 export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, resetRateBaseline, AUTO_PAUSE_MIN_SENT } from './stats.ts'
-export { markSentEffects } from './batch.ts'
+export { markSentEffects, OPEN_ROWS } from './batch.ts'
 export type { CampaignStats } from './stats.ts'
 
 const campaignId = z.string().min(1).describe('The campaign id')
@@ -120,7 +121,7 @@ export const sendingModule = {
             return transitionCampaign(ctx, row.id, 'canceled')
           }
           if (row.status !== 'paused') throw new AppError('invalid_transition', 'Pause the send before stopping it.', 409)
-          const skipped = ctx.db.run("UPDATE deliveries SET status = 'skipped', error = 'Send stopped.' WHERE campaign_id = ? AND status = 'queued'", row.id).changes
+          const skipped = ctx.db.run(`UPDATE deliveries SET status = 'skipped', error = 'Send stopped.' WHERE campaign_id = ? AND ${OPEN_ROWS} AND status = 'queued'`, row.id).changes
           if (skipped) bumpStat(ctx, row.id, 'skipped', skipped)
           ctx.db.run("UPDATE campaign_sends SET state = 'done' WHERE campaign_id = ?", row.id)
           transitionCampaign(ctx, row.id, 'sending')

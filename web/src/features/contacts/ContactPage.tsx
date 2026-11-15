@@ -7,6 +7,18 @@ import { BackLink, Banner, Button, Card, EmptyState, Field, Input, PageHeader, S
 import { FieldsForm } from './FieldsForm.tsx'
 
 type Details = ActionOutput<'contacts.get'>
+
+interface TimelineEntry { key: string; label: string; subject?: string; at: number }
+/** Events plus the sends and first opens read from the contact's deliveries, newest first. */
+function timeline(data: Details): TimelineEntry[] {
+  const oldest = data.events.length === 100 ? data.events[99].at : -Infinity
+  const entries: TimelineEntry[] = data.events.map((e) => ({ key: `e${e.id}`, label: e.type, at: e.at }))
+  for (const d of data.deliveries) {
+    if (d.sentAt >= oldest) entries.push({ key: `s${d.campaignId}`, label: 'send', subject: d.subject, at: d.sentAt })
+    if (d.openedAt !== null && d.openedAt >= oldest) entries.push({ key: `o${d.campaignId}`, label: 'open', subject: d.subject, at: d.openedAt })
+  }
+  return entries.sort((a, b) => b.at - a.at)
+}
 function EditContact({ details, canEdit }: { details: Details; canEdit: boolean }) {
   const { contact: c } = details
   const [name, setName] = useState(c.name)
@@ -45,7 +57,7 @@ function ContactDetails({ newsletterId, contactId }: { newsletterId: string; con
     if (!(await confirm({ title: 'Delete this contact?', body: 'Their address will stay protected against future imports.', confirmLabel: 'Delete', danger: true }))) return
     try { await remove.mutateAsync({ newsletterId, contactId }); navigate('/contacts') } catch {}
   }
-  return <div className="flex flex-col gap-5"><BackLink to="/contacts">Contacts</BackLink>{(query.error || unsubscribe.error || remove.error) && <Banner kind="danger">{query.error?.message ?? unsubscribe.error?.message ?? remove.error?.message}</Banner>}{query.isPending ? <Spinner /> : query.data && c && <><PageHeader title={c.email} description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={c.status} /><span>Added {new Date(c.createdAt).toLocaleDateString()}</span>{c.provider && c.provider !== 'other' && <span>· {c.provider} mailbox</span>}</span>} action={canEdit && <div className="flex gap-2">{['subscribed', 'unconfirmed'].includes(c.status) && <Button onClick={() => void doUnsubscribe()} loading={unsubscribe.isPending}>Unsubscribe</Button>}<Button variant="danger" onClick={() => void doDelete()} loading={remove.isPending}>Delete</Button></div>} /><EditContact key={c.id + ':' + c.updatedAt} details={query.data} canEdit={canEdit} /><Card className="p-4 sm:p-5"><h2 className="mb-3 font-medium">Timeline</h2>{query.data.events.length ? <ol className="flex flex-col divide-y divide-line">{query.data.events.map((event) => <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="capitalize">{event.type}</span><time className="text-sm text-fg-3" dateTime={new Date(event.at).toISOString()}>{new Date(event.at).toLocaleString()}</time></li>)}</ol> : <EmptyState title="No activity yet" body="Signups, sends, opens and other activity will appear here." />}<div className="mt-3 flex justify-between"><Button size="sm" disabled={pages.length === 1} onClick={() => setPages(pages.slice(0, -1))}>Newer</Button><Button size="sm" disabled={!query.data.nextEventId} onClick={() => setPages([...pages, query.data.nextEventId ?? undefined])}>Older</Button></div></Card></>}</div>
+  return <div className="flex flex-col gap-5"><BackLink to="/contacts">Contacts</BackLink>{(query.error || unsubscribe.error || remove.error) && <Banner kind="danger">{query.error?.message ?? unsubscribe.error?.message ?? remove.error?.message}</Banner>}{query.isPending ? <Spinner /> : query.data && c && <><PageHeader title={c.email} description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={c.status} /><span>Added {new Date(c.createdAt).toLocaleDateString()}</span>{c.provider && c.provider !== 'other' && <span>· {c.provider} mailbox</span>}</span>} action={canEdit && <div className="flex gap-2">{['subscribed', 'unconfirmed'].includes(c.status) && <Button onClick={() => void doUnsubscribe()} loading={unsubscribe.isPending}>Unsubscribe</Button>}<Button variant="danger" onClick={() => void doDelete()} loading={remove.isPending}>Delete</Button></div>} /><EditContact key={c.id + ':' + c.updatedAt} details={query.data} canEdit={canEdit} /><Card className="p-4 sm:p-5"><h2 className="mb-3 font-medium">Timeline</h2>{timeline(query.data).length ? <ol className="flex flex-col divide-y divide-line">{timeline(query.data).map((entry) => <li key={entry.key} className="flex flex-wrap items-center justify-between gap-2 py-3"><span><span className="capitalize">{entry.label}</span>{entry.subject && <span className="text-fg-3"> · {entry.subject}</span>}</span><time className="text-sm text-fg-3" dateTime={new Date(entry.at).toISOString()}>{new Date(entry.at).toLocaleString()}</time></li>)}</ol> : <EmptyState title="No activity yet" body="Signups, sends, opens and other activity will appear here." />}<div className="mt-3 flex justify-between"><Button size="sm" disabled={pages.length === 1} onClick={() => setPages(pages.slice(0, -1))}>Newer</Button><Button size="sm" disabled={!query.data.nextEventId} onClick={() => setPages([...pages, query.data.nextEventId ?? undefined])}>Older</Button></div></Card></>}</div>
 }
 export function ContactPage() {
   const { current } = useSession()
