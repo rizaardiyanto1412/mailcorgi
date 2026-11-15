@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { Globe } from 'lucide-react'
+import { ExternalLink, Globe } from 'lucide-react'
+import { Navigate } from 'react-router-dom'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { useDocumentTitle, useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Select, Textarea, useFeedback } from '../../ui/index.tsx'
+import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
+import { Banner, Button, Card, EmptyState, Field, Input, LinkButton, NoAccess, PageHeader, Select, Spinner, Textarea, useFeedback } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
 import type { ActionOutput } from '../../../../server/registry.ts'
 
@@ -10,15 +11,16 @@ type Website = ActionOutput<'website.get'>
 type Options = Website['settings']
 function WebsitePage() {
   useDocumentTitle('Website')
-  const { current, account } = useSession()
+  const { current } = useSession()
+  const canAdmin = useCanAdmin()
   if (!current) return <EmptyState title="No newsletter selected" body="Create a newsletter from the switcher to set up its website." />
-  if (!account?.owner) return <Banner>Only the account owner can manage the website.</Banner>
+  if (!canAdmin) return <div className="flex flex-col gap-5"><PageHeader title="Website" description="Your public archive and newsletter home." /><NoAccess title="Newsletter admins manage the website" body="Ask an admin or the owner to change website settings." /></div>
   return <WebsiteData key={current.id} newsletterId={current.id} />
 }
 function WebsiteData({ newsletterId }: { newsletterId: string }) {
   const query = useActionQuery('website.get', { newsletterId })
   if (query.error) return <Banner kind="danger">{query.error.message}</Banner>
-  if (!query.data) return <p role="status">Loading website…</p>
+  if (!query.data) return <Spinner />
   return <WebsiteEditor key={JSON.stringify(query.data)} newsletterId={newsletterId} data={query.data} />
 }
 function WebsiteEditor({ newsletterId, data }: { newsletterId: string; data: Website }) {
@@ -46,7 +48,7 @@ function WebsiteEditor({ newsletterId, data }: { newsletterId: string; data: Web
     } catch {}
   }
   return <div className="flex flex-col gap-5">
-    <PageHeader title="Website" description="Your public archive and newsletter home." action={<a className="text-sm text-accent-fg underline" href={data.host.url} target="_blank" rel="noreferrer">Visit website</a>} />
+    <PageHeader title="Website" description="Your public archive and newsletter home." action={<LinkButton href={data.host.url} icon={<ExternalLink />}>Visit website</LinkButton>} />
     <Card className="p-5"><form onSubmit={submit} className="flex flex-col gap-4">
       <h2 className="font-semibold">Public website</h2>
       {(save.error || socialError) && <Banner kind="danger">{save.error?.message || socialError}</Banner>}
@@ -89,7 +91,7 @@ function WebsiteEditor({ newsletterId, data }: { newsletterId: string; data: Web
     <Publishing newsletterId={newsletterId} data={data} />
     <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Page views</h2><p className="text-sm text-fg-3">Cookie-free counts exclude bots, prefetches and your signed-in visits.</p>
       {stats.error && <Banner kind="danger">{stats.error.message}</Banner>}
-      {stats.isPending ? <p role="status">Loading page views…</p> : !stats.data?.days.some((d) => d.page_views) ? <p className="text-sm text-fg-3">No page views yet. Share your website to get its first readers.</p> : <div className="grid gap-2 sm:grid-cols-2">{stats.data.days.map((day) => <p key={day.day} className="text-sm">{day.day}: {day.page_views} views</p>)}</div>}
+      {stats.isPending ? <Spinner /> : !stats.data?.days.some((d) => d.page_views) ? <p className="text-sm text-fg-3">No page views yet. Share your website to get its first readers.</p> : <div className="grid gap-2 sm:grid-cols-2">{stats.data.days.map((day) => <p key={day.day} className="text-sm">{day.day}: {day.page_views} views</p>)}</div>}
     </Card>
   </div>
 }
@@ -101,7 +103,7 @@ function Publishing({ newsletterId, data }: { newsletterId: string; data: Websit
   const [editor, setEditor] = useState(0)
   return <>
     {authors.error && <Banner kind="danger">{authors.error.message}</Banner>}
-    <Card className="flex flex-col gap-4 p-5"><h2 className="font-semibold">Sent issues</h2>{campaigns.error && <Banner kind="danger">{campaigns.error.message}</Banner>}{campaigns.isPending ? <p role="status">Loading issues…</p> : !campaigns.data?.campaigns.length ? <p className="text-sm text-fg-3">No sent issues yet. Send an issue from Campaigns to publish it here.</p> : campaigns.data.campaigns.map((campaign) => <IssueEditor key={campaign.id} campaignId={campaign.id} authors={authors.data?.authors ?? []} />)}{(campaigns.data?.total ?? 0) > 20 && <nav aria-label="Sent issue pages" className="flex justify-between gap-3"><Button disabled={offset === 0} onClick={() => setOffset((v) => Math.max(0, v - 20))}>Newer issues</Button><Button disabled={offset + 20 >= (campaigns.data?.total ?? 0)} onClick={() => setOffset((v) => v + 20)}>Older issues</Button></nav>}</Card>
+    <Card className="flex flex-col gap-4 p-5"><h2 className="font-semibold">Sent issues</h2>{campaigns.error && <Banner kind="danger">{campaigns.error.message}</Banner>}{campaigns.isPending ? <Spinner /> : !campaigns.data?.campaigns.length ? <p className="text-sm text-fg-3">No sent issues yet. Send an issue from Campaigns to publish it here.</p> : campaigns.data.campaigns.map((campaign) => <IssueEditor key={campaign.id} campaignId={campaign.id} authors={authors.data?.authors ?? []} />)}{(campaigns.data?.total ?? 0) > 20 && <nav aria-label="Sent issue pages" className="flex justify-between gap-3"><Button disabled={offset === 0} onClick={() => setOffset((v) => Math.max(0, v - 20))}>Newer issues</Button><Button disabled={offset + 20 >= (campaigns.data?.total ?? 0)} onClick={() => setOffset((v) => v + 20)}>Older issues</Button></nav>}</Card>
     <Card className="flex flex-col gap-4 p-5"><h2 className="font-semibold">Web-only posts</h2><p className="text-sm text-fg-3">Publish writing on the website without sending an email.</p>{!data.posts.length ? <p className="text-sm text-fg-3">No web-only posts. Write your first post below.</p> : data.posts.map((post) => <div key={post.id} className="flex items-center justify-between gap-3"><span className="min-w-0 break-words text-sm">{post.subject} {!post.web_visible && '(hidden)'}</span><Button onClick={() => { setSelected(post); setEditor((v) => v + 1) }}>Edit</Button></div>)}
       {selected && <Button onClick={() => { setSelected(null); setEditor((v) => v + 1) }}>New post</Button>}
       <PostEditor key={editor} newsletterId={newsletterId} post={selected} authors={authors.data?.authors ?? []} />
@@ -133,7 +135,7 @@ function AuthorSelect({ authors, value, onChange }: { authors: Authors; value: s
 function IssueEditor({ campaignId, authors }: { campaignId: string; authors: Authors }) {
   const query = useActionQuery('campaigns.get', { campaignId })
   if (query.error) return <Banner kind="danger">{query.error.message}</Banner>
-  if (!query.data) return <p role="status">Loading issue…</p>
+  if (!query.data) return <Spinner />
   if (query.data.kind !== 'issue') return null
   return <IssueForm key={JSON.stringify(query.data)} campaign={query.data} authors={authors} />
 }
@@ -155,6 +157,5 @@ export const websiteFeature: Feature = {
   name: 'website',
   nav: [{ to: '/website', label: 'Website', icon: Globe }],
   routes: [{ path: 'website', element: <WebsitePage /> }],
-  settings: [{ to: '/settings/website', label: 'Website', icon: Globe }],
-  settingsRoutes: [{ path: 'website', element: <WebsitePage /> }],
+  settingsRoutes: [{ path: 'website', element: <Navigate to="/website" replace /> }],
 }

@@ -12,7 +12,7 @@ import { storeId } from '../core/platform.ts'
 import { ACTOR_HEADER, ACTOR_TTL_MS, type ActorEnvelope, type Stores } from '../core/store.ts'
 import type { Actor } from '../core/actions.ts'
 import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey } from '../core/ids.ts'
-import { errorResponse, withSecurityHeaders } from '../core/http.ts'
+import { CLIENT_IP_HEADER, errorResponse, withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
 import { markdown } from '../api/index.ts'
@@ -34,10 +34,12 @@ export interface EdgeDeps {
   assets(request: Request): Promise<Response>
   now(): number
   fetch?: typeof fetch
+  /** The client address the platform can vouch for, given the socket peer when it has one. */
+  clientIp?(request: Request, peer: string | null): string
 }
 
 export interface Edge {
-  fetch(request: Request): Promise<Response>
+  fetch(request: Request, peer?: string | null): Promise<Response>
 }
 
 const CONTROL_PREFIXES = ['/api/auth/', '/api/control/', '/api/billing/', '/api/admin/']
@@ -147,10 +149,12 @@ export function createEdge(deps: EdgeDeps): Edge {
     return new Response(bytes as BodyInit, { headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } })
   }
 
-  async function handle(request: Request): Promise<Response> {
+  async function handle(request: Request, peer: string | null): Promise<Response> {
     const url = new URL(request.url)
     const path = url.pathname
     const headers = stripHeaders(request)
+    const ip = deps.clientIp?.(request, peer) ?? ''
+    if (ip) headers.set(CLIENT_IP_HEADER, ip)
     const method = request.method.toUpperCase()
     if (path === '/healthz') return json({ ok: true })
 
@@ -240,9 +244,9 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   return {
-    async fetch(request) {
+    async fetch(request, peer = null) {
       try {
-        return withSecurityHeaders(await handle(request))
+        return withSecurityHeaders(await handle(request, peer))
       } catch (err) {
         return withSecurityHeaders(errorResponse(err))
       }

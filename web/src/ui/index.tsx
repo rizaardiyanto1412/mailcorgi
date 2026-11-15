@@ -16,7 +16,8 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, CircleAlert, CircleCheck, LoaderCircle, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ArrowLeft, Check, CircleAlert, CircleCheck, LoaderCircle, Lock, X } from 'lucide-react'
 
 export const cx = (...args: (string | false | null | undefined)[]) => args.filter(Boolean).join(' ')
 
@@ -32,10 +33,10 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode
 }
 const BUTTON: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-white hover:bg-accent-hover shadow-card',
+  primary: 'bg-accent text-on-accent hover:bg-accent-hover shadow-card',
   secondary: 'bg-surface text-fg border border-line-strong hover:bg-sunken shadow-card',
   ghost: 'text-fg-2 hover:bg-hover hover:text-fg',
-  danger: 'bg-danger text-white hover:opacity-90 shadow-card',
+  danger: 'bg-danger text-on-danger hover:opacity-90 shadow-card',
 }
 const SIZE = { sm: 'h-7 px-2.5 text-[13px] gap-1.5', md: 'h-8 px-3 text-[13px] gap-1.5', lg: 'h-10 px-4 text-sm gap-2' }
 
@@ -53,6 +54,33 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     </button>
   )
 })
+
+/** A link that looks like a Button. `to` routes inside the app; `href` leaves it (new tab). */
+export function LinkButton({ to, href, variant = 'secondary', size = 'md', icon, className, children }: { to?: string; href?: string; variant?: ButtonVariant; size?: 'sm' | 'md' | 'lg'; icon?: ReactNode; className?: string; children: ReactNode }) {
+  const classes = cx('inline-flex shrink-0 items-center justify-center rounded-lg font-medium whitespace-nowrap transition-colors select-none [&>svg]:size-4', BUTTON[variant], SIZE[size], className)
+  if (href) return <a href={href} target="_blank" rel="noreferrer" className={classes}>{icon}{children}</a>
+  return <Link to={to ?? '/'} className={classes}>{icon}{children}</Link>
+}
+
+/** A button that opens the file picker. The native file input looks different in every browser and theme. */
+export function FileButton({ accept, onFile, disabled, label = 'Choose a file', fileName, id }: { accept: string; onFile: (file: File) => void; disabled?: boolean; label?: string; fileName?: string; id?: string }) {
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <input ref={input} id={id} type="file" accept={accept} className="sr-only" tabIndex={-1} disabled={disabled} onChange={(e) => { const file = e.target.files?.[0]; if (file) onFile(file); e.target.value = '' }} />
+      <Button disabled={disabled} onClick={() => input.current?.click()}>{label}</Button>
+      {fileName && <span className="truncate text-[13px] text-fg-3">{fileName}</span>}
+    </div>
+  )
+}
+
+/** The one way back to a parent list, above a detail page's header. */
+export const BackLink = ({ to, children }: { to: string; children: ReactNode }) => (
+  <Link to={to} className="inline-flex items-center gap-1 self-start text-[13px] font-medium text-fg-3 transition-colors hover:text-fg [&>svg]:size-3.5">
+    <ArrowLeft aria-hidden />
+    {children}
+  </Link>
+)
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string
@@ -321,6 +349,20 @@ export function Modal({ open, onClose, title, description, children, footer, wid
         e.stopPropagation()
         onClose()
       }
+      if (e.key === 'Tab' && panel.current) {
+        const items = [...panel.current.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null)
+        if (!items.length) return
+        const first = items[0]!
+        const last = items.at(-1)!
+        const inside = panel.current.contains(document.activeElement)
+        if (e.shiftKey && (!inside || document.activeElement === first)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
     }
     document.addEventListener('keydown', onKey)
     return () => {
@@ -437,17 +479,72 @@ export function Card({ children, className }: { children: ReactNode; className?:
   return <div className={cx('rounded-xl border border-line bg-surface shadow-card', className)}>{children}</div>
 }
 
-/** A page whose module is not built yet. Every stub route renders one of these. */
-export function StubPage({ title, body, icon }: { title: string; body: string; icon?: ReactNode }) {
+/** Shown in place of a page or section the signed-in user's role cannot use. */
+export function NoAccess({ title, body }: { title: string; body: ReactNode }) {
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader title={title} />
-      <Card>
-        <EmptyState icon={icon} title={`No ${title.toLowerCase()} yet`} body={body} />
-      </Card>
+    <Card>
+      <EmptyState icon={<Lock />} title={title} body={body} />
+    </Card>
+  )
+}
+
+/** A labelled bar for a value against a limit. Native <progress> ignores the theme in most browsers. */
+export function Meter({ value, max, label, tone = 'accent' }: { value: number; max: number; label: string; tone?: 'accent' | 'ok' | 'warn' | 'danger' }) {
+  const pct = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0
+  const fill = { accent: 'bg-accent', ok: 'bg-ok', warn: 'bg-warn', danger: 'bg-danger' }[tone]
+  return (
+    <div role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value} className="h-2 w-full overflow-hidden rounded-full bg-sunken">
+      <div className={cx('h-full rounded-full transition-[width]', fill)} style={{ width: `${pct}%` }} />
     </div>
   )
 }
+
+type Tone = 'neutral' | 'ok' | 'warn' | 'danger' | 'accent'
+const STATUS: Record<string, [string, Tone]> = {
+  draft: ['Draft', 'neutral'],
+  scheduled: ['Scheduled', 'accent'],
+  sending: ['Sending', 'accent'],
+  paused: ['Paused', 'warn'],
+  sent: ['Sent', 'ok'],
+  canceled: ['Canceled', 'neutral'],
+  subscribed: ['Subscribed', 'ok'],
+  unconfirmed: ['Unconfirmed', 'warn'],
+  unsubscribed: ['Unsubscribed', 'neutral'],
+  bounced: ['Bounced', 'danger'],
+  complained: ['Complained', 'danger'],
+  cleaned: ['Cleaned', 'neutral'],
+  uploading: ['Uploading', 'accent'],
+  queued: ['Queued', 'accent'],
+  processing: ['Processing', 'accent'],
+  completed: ['Completed', 'ok'],
+  stalled: ['Stalled', 'warn'],
+  failed: ['Failed', 'danger'],
+  pending: ['Pending', 'warn'],
+  verified: ['Verified', 'ok'],
+  suspended: ['Suspended', 'danger'],
+  active: ['Active', 'ok'],
+  blocked: ['Blocked', 'danger'],
+  owner: ['Owner', 'accent'],
+  admin: ['Admin', 'neutral'],
+  member: ['Member', 'neutral'],
+  delivered: ['Delivered', 'ok'],
+  opened: ['Opened', 'ok'],
+  clicked: ['Clicked', 'ok'],
+  skipped: ['Skipped', 'neutral'],
+  unknown: ['Unknown', 'neutral'],
+}
+/** Sentence-case label for a status value from the server. */
+export const statusLabel = (status: string) => STATUS[status]?.[0] ?? (status ? status[0]!.toUpperCase() + status.slice(1).replace(/_/g, ' ') : '')
+const SOURCES: Record<string, string> = { manual: 'Added by hand', signup: 'Signup form', api: 'API', test: 'Test' }
+/** Readable name for a contact source such as `import:mailchimp`. */
+export const sourceLabel = (source: string) => SOURCES[source] ?? (source.startsWith('import:') ? `Import (${source.slice(7)})` : source)
+
+/** One badge style for every status in the app: campaigns, contacts, imports, domains and roles. */
+export const StatusBadge = ({ status, className }: { status: string; className?: string }) => (
+  <Badge tone={STATUS[status]?.[1] ?? 'neutral'} className={className}>
+    {statusLabel(status)}
+  </Badge>
+)
 
 export const Logo = ({ size = 28 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>

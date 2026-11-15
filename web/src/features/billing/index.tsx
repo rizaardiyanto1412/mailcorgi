@@ -3,17 +3,18 @@ import { Navigate } from 'react-router-dom'
 import type { Feature } from '../../app/feature.ts'
 import { useSession } from '../../lib/session.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { Badge, Banner, Button, Card, EmptyState, PageHeader, Select, Spinner } from '../../ui/index.tsx'
+import { Badge, Banner, Button, Card, Meter as Bar, NoAccess, PageHeader, Select, Spinner, useFeedback } from '../../ui/index.tsx'
 
 function BillingPage() {
   const { boot, account } = useSession()
   if (!boot.cloud) return <Navigate to="/settings/account" replace />
-  if (!account?.owner) return <EmptyState title="Only the owner can manage billing" body="Ask your account owner to change the plan." />
+  if (!account?.owner) return <NoAccess title="Only the owner manages billing" body="Ask the account owner to change the plan." />
   return <Billing accountId={account.id} />
 }
 function Billing({ accountId }: { accountId: string }) {
   const [interval, setInterval] = useState<'monthly' | 'yearly'>('monthly')
   const [notice, setNotice] = useState('')
+  const feedback = useFeedback()
   const query = useActionQuery('billing.get', { accountId }, { refetchInterval: 15_000 })
   const checkout = useAction('billing.checkout', { onSuccess: ({ url }) => window.location.assign(url) })
   const portal = useAction('billing.portal', { onSuccess: ({ url }) => window.location.assign(url) })
@@ -37,7 +38,7 @@ function Billing({ accountId }: { accountId: string }) {
         {data.periodEnd && <p className="text-sm text-fg-2">Billing period ends {new Date(data.periodEnd).toLocaleDateString()}.</p>}
         <div className="flex flex-wrap gap-2">
           {data.hasCustomer && <><Button disabled={busy} onClick={() => portal.mutate({ accountId })}>Manage billing</Button><Button disabled={busy} onClick={() => portal.mutate({ accountId })}>View invoices</Button></>}
-          {data.hasSubscription && <Button variant="danger" disabled={busy} onClick={() => { if (window.confirm('Cancel this subscription? Your account will return to free limits after the grace period.')) cancel.mutate({ accountId }) }}>Cancel subscription</Button>}
+          {data.hasSubscription && <Button variant="danger" disabled={busy} onClick={async () => { if (await feedback.confirm({ title: 'Cancel this subscription?', body: 'Your account returns to free limits after the grace period.', confirmLabel: 'Cancel subscription', danger: true })) cancel.mutate({ accountId }) }}>Cancel subscription</Button>}
         </div>
       </Card>
       <label className="flex max-w-xs flex-col gap-2 text-sm">Billing interval<Select value={interval} onChange={(e) => setInterval(e.target.value === 'yearly' ? 'yearly' : 'monthly')}><option value="monthly">Monthly</option><option value="yearly">Yearly</option></Select></label>
@@ -51,6 +52,6 @@ function Billing({ accountId }: { accountId: string }) {
   </div>
 }
 function Meter({ label, value, max }: { label: string; value: number; max: number | null }) {
-  return <div><div className="mb-1 flex justify-between gap-2 text-sm"><span>{label}</span><span>{value.toLocaleString()} / {max?.toLocaleString() ?? 'Unlimited'}</span></div><meter className="h-3 w-full accent-accent" aria-label={label} min={0} max={max || Math.max(value, 1)} value={Math.min(value, max || value)} /></div>
+  return <div><div className="mb-1 flex justify-between gap-2 text-sm"><span>{label}</span><span>{value.toLocaleString()} / {max?.toLocaleString() ?? 'Unlimited'}</span></div><Bar label={label} max={max || Math.max(value, 1)} value={Math.min(value, max || value)} tone={max && value >= max ? 'danger' : 'accent'} /></div>
 }
-export const billingFeature: Feature = { name: 'billing', settings: [{ to: '/settings/billing', label: 'Billing' }], settingsRoutes: [{ path: 'billing', element: <BillingPage /> }] }
+export const billingFeature: Feature = { name: 'billing', settings: [{ to: '/settings/billing', label: 'Billing', role: 'owner' }], settingsRoutes: [{ path: 'billing', element: <BillingPage /> }] }

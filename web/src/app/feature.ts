@@ -5,6 +5,8 @@ export interface NavEntry {
   to: string
   label: string
   icon?: LucideIcon
+  /** The lowest role that can use the page. Others do not see the entry. */
+  role?: 'owner' | 'admin'
 }
 
 /** What a module's `web/src/features/<module>/index.tsx` exports. */

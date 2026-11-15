@@ -154,12 +154,13 @@ function AccountMenu() {
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full w-[232px] flex-col gap-3 bg-canvas p-3">
-      <NavLink to="/" onClick={onNavigate} aria-label="MailCorgi home" className="flex h-8 items-center gap-2 rounded-md px-1.5">
-        <Logo size={22} />
-        <span className="text-[15px] font-semibold tracking-tight">MailCorgi</span>
-        <span className="flex-1" />
+      <div className="flex h-8 items-center gap-2">
+        <NavLink to="/" onClick={onNavigate} aria-label="MailCorgi home" className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5">
+          <Logo size={22} />
+          <span className="text-[15px] font-semibold tracking-tight">MailCorgi</span>
+        </NavLink>
         <NotificationsBell />
-      </NavLink>
+      </div>
       <NewsletterSwitcher onNavigate={onNavigate} />
       <nav className="min-h-0 flex-1 overflow-y-auto" aria-label="Main">
         <ul className="flex flex-col gap-px">
@@ -188,13 +189,19 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Shell() {
   const [planLimit, setPlanLimit] = useState(false)
-  const { boot } = useSession()
+  const { boot, current } = useSession()
   useEffect(() => {
     const show = () => setPlanLimit(true)
     window.addEventListener('mc:plan-limit', show)
     return () => window.removeEventListener('mc:plan-limit', show)
   }, [])
   const [drawer, setDrawer] = useState(false)
+  useEffect(() => {
+    if (!drawer) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setDrawer(false)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [drawer])
   return (
     <div className="flex h-full">
       <aside className="hidden shrink-0 border-r border-line md:block">
@@ -202,7 +209,7 @@ export function Shell() {
       </aside>
       {drawer && (
         <div className="animate-fade fixed inset-0 z-30 bg-black/40 md:hidden" onMouseDown={(e) => e.target === e.currentTarget && setDrawer(false)}>
-          <div className="animate-pop h-full w-[232px] border-r border-line shadow-pop">
+          <div role="dialog" aria-modal="true" aria-label="Menu" className="animate-pop h-full w-[232px] border-r border-line shadow-pop">
             <Sidebar onNavigate={() => setDrawer(false)} />
           </div>
         </div>
@@ -213,7 +220,8 @@ export function Shell() {
             {drawer ? <X /> : <MenuIcon />}
           </IconButton>
           <Logo size={20} />
-          <span className="text-[14px] font-semibold">MailCorgi</span>
+          <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{current?.name ?? 'MailCorgi'}</span>
+          <NotificationsBell />
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">
           {boot.cloud && planLimit && <div className="px-5 pt-4"><Banner kind="warn" action={<button type="button" onClick={() => setPlanLimit(false)} aria-label="Dismiss plan limit">×</button>}>Your account has reached a plan limit. <Link className="underline" to="/settings/billing">View plans and usage</Link></Banner></div>}

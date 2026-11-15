@@ -31,6 +31,23 @@ export function useSession(): Session {
 export const AuthContext = createContext<{ boot: Bootstrap; refresh: () => void }>({ boot: { setupRequired: false, cloud: false, signupOpen: false, appUrl: '', session: null }, refresh: () => {} })
 export const useAuth = () => useContext(AuthContext)
 
+export type Role = 'owner' | 'admin' | 'member'
+/** The signed-in user's role on a newsletter of the current account, or null without access. */
+export function useRole(newsletterId?: string | null): Role | null {
+  const session = useContext(SessionContext)
+  const account = session?.account
+  if (!account) return null
+  if (account.owner) return 'owner'
+  const id = newsletterId === undefined ? session?.current?.id : newsletterId
+  return (id && account.grants[id]) || null
+}
+/** Owners and newsletter admins can change newsletter settings, import and send. */
+export const useCanAdmin = (newsletterId?: string | null) => {
+  const role = useRole(newsletterId)
+  return role === 'owner' || role === 'admin'
+}
+export const useIsOwner = () => useRole() === 'owner'
+
 export type Theme = 'light' | 'dark' | 'system'
 export function useTheme(): [Theme, (theme: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => {

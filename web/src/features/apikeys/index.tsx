@@ -75,6 +75,6 @@ function ApiKeysPage() {
 }
 
 export const apikeysFeature: Feature = {
-  name: 'apikeys', settings: [{ to: '/settings/api', label: 'API & MCP' }],
+  name: 'apikeys', settings: [{ to: '/settings/api', label: 'API & MCP', role: 'owner' }],
   settingsRoutes: [{ path: 'api', element: <ApiKeysPage /> }],
 }

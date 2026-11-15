@@ -22,6 +22,8 @@ function FormatTools({ editor, link }: {
     <IconButton label="Link (⌘K)" onClick={link}><LinkIcon /></IconButton>
   </>
 }
+const textOf = (node: JSONContent): string => (node.text ?? '') + ' ' + (node.content ?? []).map(textOf).join(' ')
+const countWords = (doc: JSONContent) => textOf(doc).split(/\s+/).filter(Boolean).length
 interface Props {
   newsletterId: string
   doc: JSONContent
@@ -108,7 +110,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     },
     onUpdate: ({ editor: e }) => onChange(e.getJSON()),
   })
-  const stats = useEditorState({ editor, selector: ({ editor: e }) => e ? { words: e.getText().trim().split(/\s+/).filter(Boolean).length } : { words: 0 } })
+  const stats = { words: countWords(doc) }
   if (!editor) return null
   const insert = (type: string) => {
     setSlash(false)
@@ -153,7 +155,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     {progress !== null && <div className="px-4 pb-3" role="status"><p className="text-xs">Uploading image…</p><progress className="w-full" max={100} value={progress} /></div>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line p-3 text-xs text-fg-3"><span>{stats?.words ?? 0} words · ⌘S to save</span>{editable && <Input aria-label="Alt text for the next image" placeholder="Alt text for the next image" className="!w-64" value={alt} onChange={(e) => setAlt(e.target.value)} />}</div>
-    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden ref={fileInput} onChange={(e) => {
+    <input type="file" aria-label="Upload an image" accept="image/png,image/jpeg,image/gif,image/webp" hidden ref={fileInput} onChange={(e) => {
       if (e.target.files?.[0]) void upload(e.target.files[0])
       e.target.value = ''
     }} />
