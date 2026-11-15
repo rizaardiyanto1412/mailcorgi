@@ -11,6 +11,7 @@ import { Badge, Banner, Button, EmptyState, Field, Input, Select, Spinner, Table
 import { Preview } from './Preview.tsx'
 import { AudiencePicker } from './Audience.tsx'
 import { designFeature } from '../design/index.tsx'
+import { Progress, SendStep, TestSend } from './SendStep.tsx'
 
 const CampaignEditor = lazy(() => import('./Editor.tsx').then((module) => ({ default: module.CampaignEditor })))
 
@@ -61,7 +62,7 @@ function Draft({ initial, reload }: {
   const [saveState, setSaveState] = useState('Saved')
   const [error, setError] = useState('')
   const [conflict, setConflict] = useState(false)
-  const [step, setStep] = useState<'write' | 'review' | 'send'>('write')
+  const [step, setStep] = useState<'write' | 'review' | 'send'>(initial.status === 'draft' ? 'write' : 'send')
   const [showPreview, setShowPreview] = useState(false)
   const saving = useRef(false)
   const queryClient = useQueryClient()
@@ -149,9 +150,9 @@ function Draft({ initial, reload }: {
       {preview.error && <Banner kind="danger">{preview.error.message}</Banner>}
       {preview.data && <><section className="space-y-3 rounded-xl border border-line bg-surface p-4"><h2 className="font-semibold">Review your issue</h2>{preview.data.checks.length ? preview.data.checks.map((check) => <Banner key={check.id} kind={check.level === 'error' ? 'danger' : 'warn'}>{check.message}</Banner>) : <Banner kind="ok">Your issue is ready for the send step.</Banner>}
         <p className="text-sm text-fg-3">Subject: {preview.data.email.subject || 'No subject'} · {Math.ceil(new TextEncoder().encode(preview.data.email.html).length / 1024)} KB</p>
-        <Button disabled title="Test sending is supplied by the sending module">Send a test</Button>
+        <TestSend campaignId={initial.id} />
       </section><Preview email={preview.data.email.html} web={preview.data.web.html} /></>}
-      {step === 'send' && <Banner>Scheduling and sending will appear here when the sending module is connected.</Banner>}
+      {step === 'send' && (editable ? <SendStep campaign={initial} checks={preview.data?.checks ?? []} unsaved={serialized !== saved} onDone={reload} /> : <Progress campaign={initial} onChange={reload} />)}
     </>}
   </div>
 }
