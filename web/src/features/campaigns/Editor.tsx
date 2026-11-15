@@ -155,7 +155,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     {progress !== null && <div className="px-4 pb-3" role="status"><p className="text-xs">Uploading image…</p><progress className="w-full" max={100} value={progress} /></div>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line p-3 text-xs text-fg-3"><span>{stats?.words ?? 0} words · ⌘S to save</span>{editable && <Input aria-label="Alt text for the next image" placeholder="Alt text for the next image" className="!w-64" value={alt} onChange={(e) => setAlt(e.target.value)} />}</div>
-    <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden ref={fileInput} onChange={(e) => {
+    <input type="file" aria-label="Upload an image" accept="image/png,image/jpeg,image/gif,image/webp" hidden ref={fileInput} onChange={(e) => {
       if (e.target.files?.[0]) void upload(e.target.files[0])
       e.target.value = ''
     }} />

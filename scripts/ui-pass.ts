@@ -459,14 +459,15 @@ async function visit(context: BrowserContext, s: Seed, v: Visit, label: string, 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     if (overflow > 1) local.push(`horizontal scroll of ${overflow}px`)
     if (!v.public) {
-      const unlabeled = await page.evaluate(() => {
-        const named = (el: Element) => !!(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title') || (el as HTMLInputElement).labels?.length || el.closest('label'))
-        const out: string[] = []
-        for (const el of document.querySelectorAll('input:not([type=hidden]):not(.sr-only), select, textarea')) if (!named(el)) out.push(`${el.tagName.toLowerCase()}[${(el as HTMLInputElement).name || (el as HTMLInputElement).type || ''}] has no label`)
-        for (const el of document.querySelectorAll('img')) if (!el.hasAttribute('alt')) out.push(`img ${el.getAttribute('src')?.slice(0, 40)} has no alt`)
-        for (const el of document.querySelectorAll('button, a[href]')) if (!(el.textContent?.trim() || el.getAttribute('aria-label') || el.getAttribute('title') || el.querySelector('img[alt]'))) out.push(`${el.tagName.toLowerCase()} has no name`)
+      // A string, so the bundler's function-name helpers never reach the page.
+      const unlabeled = (await page.evaluate(`(() => {
+        const named = (el) => !!(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title') || (el.labels && el.labels.length) || el.closest('label'))
+        const out = []
+        for (const el of document.querySelectorAll('input:not([type=hidden]):not(.sr-only), select, textarea')) if (!named(el)) out.push(el.tagName.toLowerCase() + '[' + (el.name || el.type || '') + '] has no label')
+        for (const el of document.querySelectorAll('img')) if (!el.hasAttribute('alt')) out.push('img ' + (el.getAttribute('src') || '').slice(0, 40) + ' has no alt')
+        for (const el of document.querySelectorAll('button, a[href]')) if (!((el.textContent || '').trim() || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title') || (el.labels && el.labels.length) || el.querySelector('img[alt]'))) out.push(el.tagName.toLowerCase() + ' has no name')
         return [...new Set(out)]
-      })
+      })()`)) as string[]
       for (const u of unlabeled) local.push(`a11y: ${u}`)
       const text = await page.evaluate(() => document.body.innerText)
       if (/something went wrong|unexpected error|\bundefined\b|\bNaN\b|\[object Object\]/i.test(text)) local.push('page shows an error or a raw value')
@@ -594,7 +595,7 @@ async function pass(browser: Browser, s: Seed) {
   }
   for (const [role, client] of [['member', s.member], ['admin', s.admin]] as const) {
     const context = await newContext(browser, s, client, 'light', 'desktop')
-    for (const v of rolePages(s).filter((v) => !only || only.test(`${role}-${v.name}`))) await visit(context, s, v, `${role}/${v.name}`, path.join(shots, 'light', 'desktop', `${role}-${v.name}`) + '.png')
+    for (const v of rolePages(s).filter((v) => !only || only.test(`${role}-${v.name}`))) await visit(context, s, v, `${role}/${v.name}`, path.join(shots, 'light', 'desktop', `as-${role}-${v.name}`) + '.png')
     await context.close()
   }
 }

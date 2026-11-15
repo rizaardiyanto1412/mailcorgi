@@ -38,7 +38,7 @@ create a newsletter. It fails on any console error, uncaught exception, failed r
 response from the app, horizontal scroll, or a page left loading.
 
 Screenshots land in `docs/screenshots/<theme>/<viewport>/<page>.png`; role pages are prefixed
-`member-` and `admin-`, flows `flow-`. The README links a few of them. `UI_PASS_ONLY=<regex>` limits the
+`as-member-` and `as-admin-`, flows `flow-`. The README links a few of them. `UI_PASS_ONLY=<regex>` limits the
 run to matching page names, `UI_PASS_KEEP=1` keeps the data directory and `UI_PASS_VERBOSE=1` prints the
 server log. All seeded data uses `example.com` addresses.
 
