@@ -312,6 +312,7 @@ domains(id, name UNIQUE, status 'pending'|'verified'|'failed'|'suspended', provi
         records JSON (name,type,value,purpose,found), last_checked_at, verified_at, created_at)
 uploads(key PRIMARY KEY, newsletter_id NULL, content_type, bytes, width, height, created_by, created_at)
 api_keys(id, name, hash UNIQUE, last4, access 'full'|'read', created_by, last_used_at, created_at, revoked_at)
+api_idempotency(key PRIMARY KEY, fingerprint, response NULL, status NULL, expires_at)
 notifications(id, user_id NULL, kind, tone, title, body, href, created_at, read_at)
 usage(period PRIMARY KEY, emails_sent, contacts_peak)
 outbox(id, to_email, subject, html, text, headers JSON, kind, created_at)    -- only the `test` provider writes here
@@ -521,7 +522,8 @@ settings and install administration remain reachable before the first newsletter
 
 Admin sign-up rules use `signup_mode` (`closed`, `allowlist`, or cloud `open`) and comma-separated
 `allowed_emails`. Environment values override stored settings. Billing secrets are encrypted and are
-returned to the console only as configured flags. The email provider console remains a separate unit.
+returned to the console only as configured flags. The admin console includes email provider settings
+at `/admin/email`, alongside accounts, alerts, dead jobs, install settings and suppressions.
 
 Global suppression RPCs: `control.reportSuppression({ emailHash, reason, nonexistent? })` and
 `control.checkSuppressed({ emailHashes }) → { suppressed: string[] }` (up to 1000 hashes, SQL batches
@@ -606,6 +608,13 @@ These are the seams between modules. Build to them exactly. Change one only toge
 - API keys: the edge only reads the account id from `mc_<accountId>_<secret>` to pick the store. The
   account store hashes the secret, finds the key, and builds the actor itself
   (`owner: true, access: key.access`). A wrong secret is a 401 from the store.
+- API transports discover both registries. Account actions run locally; control actions use
+  `control.runApiAction({ name, input, actor: { userId, access, via, keyId? } })`. The control store
+  rebuilds the actor with `installAdmin: false`, empty grants and `owner: false`, checks that the action
+  is exposed on that transport, then calls `runAction`. An account API key never gains install-admin access.
+- REST write/send idempotency records are scoped to the authenticated key and retained for 24 hours.
+  A synchronous reservation precedes execution; overlapping requests and uncertain failures return 409
+  instead of risking a duplicate send. Completed results and application errors are replayed.
 
 ### 11.2 Authorization
 

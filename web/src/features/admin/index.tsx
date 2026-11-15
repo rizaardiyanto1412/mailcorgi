@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { EmailSettingsPage } from './email.tsx'
 import { NavLink, Navigate, Outlet } from 'react-router-dom'
 import type { Feature } from '../../app/feature.ts'
 import { useSession } from '../../lib/session.tsx'
@@ -8,7 +9,7 @@ import { Badge, Banner, Button, Card, EmptyState, Field, Input, PageHeader, Sele
 function AdminLayout() {
   const { session } = useSession()
   if (!session.user.isInstallAdmin) return <EmptyState title="Install admins only" body="Ask the person who runs this install for help." />
-  return <div className="flex flex-col gap-5"><PageHeader title="Admin console" /><nav className="flex flex-wrap gap-2" aria-label="Admin console">{['accounts', 'alerts', 'jobs', 'settings', 'suppressions'].map((name) => <NavLink className={({ isActive }) => `rounded-lg px-3 py-2 text-sm capitalize ${isActive ? 'bg-accent-soft text-accent-fg' : 'text-fg-2 hover:bg-hover'}`} key={name} to={`/admin/${name}`}>{name === 'jobs' ? 'Dead jobs' : name}</NavLink>)}</nav><Outlet /></div>
+  return <div className="flex flex-col gap-5"><PageHeader title="Admin console" /><nav className="flex flex-wrap gap-2" aria-label="Admin console">{['accounts', 'alerts', 'jobs', 'settings', 'email', 'suppressions'].map((name) => <NavLink className={({ isActive }) => `rounded-lg px-3 py-2 text-sm capitalize ${isActive ? 'bg-accent-soft text-accent-fg' : 'text-fg-2 hover:bg-hover'}`} key={name} to={`/admin/${name}`}>{name === 'jobs' ? 'Dead jobs' : name === 'email' ? 'Email' : name}</NavLink>)}</nav><Outlet /></div>
 }
 function AccountsPage() {
   const [search, setSearch] = useState('')
@@ -70,4 +71,4 @@ function SuppressionsPage() {
   const query = useActionQuery('admin.suppressions', { email: lookup, offset })
   return <div className="flex flex-col gap-4"><PageHeader title="Global suppressions" description="Only keyed email hashes are stored. Nonexistent mailbox reports expire after 180 days." /><form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); setLookup(email.trim() || undefined); setOffset(0) }}><Field label="Look up an email">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />}</Field><Button type="submit">Look up</Button><Button onClick={() => { setEmail(''); setLookup(undefined); setOffset(0) }}>Show all</Button></form>{query.error && <Banner kind="danger">{query.error.message}</Banner>}{query.isPending && <Spinner />}{query.data?.length === 0 && <Card><EmptyState title="No suppressions found" body="Permanent nonexistent mailbox reports appear here automatically." /></Card>}{!!query.data?.length && <Table head={<tr><th>Email hash</th><th>Reason</th><th>Expires</th></tr>}>{query.data.map((s) => <tr key={s.email_hash}><td className="max-w-48 break-all font-mono text-xs">{s.email_hash}</td><td>{s.reason.replaceAll('_', ' ')}</td><td>{s.until ? new Date(s.until).toLocaleDateString() : 'Never'}</td></tr>)}</Table>}<div className="flex justify-between"><Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</Button><Button disabled={(query.data?.length ?? 0) < 50} onClick={() => setOffset(offset + 50)}>Next</Button></div></div>
 }
-export const adminFeature: Feature = { name: 'admin', routes: [{ path: 'admin', element: <AdminLayout />, children: [{ index: true, element: <Navigate to="accounts" replace /> }, { path: 'accounts', element: <AccountsPage /> }, { path: 'alerts', element: <AlertsPage /> }, { path: 'jobs', element: <JobsPage /> }, { path: 'settings', element: <SettingsPage /> }, { path: 'suppressions', element: <SuppressionsPage /> }] }] }
+export const adminFeature: Feature = { name: 'admin', routes: [{ path: 'admin', element: <AdminLayout />, children: [{ index: true, element: <Navigate to="accounts" replace /> }, { path: 'accounts', element: <AccountsPage /> }, { path: 'alerts', element: <AlertsPage /> }, { path: 'jobs', element: <JobsPage /> }, { path: 'settings', element: <SettingsPage /> }, { path: 'email', element: <EmailSettingsPage /> }, { path: 'suppressions', element: <SuppressionsPage /> }] }] }

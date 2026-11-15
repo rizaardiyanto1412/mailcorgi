@@ -330,4 +330,14 @@ export const accountMigrations: readonly string[] = [
   ) WITHOUT ROWID;
   ${JOBS_SQL}
   `,
+  `
+  CREATE TABLE api_idempotency (
+    key TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    response TEXT,
+    status INTEGER,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX api_idempotency_expiry ON api_idempotency(expires_at);
+  `,
 ]
