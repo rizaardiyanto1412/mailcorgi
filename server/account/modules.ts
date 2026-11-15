@@ -15,7 +15,7 @@ import { signupModule } from './signup/index.ts'
 import { websiteModule } from './website/index.ts'
 import { domainsModule } from './domains/index.ts'
 import { statsModule } from './stats/index.ts'
-import { hygieneModule } from './hygiene/index.ts'
+import { assertSendingAllowed, hygieneModule } from './hygiene/index.ts'
 import { teamModule } from './team/index.ts'
 import { notificationsModule } from './notifications/index.ts'
 import { apikeysModule } from './apikeys/index.ts'
@@ -59,6 +59,7 @@ const modules = {
 
 export const accountRegistry = buildRegistry<'account', AccountRpc>('account', Object.values(modules), (ctx, action) => {
   if (getPolicy(ctx).status === 'deleting') throw new AppError('account_deleted', 'This account is being deleted.', 410)
+  if (action.effect === 'send') assertSendingAllowed(ctx)
   if (action.effect === 'send' && getPolicy(ctx).status !== 'active') throw new AppError('account_blocked', 'This account cannot send right now.', 403)
 })
 
