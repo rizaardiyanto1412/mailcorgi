@@ -1,0 +1,19 @@
+{
+	# Custom website hosts get a certificate on first visit, once MailCorgi says the host is known.
+	on_demand_tls {
+		ask http://mailcorgi:3000/api/public/tls-check
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy mailcorgi:3000
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	reverse_proxy mailcorgi:3000
+}

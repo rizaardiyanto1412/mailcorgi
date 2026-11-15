@@ -1,0 +1,8 @@
+# Local variables for `wrangler dev`. Copy to .dev.vars. Nothing here is required:
+# MailCorgi generates its own master key on first boot.
+#
+# APP_URL=http://localhost:8787
+# CLOUD=true
+# ADMIN_EMAILS=admin@example.com
+# ALLOWED_EMAILS=friend@example.com
+# APP_SECRET=

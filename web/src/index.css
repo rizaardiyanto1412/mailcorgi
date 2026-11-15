@@ -1,0 +1,163 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+:root {
+  --canvas: #f7f5f2;
+  --surface: #ffffff;
+  --sunken: #f1eee9;
+  --hover: #ebe7e1;
+  --line: #e6e1da;
+  --line-strong: #d3ccc2;
+  --fg: #1d1915;
+  --fg-2: #5a534c;
+  --fg-3: #77706a;
+  --nav: #2a1d14;
+  --accent: #c2410c;
+  --accent-hover: #9a3412;
+  --accent-soft: #fdeee4;
+  --accent-fg: #b23a0a;
+  --ok: #17803d;
+  --ok-soft: #e4f6ea;
+  --warn: #a15c00;
+  --warn-soft: #fdf1dc;
+  --danger: #c9302c;
+  --danger-soft: #fdecec;
+  --shadow-pop: 0 0 0 1px rgb(30 20 10 / 0.06), 0 8px 28px -6px rgb(30 20 10 / 0.18), 0 2px 6px -2px rgb(30 20 10 / 0.08);
+  --shadow-card: 0 1px 2px rgb(30 20 10 / 0.05);
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --canvas: #121010;
+  --surface: #1a1716;
+  --sunken: #221e1c;
+  --hover: #2a2522;
+  --line: #2b2623;
+  --line-strong: #3b3430;
+  --fg: #f0ebe6;
+  --fg-2: #b8b0a8;
+  --fg-3: #8f8880;
+  --nav: #1b1512;
+  --accent: #f97316;
+  --accent-hover: #fb923c;
+  --accent-soft: #3a2316;
+  --accent-fg: #fdba74;
+  --ok: #4cc27a;
+  --ok-soft: #13291c;
+  --warn: #e3a44a;
+  --warn-soft: #2e2212;
+  --danger: #f0716c;
+  --danger-soft: #331818;
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.08), 0 12px 32px -6px rgb(0 0 0 / 0.6);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-nav: var(--nav);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --shadow-pop: var(--shadow-pop);
+  --shadow-card: var(--shadow-card);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    overflow-x: clip;
+    background: var(--canvas);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button,
+  [role='button'],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.animate-pop {
+  animation: pop-in 0.12s ease-out;
+}
+.animate-fade {
+  animation: fade-in 0.15s ease-out;
+}
+.animate-toast {
+  animation: toast-in 0.18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-fade,
+  .animate-toast {
+    animation: none;
+  }
+}
+
+/* iOS zooms in on fields smaller than 16px and stays zoomed. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}

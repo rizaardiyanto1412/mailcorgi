@@ -1,0 +1,124 @@
+# Building a module
+
+Every feature lives in one folder on the server and one on the web, plus one test file. You never
+edit a shared file: the kernel wires your folder in through `register(reg)` and the feature list.
+
+```
+server/account/<module>/index.ts     actions, jobs, routes, RPC, resolvers   (or server/control/<module>/)
+web/src/features/<module>/index.tsx  pages, sidebar and settings entries
+server/test/<module>.test.ts         behavior tests through runAction and HTTP
+```
+
+Commands: `npm run dev` (API + Vite), `npm test`, `npm run typecheck`, `npm run lint`, `npm run ci` (all of it, plus build and smoke).
+
+## The module file
+
+```ts
+import { z } from 'zod'
+import { defineAction } from '../../core/actions.ts'
+import type { AccountRegistrar } from '../rpc.ts'
+
+export const contactsModule = {
+  name: 'contacts',
+  register(reg: AccountRegistrar) {
+    reg.resolver('contact', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM contacts WHERE id = ?', id)?.newsletter_id ?? null)
+    reg.job<{ importId: string }>('imports.process', async (ctx, { importId }, budget) => { /* … */ return 'done' })
+    reg.routes((app) => { app.get('/f/:key', (c) => c.html('…')) })
+    reg.rpc('ingestProviderEvents', (ctx, { events }) => ({ applied: 0 }))
+    return reg.actions(
+      defineAction({ name: 'contacts.create', /* … */ }),
+    )
+  },
+}
+```
+
+The module object is already imported in `server/account/modules.ts` as a stub. Keep the export name.
+`register` must `return reg.actions(...)` so the web client gets your action types.
+
+### Actions
+
+`defineAction` needs `name`, `description`, `scope`, `role`, `effect`, `input` (a `z.object`), and
+`handler(ctx, input, actor)`. Add `resource: { type, param }` for anything that belongs to a
+newsletter; `runAction` resolves the owning newsletter through your resolver, checks the actor's
+grant and rejects a `newsletterId` that does not match. Every input field needs `.describe('…')`:
+`parity.test.ts` fails otherwise. Add `rest` and `mcp` to expose the action; REST paths must not
+collide. Throw `AppError(code, message, status)` from `server/core/http.ts` for user-facing errors.
+Account-level resources (`domain`, `apiKey`, `account`) need the owner. Put `newsletter_id = ?` in
+every query on a newsletter-scoped table even though `runAction` checked already.
+
+### Jobs
+
+`ctx.jobs.enqueue(kind, payload, { runAt?, dedupeKey? })` is synchronous and returns `{ id, created }`.
+Call it inside the same transaction as the rows it refers to. Handlers are async, get a shared
+`Budget` (`budget.take(n)` for outbound requests, `budget.expired()` to yield) and return `'done'` or
+`{ again: runAt }`. A throw retries with backoff; after 8 attempts the job moves to `jobs_dead` and
+an admin alert is raised. Handlers must be idempotent. Never make an RPC after a commit to tell
+another store something: enqueue a job that makes the call.
+
+### Routes
+
+`reg.routes((app) => …)` mounts Hono routes on the store's own app. The edge has already decided
+this store answers (section 3.5 of the architecture); read `c.get('ctx')` and `c.get('actor')`
+(null for public routes). Public routes rate-limit with `allowRate` from `server/core/ratelimit.ts`.
+
+### RPC
+
+Declare the method on the store's interface from your own folder, then register it:
+
+```ts
+declare module '../rpc.ts' {
+  interface AccountRpc {
+    ingestProviderEvents(args: { events: ProviderEvent[] }): Promise<{ applied: number }>
+  }
+}
+reg.rpc('ingestProviderEvents', (ctx, args) => …)
+```
+
+Call it as `await ctx.stores.account(id).ingestProviderEvents({ events })` or `ctx.stores.control.x()`.
+Arguments and results are JSON. An `AppError` thrown inside arrives intact on the caller's side.
+
+### Migrations
+
+Migration 1 of each store already creates every table in architecture section 5. Add a column or
+index by appending a new string to `server/account/schema.ts` or `server/control/schema.ts`. Never
+edit an earlier entry. Keep statements under 100 bound parameters (`insertMany` chunks for you).
+
+## The web file
+
+```tsx
+export const contactsFeature: Feature = {
+  name: 'contacts',
+  nav: [{ to: '/contacts', label: 'Contacts', icon: Users }],
+  routes: [{ path: 'contacts', element: <ContactsPage /> }],
+  settings: [{ to: '/settings/forms', label: 'Signup forms' }],
+  settingsRoutes: [{ path: 'forms', element: <FormsPage /> }],
+}
+```
+
+`web/src/app/routes.tsx` already lists your feature. Data goes through `useActionQuery(name, input)`
+and `useAction(name, { invalidate: ['contacts.list'] })` from `web/src/lib/api.ts`; both are typed from
+the server registry, so a renamed field fails `npm run typecheck`. `useSession()` gives the current
+newsletter (`current`), the account and the user. UI pieces are in `web/src/ui/index.tsx`. Every list
+needs an empty state that says how to add the first item. Copy is short and sentence case.
+
+## Tests
+
+```ts
+const install = await createInstall({ env: { ALLOWED_EMAILS: 'b@example.com' } })   // or { cloud: true }
+const owner = await install.signUp({ email: 'a@example.com' })
+const nl = await owner.action('newsletters.create', { name: 'Weekly' })
+await install.runJobs()                     // run every due alarm
+install.clock.advance(60_000)               // the fake clock drives run_at, sessions and codes
+install.outbox('control')                   // or install.outbox(accountId): what the test provider sent
+install.dns.set('example.com', 'MX', ['mx.example.com'])
+await expectError(() => owner.action('contacts.get', { contactId: 'x' }))   // → status, code
+```
+
+Assert what a user sees: action output, HTTP status, rows in `outbox`. Reach no network: the
+harness's `fetch` throws. Use `example.com` addresses only.
+
+## Rules that bite
+
+No Node APIs outside `server/platform-node.ts`, `server/email/smtp.ts` and `scripts/`: `npm run build` includes
+`wrangler deploy --dry-run`. Both modes (self-hosted, `CLOUD=true`) must work. Status changes go through the one
+transition function per entity (section 5.3). Secrets and email bodies never reach logs or action output.
