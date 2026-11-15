@@ -7,7 +7,7 @@ import { newId } from '../../core/ids.ts'
 import { subscribe } from '../contacts/index.ts'
 import { parseTheme, escapeHtml, safeUrl } from '../render/index.ts'
 import { customFields, getSettings, publicNewsletter, getNewsletter, redirectSchema } from './settings.ts'
-import { confirmationSchema, formTokenSchema, readToken, token } from './tokens.ts'
+import { confirmationSchema, formTokenSchema, readToken, token, formToken } from './tokens.ts'
 import { deliverMail, queueMail, queueWelcome } from './mail.ts'
 import { hostedForm, page } from './pages.ts'
 import { embedScript } from './embed.ts'
@@ -35,14 +35,14 @@ export function registerRoutes(reg: AccountRegistrar) {
       const ctx = c.get('ctx')
       const nl = publicNewsletter(ctx, c.req.param('newsletterKey'))
       return c.json({ name: nl.name, description: nl.description, theme: parseTheme(nl.theme), settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id).filter((f) => getSettings(ctx, nl.id).fieldKeys.includes(f.key)),
-        formToken: await token(ctx, 'form', { newsletterId: nl.id, issuedAt: ctx.now() }), siteKey: ctx.config.turnstile?.siteKey ?? '' })
+        formToken: await formToken(ctx, nl.id), siteKey: ctx.config.turnstile?.siteKey ?? '' })
     })
     app.get('/f/:newsletterKey', async (c) => {
       const ctx = c.get('ctx')
       const nl = publicNewsletter(ctx, c.req.param('newsletterKey'))
       c.header('Cache-Control', 'no-store')
       if (ctx.config.turnstile) c.header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
-      return c.html(hostedForm({ nl, settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id), formToken: await token(ctx, 'form', { newsletterId: nl.id, issuedAt: ctx.now() }), siteKey: ctx.config.turnstile?.siteKey, base: ctx.config.appUrl }))
+      return c.html(hostedForm({ nl, settings: getSettings(ctx, nl.id), fields: customFields(ctx, nl.id), formToken: await formToken(ctx, nl.id), siteKey: ctx.config.turnstile?.siteKey, base: ctx.config.appUrl }))
     })
     app.get('/embed.js', (c) => {
       publicNewsletter(c.get('ctx'), c.req.query('key') ?? '')

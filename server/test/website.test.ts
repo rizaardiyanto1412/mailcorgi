@@ -55,7 +55,7 @@ for (const cloud of [false, true]) test(`public home, issue, author, feeds and w
     }
     const home = await (await install.fetch('/n/weekly')).text()
     assert.match(home, /action="http:\/\/app.example.com\/api\/public\/subscribe\/nl_acc_/)
-    assert.match(home, /name="startedAt"/)
+    assert.match(home, /name="formToken"/)
     assert.match(home, /name="website"/)
     assert.match(home, /Featured issue/)
     const issue = await (await install.fetch('/n/weekly/sent-issue')).text()
@@ -111,7 +111,7 @@ test('drafts, hidden campaigns, non-issue campaigns and other accounts never bec
     assert.equal((await other.actionRaw('website.get', { newsletterId: nl.id })).status, 404)
     assert.equal((await owner.actionRaw('website.publishPost', { newsletterId: nl.id, postId: post.id, subject: 'Stolen', slug: 'stolen', source: '' })).status, 404)
     const ctx = install.app.account(owner.accountId!).ctx
-    const actor: Actor = { userId: 'member', email: 'member@example.com', owner: false, grants: { [nl.id]: 'admin' }, access: 'full', via: 'web', installAdmin: false }
+    const actor: Actor = { userId: 'member', email: 'member@example.com', owner: false, grants: { [nl.id]: 'member' }, access: 'full', via: 'web', installAdmin: false }
     for (const name of ['website.get', 'website.update', 'website.publishPost', 'website.setHost', 'website.checkHost', 'website.stats']) {
       await assert.rejects(() => runAction(ctx, name, { newsletterId: nl.id, settings: {}, subject: 'X', slug: 'x', source: '', hostname: 'news.example.com' }, actor), (e: unknown) => e instanceof AppError && e.status === 403)
     }
@@ -324,5 +324,72 @@ test('configured signup challenges load asynchronously under the website CSP', a
     const nonce = /<script async defer nonce="([^"]+)"/.exec(body)?.[1]
     assert.ok(response.headers.get('content-security-policy')?.includes(`'nonce-${nonce}'`))
     assert.doesNotMatch(body, /test-secret-key/)
+  } finally { install.close() }
+})
+
+for (const cloud of [false, true]) test(`website form submits to signup and sends confirmation (${cloud ? 'cloud' : 'self-hosted'})`, async () => {
+  const { install, owner } = await setup(cloud)
+  try {
+    const home = await (await install.fetch('/n/weekly')).text()
+    const form = /<form\b[^>]*action="([^"]+)"[^>]*>([\s\S]*?)<\/form>/.exec(home)
+    assert.ok(form)
+    const fields = new URLSearchParams()
+    for (const input of form[2].matchAll(/<input\b[^>]*>/g)) {
+      const name = /name="([^"]+)"/.exec(input[0])?.[1]
+      if (name) fields.set(name, /value="([^"]*)"/.exec(input[0])?.[1] ?? '')
+    }
+    fields.set('email', 'reader@example.com')
+    install.clock.advance(2001)
+    const response = await install.fetch(form[1], { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: fields })
+    assert.equal(response.status, 200, await response.text())
+    const mail = install.outbox(owner.accountId!).find((m) => m.to_email === 'reader@example.com')
+    assert.ok(mail)
+    assert.match(mail.subject, /^Confirm/)
+    assert.match(mail.text, /http:\/\/app.example.com\/confirm\//)
+  } finally { install.close() }
+})
+
+test('welcome and keep campaigns stay out of every public archive surface even when sent and visible', async () => {
+  const { install, owner, nl } = await setup()
+  try {
+    await sent(install, owner, nl.id)
+    const ctx = install.app.account(owner.accountId!).ctx
+    for (const kind of ['welcome', 'keep']) {
+      const campaign = await owner.action('campaigns.create', { newsletterId: nl.id, subject: `Private ${kind} campaign` })
+      transitionCampaign(ctx, campaign.id, 'scheduled', { scheduledAt: ctx.now() + 1000 })
+      transitionCampaign(ctx, campaign.id, 'sending')
+      transitionCampaign(ctx, campaign.id, 'sent')
+      ctx.db.run('UPDATE campaigns SET kind = ?, slug = ?, web_visible = 1 WHERE id = ? AND newsletter_id = ?', kind, `private-${kind}`, campaign.id, nl.id)
+      for (const slug of [`private-${kind}`, campaign.id]) assert.equal((await install.fetch(`/n/weekly/${slug}`)).status, 404)
+      assert.equal((await expectError(() => owner.action('website.updateIssue', { campaignId: campaign.id, slug: `private-${kind}`, visible: true }))).code, 'not_sent')
+    }
+    for (const path of ['', '/feed.xml', '/sitemap.xml']) {
+      const response = await install.fetch(`/n/weekly${path}`)
+      assert.equal(response.status, 200)
+      const body = await response.text()
+      assert.match(body, /sent-issue/)
+      assert.doesNotMatch(body, /Private (welcome|keep) campaign|private-(welcome|keep)/)
+    }
+  } finally { install.close() }
+})
+
+test('members draft web-only posts; admins publish and hide them', async () => {
+  const { install, owner, nl } = await setup()
+  try {
+    const ctx = install.app.account(owner.accountId!).ctx
+    const member: Actor = { userId: owner.session.user.id, email: owner.email, owner: false, grants: { [nl.id]: 'member' }, access: 'full', via: 'web', installAdmin: false }
+    const input = { newsletterId: nl.id, subject: 'Member draft', slug: 'member-draft', source: 'Original', visible: false }
+    await runAction(ctx, 'website.publishPost', input, member)
+    assert.equal((await install.fetch('/n/weekly/member-draft')).status, 404)
+    const draft = ctx.db.get<{ id: string }>('SELECT id FROM website_posts WHERE newsletter_id = ? AND slug = ?', nl.id, input.slug)!
+    await runAction(ctx, 'website.publishPost', { ...input, postId: draft.id, source: 'Revised' }, member)
+    const denied = (error: unknown) => error instanceof AppError && error.status === 403
+    await assert.rejects(() => runAction(ctx, 'website.publishPost', { ...input, postId: draft.id, visible: true }, member), denied)
+    const admin: Actor = { ...member, grants: { [nl.id]: 'admin' } }
+    await runAction(ctx, 'website.publishPost', { ...input, postId: draft.id, visible: true }, admin)
+    assert.equal((await install.fetch('/n/weekly/member-draft')).status, 200)
+    for (const visible of [true, false]) await assert.rejects(() => runAction(ctx, 'website.publishPost', { ...input, postId: draft.id, visible }, member), denied)
+    await runAction(ctx, 'website.publishPost', { ...input, postId: draft.id, visible: false }, admin)
+    assert.equal((await install.fetch('/n/weekly/member-draft')).status, 404)
   } finally { install.close() }
 })

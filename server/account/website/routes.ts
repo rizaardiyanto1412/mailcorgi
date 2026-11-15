@@ -4,6 +4,7 @@ import type { StoreEnv } from '../../core/http.ts'
 import { clientIp } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 import { randomToken, sha256Hex } from '../../core/crypto.ts'
+import { formToken } from '../signup/index.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { escapeHtml as e, safeUrl } from '../render/index.ts'
 import { baseUrl, ensureAppUrl, issueDate, issueSlug, publicIssues, settings, websiteHost } from './model.ts'
@@ -59,6 +60,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       }
       const hit = await readPage(key.href, 'caches' in globalThis)
       if (hit) return respond(hit)
+      const signupToken = await formToken(ctx, nl.id)
       const issues = site.options.enabled ? publicIssues(ctx, nl.id) : []
       const authors = ctx.db.all<Author>('SELECT * FROM authors WHERE newsletter_id = ? ORDER BY name', nl.id)
       let campaignId: string | null = null
@@ -82,7 +84,7 @@ export function registerRoutes(reg: AccountRegistrar) {
           const shown = issues.slice((page - 1) * 10, page * 10)
           const cards = shown.map((issue, i) => issueCard(site, issue, page === 1 && i === 0)).join('')
           const paging = `<nav aria-label="Archive pages">${page > 1 ? `<a rel="prev" href="${e(site.base)}${page > 2 ? `?page=${page - 1}` : ''}">Newer issues</a>` : '<span></span>'}${page * 10 < issues.length ? `<a rel="next" href="${e(site.base)}?page=${page + 1}">Older issues</a>` : ''}</nav>`
-          return layout(site, { title: site.options.seoTitle || nl.name, description: site.options.seoDescription || nl.description, canonical, body: `<h1>${e(nl.name)}</h1><p>${e(nl.description)}</p>${signup(site, ctx.now())}<section aria-label="Latest issues">${cards || '<h2>No issues yet</h2><p>Subscribe to receive the first issue.</p>'}</section>${paging}` })
+          return layout(site, { title: site.options.seoTitle || nl.name, description: site.options.seoDescription || nl.description, canonical, body: `<h1>${e(nl.name)}</h1><p>${e(nl.description)}</p>${signup(site, signupToken)}<section aria-label="Latest issues">${cards || '<h2>No issues yet</h2><p>Subscribe to receive the first issue.</p>'}</section>${paging}` })
         }
       } else if (path.startsWith('/authors/')) {
         const author = authors.find((a) => path === `/authors/${a.slug}`)
@@ -90,7 +92,7 @@ export function registerRoutes(reg: AccountRegistrar) {
         const authored = issues.filter((i) => i.row.author_id === author.id)
         if (page > 1 && (page - 1) * 10 >= authored.length) return notFound()
         canonical = `${site.base}/authors/${author.slug}${page > 1 ? `?page=${page}` : ''}`
-        build = () => layout(site, { title: `${author.name} · ${nl.name}`, description: author.bio || `Issues by ${author.name}`, canonical, body: `<h1>${e(author.name)}</h1>${author.avatar_key ? `<img src="${e(imageUrl(site, author.avatar_key))}" alt="${e(author.name)}" width="96" height="96">` : ''}<p>${e(author.bio)}</p>${Object.entries(zLinks(author.links)).map(([name, url]) => `<a href="${e(safeUrl(url))}" rel="noopener noreferrer">${e(name)}</a>`).join(' · ')}<section aria-label="Author issues">${authored.slice((page - 1) * 10, page * 10).map((i) => issueCard(site, i)).join('') || '<p>No published issues yet. Subscribe for new writing.</p>'}</section><nav aria-label="Author pages">${page > 1 ? `<a rel="prev" href="${e(site.base)}/authors/${e(author.slug)}?page=${page - 1}">Newer issues</a>` : ''}${page * 10 < authored.length ? `<a rel="next" href="${e(site.base)}/authors/${e(author.slug)}?page=${page + 1}">Older issues</a>` : ''}</nav>${signup(site, ctx.now())}` })
+        build = () => layout(site, { title: `${author.name} · ${nl.name}`, description: author.bio || `Issues by ${author.name}`, canonical, body: `<h1>${e(author.name)}</h1>${author.avatar_key ? `<img src="${e(imageUrl(site, author.avatar_key))}" alt="${e(author.name)}" width="96" height="96">` : ''}<p>${e(author.bio)}</p>${Object.entries(zLinks(author.links)).map(([name, url]) => `<a href="${e(safeUrl(url))}" rel="noopener noreferrer">${e(name)}</a>`).join(' · ')}<section aria-label="Author issues">${authored.slice((page - 1) * 10, page * 10).map((i) => issueCard(site, i)).join('') || '<p>No published issues yet. Subscribe for new writing.</p>'}</section><nav aria-label="Author pages">${page > 1 ? `<a rel="prev" href="${e(site.base)}/authors/${e(author.slug)}?page=${page - 1}">Newer issues</a>` : ''}${page * 10 < authored.length ? `<a rel="next" href="${e(site.base)}/authors/${e(author.slug)}?page=${page + 1}">Older issues</a>` : ''}</nav>${signup(site, signupToken)}` })
       } else {
         const index = issues.findIndex((i) => path === `/${issueSlug(i)}`)
         const issue = issues[index]
@@ -103,7 +105,7 @@ export function registerRoutes(reg: AccountRegistrar) {
           const iso = new Date(issueDate(issue)).toISOString()
           const article = { '@context': 'https://schema.org', '@type': 'Article', headline: issue.row.subject, description: content.excerpt, datePublished: iso, dateModified: new Date(issue.row.updated_at).toISOString(), url: canonical, image: content.image || undefined, author: author ? { '@type': 'Person', name: author.name, url: `${site.base}/authors/${author.slug}` } : { '@type': 'Organization', name: nl.name }, publisher: { '@type': 'Organization', name: nl.name, url: site.base }, mainEntityOfPage: canonical }
           const share = encodeURIComponent(canonical)
-          return layout(site, { title: `${issue.row.subject} · ${nl.name}`, description: issue.kind === 'campaign' ? issue.row.preview_text || content.excerpt : content.excerpt, canonical, image: content.image, article, body: `<article><h1>${e(issue.row.subject)}</h1><p class="muted">${author ? `<a rel="author" href="${e(site.base)}/authors/${e(author.slug)}">${e(author.name)}</a> · ` : ''}<time datetime="${iso}">${iso.slice(0, 10)}</time></p><div class="prose">${content.html}</div></article><nav aria-label="Share this issue"><a href="https://twitter.com/intent/tweet?url=${share}&amp;text=${encodeURIComponent(issue.row.subject)}" rel="noopener noreferrer">Share on X</a><a href="https://www.linkedin.com/sharing/share-offsite/?url=${share}" rel="noopener noreferrer">Share on LinkedIn</a><a href="mailto:?subject=${encodeURIComponent(issue.row.subject)}&amp;body=${share}">Share by email</a></nav>${signup(site, ctx.now())}<nav aria-label="More issues">${issues[index + 1] ? `<a rel="prev" href="${e(issueUrl(site, issues[index + 1]))}">Previous: ${e(issues[index + 1].row.subject)}</a>` : ''}${issues[index - 1] ? `<a rel="next" href="${e(issueUrl(site, issues[index - 1]))}">Next: ${e(issues[index - 1].row.subject)}</a>` : ''}</nav>` })
+          return layout(site, { title: `${issue.row.subject} · ${nl.name}`, description: issue.kind === 'campaign' ? issue.row.preview_text || content.excerpt : content.excerpt, canonical, image: content.image, article, body: `<article><h1>${e(issue.row.subject)}</h1><p class="muted">${author ? `<a rel="author" href="${e(site.base)}/authors/${e(author.slug)}">${e(author.name)}</a> · ` : ''}<time datetime="${iso}">${iso.slice(0, 10)}</time></p><div class="prose">${content.html}</div></article><nav aria-label="Share this issue"><a href="https://twitter.com/intent/tweet?url=${share}&amp;text=${encodeURIComponent(issue.row.subject)}" rel="noopener noreferrer">Share on X</a><a href="https://www.linkedin.com/sharing/share-offsite/?url=${share}" rel="noopener noreferrer">Share on LinkedIn</a><a href="mailto:?subject=${encodeURIComponent(issue.row.subject)}&amp;body=${share}">Share by email</a></nav>${signup(site, signupToken)}<nav aria-label="More issues">${issues[index + 1] ? `<a rel="prev" href="${e(issueUrl(site, issues[index + 1]))}">Previous: ${e(issues[index + 1].row.subject)}</a>` : ''}${issues[index - 1] ? `<a rel="next" href="${e(issueUrl(site, issues[index - 1]))}">Next: ${e(issues[index - 1].row.subject)}</a>` : ''}</nav>` })
         }
       }
       const body = build()

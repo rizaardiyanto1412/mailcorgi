@@ -58,7 +58,7 @@ export function registerHostJobs(reg: AccountRegistrar) {
   })
 }
 export const hostActions = [
-  defineAction({ name: 'website.setHost', description: 'Set or remove a custom website hostname and get the DNS verification records.', scope: 'account', role: 'owner', effect: 'write', resource, input: z.object({ newsletterId, hostname: hostnameSchema.or(z.literal('')).describe('Custom hostname, or empty to remove it') }), rest: { method: 'PUT', path: '/newsletters/:newsletterId/website/host' }, mcp: { title: 'Set website host', destructive: false }, handler: async (ctx, input) => {
+  defineAction({ name: 'website.setHost', description: 'Set or remove a custom website hostname and get the DNS verification records.', scope: 'account', role: 'admin', effect: 'write', resource, input: z.object({ newsletterId, hostname: hostnameSchema.or(z.literal('')).describe('Custom hostname, or empty to remove it') }), rest: { method: 'PUT', path: '/newsletters/:newsletterId/website/host' }, mcp: { title: 'Set website host', destructive: false }, handler: async (ctx, input) => {
     await ensureAppUrl(ctx)
     const nl = newsletter(ctx, input.newsletterId)
     if (input.hostname && input.hostname === new URL(ctx.config.appUrl).hostname) throw new AppError('invalid_host', 'Use a hostname different from the app host.')
@@ -82,7 +82,7 @@ export const hostActions = [
     })
     return hostInfo(ctx, nl.id)
   } }),
-  defineAction({ name: 'website.checkHost', description: 'Check CNAME and TXT ownership records before enabling a custom hostname.', scope: 'account', role: 'owner', effect: 'write', resource, input: z.object({ newsletterId }), rest: { method: 'POST', path: '/newsletters/:newsletterId/website/host/check' }, mcp: { title: 'Verify website host', destructive: false }, handler: async (ctx, input) => {
+  defineAction({ name: 'website.checkHost', description: 'Check CNAME and TXT ownership records before enabling a custom hostname.', scope: 'account', role: 'admin', effect: 'write', resource, input: z.object({ newsletterId }), rest: { method: 'POST', path: '/newsletters/:newsletterId/website/host/check' }, mcp: { title: 'Verify website host', destructive: false }, handler: async (ctx, input) => {
     await ensureAppUrl(ctx)
     const host = websiteHost(ctx, input.newsletterId)
     if (!host) throw new AppError('no_host', 'Add a custom hostname first.')
