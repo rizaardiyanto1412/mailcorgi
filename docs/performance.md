@@ -40,7 +40,7 @@ Measured by summing `changes` over every statement on the Node driver:
 | Send one email | 10 |
 | One open | 7 |
 | One click | 8 |
-| One signup | 6 |
+| One signup | 5 |
 
 Cloudflare counts index entries too, so budget about double on Workers. `docs/self-hosting.md`
 turns these into a list size for Workers Free.
