@@ -10,7 +10,7 @@ import { Badge, Banner, Button, Card, EmptyState, Field, Input, PageHeader, Sele
 function AdminLayout() {
   const { session } = useSession()
   if (!session.user.isInstallAdmin) return <EmptyState title="Install admins only" body="Ask the person who runs this install for help." />
-  return <div className="flex flex-col gap-5"><PageHeader title="Admin console" /><nav className="flex flex-wrap gap-2" aria-label="Admin console">{['setup', 'accounts', 'alerts', 'jobs', 'settings', 'email', 'suppressions'].map((name) => <NavLink className={({ isActive }) => `rounded-lg px-3 py-2 text-sm capitalize ${isActive ? 'bg-accent-soft text-accent-fg' : 'text-fg-2 hover:bg-hover'}`} key={name} to={`/admin/${name}`}>{name === 'jobs' ? 'Dead jobs' : name === 'email' ? 'Email' : name === 'setup' ? 'Setup' : name}</NavLink>)}</nav><Outlet /></div>
+  return <div className="flex flex-col gap-5"><PageHeader title="Admin console" /><nav className="flex flex-wrap gap-2" aria-label="Admin console">{['setup', 'accounts', 'alerts', 'jobs', 'settings', 'email', 'suppressions'].map((name) => <NavLink className={({ isActive }) => `rounded-lg px-3 py-2 text-sm ${isActive ? 'bg-accent-soft text-accent-fg' : 'text-fg-2 hover:bg-hover'}`} key={name} to={`/admin/${name}`}>{name === 'jobs' ? 'Dead jobs' : name[0]!.toUpperCase() + name.slice(1)}</NavLink>)}</nav><Outlet /></div>
 }
 function AccountsPage() {
   const [search, setSearch] = useState('')

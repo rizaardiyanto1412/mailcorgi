@@ -11,6 +11,37 @@ server/test/<module>.test.ts         behavior tests through runAction and HTTP
 
 Commands: `npm run dev` (API + Vite), `npm test`, `npm run typecheck`, `npm run lint`, `npm run ci` (all of it, plus build and smoke).
 
+## Browser pass and screenshots
+
+`npm run ui:pass` loads the whole app in headless Chromium. It is not part of `npm run ci`, because the
+browser download is large. Run it after UI work, and before a release to refresh the screenshots.
+
+```sh
+npx playwright install chromium   # once per machine
+npm run build
+npm run ui:pass
+```
+
+The script (`scripts/ui-pass.ts`) starts the Node build on a random port with a temporary data directory
+and the `test` email provider. It seeds a demo install through the HTTP API: an owner, two newsletters,
+3,000 imported contacts with tags and custom fields, segments, an import with skipped rows, campaigns
+in every status, a sent campaign with opens, clicks and unsubscribes, an admin and a member of the
+first newsletter, API keys and published website posts. Two things cannot happen offline, so the
+script writes them straight into the account database: the sending domain is marked verified, and a
+few deliveries are marked bounced.
+
+It then visits every route at 1440×900 and 390×844, in light and dark, and signs in as the member and
+the admin to check the role-limited pages. Last, it clicks through the main jobs: add a contact,
+build a segment, import a CSV, write a campaign with every block, review and send it, open the report,
+invite a teammate, create an API key, change the theme, edit the signup form, add a website host and
+create a newsletter. It fails on any console error, uncaught exception, failed request, 4xx or 5xx
+response from the app, horizontal scroll, or a page left loading.
+
+Screenshots land in `docs/screenshots/<theme>/<viewport>/<page>.png`; role pages are prefixed
+`member-` and `admin-`, flows `flow-`. The README links a few of them. `UI_PASS_ONLY=<regex>` limits the
+run to matching page names, `UI_PASS_KEEP=1` keeps the data directory and `UI_PASS_VERBOSE=1` prints the
+server log. All seeded data uses `example.com` addresses.
+
 ## The module file
 
 ```ts

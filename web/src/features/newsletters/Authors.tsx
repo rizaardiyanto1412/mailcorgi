@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react'
 import type { ActionOutput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Spinner, Textarea, useFeedback } from '../../ui/index.tsx'
+import { Banner, Button, Card, EmptyState, Field, FileButton, Input, PageHeader, Spinner, Textarea, useFeedback } from '../../ui/index.tsx'
 type Author = ActionOutput<'authors.list'>['authors'][number]
 function AuthorForm({ newsletterId, author, onClose }: { newsletterId: string; author: Author | null; onClose: () => void }) {
   const [name, setName] = useState(author?.name ?? '')
@@ -18,9 +18,7 @@ function AvatarUpload({ author, newsletterId }: { author: Author; newsletterId: 
   const { account } = useSession()
   const upload = useAction('authors.uploadAvatar', { invalidate: ['authors.list'] })
   const [error, setError] = useState('')
-  return <div className="flex flex-col gap-2">{author.avatarKey && <img src={`/img/${account?.id}/${author.avatarKey}`} alt={author.name} className="size-12 rounded-full object-cover" />}<Field label="Avatar">{(id) => <Input id={id} type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={upload.isPending} onChange={async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  return <div className="flex flex-col gap-2">{author.avatarKey && <img src={`/img/${account?.id}/${author.avatarKey}`} alt={author.name} className="size-12 rounded-full object-cover" />}<div className="flex flex-col gap-1.5"><p className="text-[13px] font-medium">Avatar</p><FileButton accept="image/png,image/jpeg,image/gif,image/webp" label={author.avatarKey ? 'Replace avatar' : 'Upload avatar'} disabled={upload.isPending} onFile={async (file) => {
     setError('')
     if (file.size > 2097152 || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) { setError('Choose a PNG, JPEG, GIF or WebP image under 2 MB.'); return }
     try {
@@ -28,7 +26,7 @@ function AvatarUpload({ author, newsletterId }: { author: Author; newsletterId: 
       for (const byte of new Uint8Array(await file.arrayBuffer())) binary += String.fromCharCode(byte)
       await upload.mutateAsync({ newsletterId, authorId: author.id, data: btoa(binary), contentType: file.type === 'image/png' ? 'image/png' : file.type === 'image/jpeg' ? 'image/jpeg' : file.type === 'image/gif' ? 'image/gif' : 'image/webp' })
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not upload the avatar.') }
-  }} />}</Field>{(error || upload.error) && <Banner kind="danger">{error || upload.error?.message}</Banner>}</div>
+  }} /></div>{(error || upload.error) && <Banner kind="danger">{error || upload.error?.message}</Banner>}</div>
 }
 export function AuthorsPage() {
   const { current, account } = useSession()

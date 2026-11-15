@@ -26,6 +26,18 @@ const THEMES = ['light', 'dark'] as const
 type Viewport = keyof typeof VIEWPORTS
 type Theme = (typeof THEMES)[number]
 
+// Node's fetch can reuse a keep-alive socket the server just closed. Retry that one case.
+const nativeFetch = globalThis.fetch
+globalThis.fetch = async (input, init) => {
+  try {
+    return await nativeFetch(input, init)
+  } catch (err) {
+    const code = (err as { cause?: { code?: string } }).cause?.code
+    if (code !== 'ECONNRESET' && code !== 'UND_ERR_SOCKET') throw err
+    return nativeFetch(input, init)
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const freePort = () =>
   new Promise<number>((resolve, reject) => {
@@ -47,17 +59,24 @@ function startServer(port: number, dataDir: string, base: string): ChildProcess 
   const log = (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n')) {
       if (!line.trim()) continue
-      if (process.env.UI_PASS_VERBOSE || /\[(uncaught|unhandled)\]|Error/.test(line)) console.log(`[server] ${line}`)
+      fs.appendFileSync(serverLog, line + '\n')
+      if (process.env.UI_PASS_VERBOSE || /\[(uncaught|unhandled)\]|Error|Shutting down/.test(line)) console.log(`[server] ${line}`)
       if (/\[(uncaught|unhandled)\]/.test(line)) serverErrors.push(line)
     }
   }
   child.stdout?.on('data', log)
   child.stderr?.on('data', log)
+  child.on('exit', (code, signal) => {
+    if (!stopping) serverErrors.push(`the server exited early (code ${code}, signal ${signal})`)
+  })
   return child
 }
+let stopping = false
 const serverErrors: string[] = []
+const serverLog = path.join(root, '.audit', 'ui-pass-server.log')
 
 function stopServer(child: ChildProcess) {
+  stopping = true
   if (child.exitCode !== null || !child.pid) return
   try {
     process.kill(-child.pid, 'SIGTERM')
@@ -318,7 +337,7 @@ async function seed(base: string, dataDir: string): Promise<Seed> {
   await owner.action('campaigns.create', { newsletterId: second.id, subject: 'Release notes for May' })
 
   for (const [subject, slug] of [['Why corgis love snow', 'corgis-love-snow'], ['A short history of short legs', 'short-history'], ['Ten trails for small dogs', 'ten-trails']] as const) {
-    await owner.action('website.publishPost', { newsletterId: nl.id, subject, slug, source: `## ${subject}\n\nShort legs, **big** hearts. A walk through the season with photos and notes.\n\n- Bring water\n- Bring treats\n\n[Read more](https://example.com/more)`, authorId: author.id })
+    await owner.action('website.publishPost', { newsletterId: nl.id, subject, slug, source: `Short legs, **big** hearts. A walk through the season with photos and notes.\n\n- Bring water\n- Bring treats\n\n[Read more](https://example.com/more)`, authorId: author.id })
   }
   await owner.action('website.setHost', { newsletterId: nl.id, hostname: 'news.example.com' })
 
@@ -565,6 +584,160 @@ async function pass(browser: Browser, s: Seed) {
   }
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Flows: the main jobs, clicked through as a user would, at desktop width in the light theme.
+// ---------------------------------------------------------------------------------------------
+
+async function flows(browser: Browser, s: Seed) {
+  const context = await newContext(browser, s, s.owner, 'light', 'desktop')
+  const step = async (name: string, run: (page: Page) => Promise<void>) => {
+    if (only && !only.test(`flow-${name}`)) return
+    await visit(context, s, { name: `flow-${name}`, path: '/', then: run }, `flow/${name}`, path.join(shots, 'light', 'desktop', `flow-${name}.png`))
+  }
+  const toast = (page: Page, text: string | RegExp) => page.getByRole('status').filter({ hasText: text }).first().waitFor({ timeout: 10_000 })
+
+  await step('add-contact', async (page) => {
+    await page.goto(`${s.base}/contacts`)
+    await page.getByRole('button', { name: 'Add contact' }).click()
+    await page.getByLabel('Email', { exact: true }).fill('flow.reader@example.com')
+    await page.getByLabel('Name', { exact: true }).fill('Flow Reader')
+    await page.getByRole('button', { name: 'Add contact' }).last().click()
+    await page.getByRole('link', { name: 'flow.reader@example.com' }).waitFor({ timeout: 10_000 })
+  })
+
+  await step('segment', async (page) => {
+    await page.goto(`${s.base}/segments`)
+    await page.getByRole('button', { name: 'New segment' }).click()
+    await page.getByLabel('Segment name').fill('Trail club in Osaka')
+    await page.getByRole('button', { name: 'Add condition' }).first().click()
+    await page.getByLabel('Filter field').last().selectOption({ label: 'Tag' })
+    await page.getByLabel('Tag', { exact: true }).last().selectOption({ label: 'Trail club' })
+    await page.getByRole('button', { name: 'Save segment' }).click()
+    await page.getByText('Trail club in Osaka').first().waitFor({ timeout: 10_000 })
+  })
+
+  await step('import', async (page) => {
+    await page.goto(`${s.base}/imports`)
+    const csv = ['Email,Name,Status', ...Array.from({ length: 40 }, (_, i) => `flow.import.${i}@example.com,Import ${i},subscribed`), 'broken-address,Bad row,subscribed'].join('\n')
+    await page.locator('#import-csv').setInputFiles({ name: 'readers.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) })
+    await page.getByLabel(/already confirmed consent/).check()
+    await page.getByRole('button', { name: 'Upload and import' }).click()
+    await page.getByRole('heading', { name: /Import report/ }).getByText('Completed').waitFor({ timeout: 30_000 })
+  })
+
+  let campaignUrl = ''
+  await step('write-campaign', async (page) => {
+    await page.goto(`${s.base}/campaigns`)
+    await page.getByRole('button', { name: 'Write an issue' }).click()
+    await page.waitForURL(/\/campaigns\/[^/]+$/)
+    campaignUrl = page.url()
+    await page.getByLabel('Subject').fill('Autumn leaves and short legs')
+    await page.getByLabel('Preview text').fill('Crunchy walks ahead.')
+    const editor = page.getByRole('textbox', { name: 'Campaign content' })
+    await editor.click()
+    await page.keyboard.type('Hello {{first_name|friend}}, autumn is here.')
+    const block = async (label: string) => {
+      await page.getByRole('button', { name: 'Insert block /' }).click()
+      await page.getByRole('menuitem', { name: label, exact: true }).click()
+    }
+    for (const label of ['Heading', 'Bulleted list', 'Numbered list', 'Blockquote', 'Code block', 'Callout', 'Divider', 'Rule', 'Spacer']) {
+      await page.keyboard.press('End')
+      await page.keyboard.press('Enter')
+      await block(label)
+      await page.keyboard.type(`${label} text`)
+    }
+    await block('Button')
+    await page.getByRole('dialog').getByLabel('Address').fill('https://example.com/autumn')
+    await page.getByRole('dialog').getByLabel('Label').fill('Read the guide')
+    await page.getByRole('dialog').getByRole('button', { name: 'Apply' }).click()
+    await block('Link card')
+    await page.getByRole('dialog').getByLabel('Address').fill('https://example.com/video')
+    await page.getByRole('dialog').getByLabel('Label').fill('Autumn video')
+    await page.getByRole('dialog').getByRole('button', { name: 'Apply' }).click()
+    await page.getByLabel('Alt text for the next image').fill('Leaves on a trail')
+    await page.locator('.mail-editor input[type=file]').setInputFiles({ name: 'leaves.png', mimeType: 'image/png', buffer: Buffer.from(demoPng(), 'base64') })
+    await page.locator('.mail-editor img').first().waitFor({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByRole('status').filter({ hasText: 'Saved' }).first().waitFor({ timeout: 10_000 })
+  })
+
+  await step('review-and-send', async (page) => {
+    if (!campaignUrl) throw new Error('the campaign flow did not create a draft')
+    await page.goto(campaignUrl)
+    await page.getByRole('tab', { name: /Review/ }).click()
+    await page.getByRole('heading', { name: 'Review your issue' }).waitFor()
+    await page.getByRole('tab', { name: /Send/ }).click()
+    await page.getByRole('button', { name: 'Send now' }).last().click()
+    await page.getByRole('dialog').getByRole('button', { name: /Send/ }).click()
+    await page.getByRole('link', { name: 'View report' }).waitFor({ timeout: 60_000 })
+    await page.getByRole('link', { name: 'View report' }).click()
+    await page.getByText('Unique opens').waitFor()
+  })
+
+  await step('invite', async (page) => {
+    await page.goto(`${s.base}/settings/team`)
+    await page.getByLabel('Email').fill('new.teammate@example.com')
+    await page.getByLabel('Role').selectOption('admin')
+    await page.getByRole('button', { name: 'Send invitation' }).click()
+    await page.getByText('new.teammate@example.com').waitFor({ timeout: 10_000 })
+  })
+
+  await step('api-key', async (page) => {
+    await page.goto(`${s.base}/settings/api`)
+    await page.getByRole('button', { name: 'Create key' }).first().click()
+    await page.getByRole('dialog').getByLabel('Name').fill('Flow key')
+    await page.getByRole('dialog').getByRole('button', { name: 'Create key' }).click()
+    await page.getByRole('button', { name: 'I saved my key' }).waitFor({ timeout: 10_000 })
+    await page.getByRole('button', { name: 'I saved my key' }).click()
+    await page.getByText('Flow key').waitFor()
+  })
+
+  await step('theme', async (page) => {
+    await page.getByRole('button', { name: 'Account menu' }).click()
+    await page.getByRole('menuitem', { name: 'Dark' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark')
+    await page.getByRole('menuitem', { name: 'Light' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light')
+    await page.keyboard.press('Escape')
+  })
+
+  await step('signup-form', async (page) => {
+    await page.goto(`${s.base}/settings/forms`)
+    await page.getByLabel('Button label').fill('Join the pack')
+    await page.getByRole('button', { name: 'Save form' }).click()
+    await toast(page, /saved/i).catch(() => page.getByText(/saved/i).first().waitFor({ timeout: 10_000 }))
+  })
+
+  await step('website-host', async (page) => {
+    await page.goto(`${s.base}/website`)
+    await page.getByLabel('Hostname').fill('corgi.example.com')
+    await page.getByRole('button', { name: 'Save hostname' }).click()
+    await page.getByText(/TXT/).first().waitFor({ timeout: 10_000 })
+  })
+
+  await step('create-newsletter', async (page) => {
+    await page.goto(`${s.base}/welcome`)
+    await page.getByLabel('Name').fill('Dog park digest')
+    await page.getByRole('button', { name: 'Create newsletter' }).click()
+    await page.waitForURL(`${s.base}/`)
+    await page.getByRole('button', { name: /Dog park digest/ }).waitFor({ timeout: 10_000 })
+  })
+
+  await step('dialog-keyboard', async (page) => {
+    await page.goto(`${s.base}/segments`)
+    await page.getByRole('button', { name: 'Delete' }).first().click()
+    const dialog = page.getByRole('dialog')
+    await dialog.waitFor()
+    for (let i = 0; i < 6; i++) await page.keyboard.press('Tab')
+    const inside = await page.evaluate(() => !!document.activeElement?.closest('[role=dialog]'))
+    if (!inside) throw new Error('focus left the open dialog')
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'detached' })
+  })
+  await context.close()
+}
+
 // ---------------------------------------------------------------------------------------------
 
 async function main() {
@@ -581,6 +754,7 @@ async function main() {
     console.log('ui-pass: seeded the demo install')
     browser = await chromium.launch()
     await pass(browser, s)
+    await flows(browser, s)
   } finally {
     await browser?.close()
     stopServer(server)
@@ -598,6 +772,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.stack : err)
+  console.error(err instanceof Error ? `${err.stack}${err.cause ? `\ncause: ${err.cause instanceof Error ? err.cause.stack : String(err.cause)}` : ''}` : err)
   process.exitCode = 1
 })

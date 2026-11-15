@@ -3,7 +3,7 @@ import type { Newsletter } from '../../../../server/account/newsletters/index.ts
 import { SenderDomainPicker } from '../domains/index.tsx'
 import { useAction } from '../../lib/api.ts'
 import { useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, Field, Input, Textarea, useFeedback } from '../../ui/index.tsx'
+import { Banner, Button, Card, Field, FileButton, Input, Textarea, useFeedback } from '../../ui/index.tsx'
 export function SenderSettings({ newsletter }: { newsletter: Newsletter }) {
   const { refreshNewsletters, account } = useSession()
   const [fromName, setFromName] = useState(newsletter.fromName)
@@ -37,5 +37,5 @@ export function NewsletterImages({ newsletter }: { newsletter: Newsletter }) {
       await refreshNewsletters()
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not upload the image.') }
   }
-  return <Card className="flex flex-col gap-4 p-4 sm:p-5"><h2 className="font-semibold">Logo and icon</h2><p className="text-sm text-fg-3">PNG, JPEG, GIF or WebP, up to 2 MB each.</p>{(error || upload.error) && <Banner kind="danger">{error || upload.error?.message}</Banner>}{(['logo', 'icon'] as const).map((kind) => { const key = kind === 'logo' ? newsletter.logoKey : newsletter.iconKey; return <div key={kind} className="flex flex-wrap items-center gap-4">{key && <img className="size-16 rounded-lg border border-line object-contain" src={`/img/${account?.id}/${key}`} alt={`${newsletter.name} ${kind}`} />}<Field className="min-w-0 flex-1" label={kind === 'logo' ? 'Logo' : 'Icon'}>{(id) => <Input id={id} type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={!canEdit || upload.isPending} onChange={(e) => void load(e.target.files?.[0], kind)} />}</Field></div> })}</Card>
+  return <Card className="flex flex-col gap-4 p-4 sm:p-5"><h2 className="font-semibold">Logo and icon</h2><p className="text-sm text-fg-3">PNG, JPEG, GIF or WebP, up to 2 MB each.</p>{(error || upload.error) && <Banner kind="danger">{error || upload.error?.message}</Banner>}{(['logo', 'icon'] as const).map((kind) => { const key = kind === 'logo' ? newsletter.logoKey : newsletter.iconKey; return <div key={kind} className="flex flex-wrap items-center gap-4">{key && <img className="size-16 rounded-lg border border-line object-contain" src={`/img/${account?.id}/${key}`} alt={`${newsletter.name} ${kind}`} />}<div className="flex min-w-0 flex-1 flex-col gap-1.5"><p className="text-[13px] font-medium">{kind === 'logo' ? 'Logo' : 'Icon'}</p><FileButton accept="image/png,image/jpeg,image/gif,image/webp" label={key ? `Replace ${kind}` : `Upload ${kind}`} disabled={!canEdit || upload.isPending} onFile={(file) => void load(file, kind)} /></div></div> })}</Card>
 }

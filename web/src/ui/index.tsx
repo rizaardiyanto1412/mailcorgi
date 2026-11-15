@@ -62,6 +62,18 @@ export function LinkButton({ to, href, variant = 'secondary', size = 'md', icon,
   return <Link to={to ?? '/'} className={classes}>{icon}{children}</Link>
 }
 
+/** A button that opens the file picker. The native file input looks different in every browser and theme. */
+export function FileButton({ accept, onFile, disabled, label = 'Choose a file', fileName, id }: { accept: string; onFile: (file: File) => void; disabled?: boolean; label?: string; fileName?: string; id?: string }) {
+  const input = useRef<HTMLInputElement>(null)
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <input ref={input} id={id} type="file" accept={accept} className="sr-only" tabIndex={-1} disabled={disabled} onChange={(e) => { const file = e.target.files?.[0]; if (file) onFile(file); e.target.value = '' }} />
+      <Button disabled={disabled} onClick={() => input.current?.click()}>{label}</Button>
+      {fileName && <span className="truncate text-[13px] text-fg-3">{fileName}</span>}
+    </div>
+  )
+}
+
 /** The one way back to a parent list, above a detail page's header. */
 export const BackLink = ({ to, children }: { to: string; children: ReactNode }) => (
   <Link to={to} className="inline-flex items-center gap-1 self-start text-[13px] font-medium text-fg-3 transition-colors hover:text-fg [&>svg]:size-3.5">
@@ -336,6 +348,20 @@ export function Modal({ open, onClose, title, description, children, footer, wid
       if (e.key === 'Escape') {
         e.stopPropagation()
         onClose()
+      }
+      if (e.key === 'Tab' && panel.current) {
+        const items = [...panel.current.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null)
+        if (!items.length) return
+        const first = items[0]!
+        const last = items.at(-1)!
+        const inside = panel.current.contains(document.activeElement)
+        if (e.shiftKey && (!inside || document.activeElement === first)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     document.addEventListener('keydown', onKey)
