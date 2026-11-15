@@ -18,7 +18,8 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 - A review step that checks the subject, preview text, unsubscribe link, size against Gmail's clipping
   limit, postal address, sender domain, image alt text and links.
 - Schedule, pause, resume and cancel. Gradual sending for addresses you never emailed before, with an
-  automatic pause when bounces or complaints cross a safe rate. Send to the most engaged readers first.
+  automatic pause when bounces or complaints cross a safe rate. "Send to more now" and resuming a
+  paused send follow the same check. Send to the most engaged readers first.
 - One-click unsubscribe headers (RFC 8058) on every email.
 
 **Your list**
@@ -29,7 +30,8 @@ keeps your list, your issues and your stats in SQLite databases that you own.
   welcome email, and spam limits per visitor (honeypot, rate limits, optional Cloudflare Turnstile).
 - CSV imports with presets for beehiiv, Substack, Mailchimp, Kit, MailerLite, Buttondown, Ghost,
   EmailOctopus and listmonk. Imports leave out invalid, misspelled, role, disposable, duplicate and
-  suppressed addresses, and report each reason.
+  suppressed addresses, and report each reason. Rows without a subscribed status and confirmed consent
+  are added as unconfirmed and get no email; the import says so before it starts and in its report.
 - List hygiene: readers who ignore many issues in a row get one "still interested?" email and are
   removed if they do not click.
 
@@ -52,7 +54,8 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 **Teams and automation**
 
 - Invite people to each newsletter as admins or members. A self-hosted install has no limits on
-  newsletters, contacts, team size or emails.
+  newsletters, contacts, team size or emails. In cloud mode the plan sets each limit, including how
+  many people a newsletter can have (2 on the free plan).
 - API keys with full or read-only access, a REST API with OpenAPI docs at `/docs/api`, and an MCP
   server at `/mcp` so AI assistants can draft and send through the same rules as the dashboard.
 

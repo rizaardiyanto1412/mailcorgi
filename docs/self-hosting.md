@@ -171,7 +171,8 @@ directly is never taken for the proxy.
    - **Sending domain verified**: at least one domain passed its DNS check.
 
 To let other people sign up, add their addresses to `ALLOWED_EMAILS` or to **Admin → Settings**, or
-invite them to a newsletter from **Settings → Team**. Each person gets their own account. Outside
+invite them to a newsletter from **Settings → Team**. A self-hosted install has no limit on how many
+people a newsletter can have. Each person gets their own account. Outside
 first-run setup, a new user proves their address: with the 6-digit code MailCorgi emails them, or with
 the invite link. So configure an email provider before you let other people sign up. The same goes for
 `ADMIN_EMAILS`: an address there gets admin rights only after it is confirmed this way.
@@ -300,6 +301,11 @@ The SNS subscription needs a public HTTPS address. An install on `localhost` get
 In **Admin → Email**, choose **SMTP** and enter the host, port, security mode (`tls` for port 465,
 `starttls` for 587), user name and password. Send a test email. SMTP is not available on Cloudflare
 Workers.
+
+MailCorgi does not save a provider without the settings it needs to send: the region, access key ID
+and secret access key for Amazon SES, the API key for Resend, and the host for SMTP (plus the password
+when you enter a user name). A value set by an environment variable counts. **Admin → Email** marks
+each missing field, and nothing is saved until they are filled in.
 
 ### System sender
 
