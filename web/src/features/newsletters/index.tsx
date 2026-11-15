@@ -4,16 +4,17 @@ import { PenLine } from 'lucide-react'
 import { AuthorsPage } from './Authors.tsx'
 import { SenderSettings, NewsletterImages } from './SenderSettings.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { useDocumentTitle, useSession } from '../../lib/session.tsx'
+import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Textarea, useFeedback } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
 
 function NewsletterSettings() {
   const { current, account, refreshNewsletters, setCurrent } = useSession()
   const all = useActionQuery('newsletters.list', { includeArchived: true })
+  const canAdmin = useCanAdmin()
   const restore = useAction('newsletters.unarchive', { invalidate: ['newsletters.list'] })
   const archived = all.data?.newsletters.filter((n) => n.archivedAt !== null) ?? []
-  return <div className="flex flex-col gap-5"><PageHeader title="Newsletter" description={current ? `Name, address, sender and images for ${current.name}.` : 'Name, address, sender and images.'} />{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
+  return <div className="flex flex-col gap-5"><PageHeader title="Newsletter" description={!canAdmin ? 'You can view these settings. Newsletter admins and the owner can change them.' : current ? `Name, address, sender and images for ${current.name}.` : 'Name, address, sender and images.'} />{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
 }
 
 function NewsletterForm() {
@@ -62,7 +63,7 @@ function NewsletterForm() {
   return (
     <div className="flex flex-col gap-4">
       <Card className="p-5">
-        <form onSubmit={save} className="flex flex-col gap-4">
+        <form onSubmit={save} className="flex flex-col gap-4"><fieldset disabled={!canEdit} className="contents">
           <h2 className="text-[15px] font-semibold">Identity</h2>
           {update.error && <Banner kind="danger">{update.error.message}</Banner>}
           <Field label="Name">{(id) => <Input id={id} required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
@@ -74,21 +75,21 @@ function NewsletterForm() {
               Save
             </Button>
           </div>
-        </form>
+        </fieldset></form>
       </Card>
       <Card className="p-5">
-        <form onSubmit={moveSlug} className="flex flex-col gap-4">
+        <form onSubmit={moveSlug} className="flex flex-col gap-4"><fieldset disabled={!canEdit} className="contents">
           <h2 className="text-[15px] font-semibold">Web address</h2>
           {setSlugAction.error && <Banner kind="danger">{setSlugAction.error.message}</Banner>}
           <Field label="Slug" hint={`${boot.appUrl}/n/${slug || '…'}`}>
-            {(id) => <Input id={id} required maxLength={60} pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />}
+            {(id) => <Input id={id} required maxLength={60} pattern="[a-z0-9][a-z0-9\-]{1,58}[a-z0-9]" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />}
           </Field>
           <div>
             <Button type="submit" loading={setSlugAction.isPending} disabled={!canEdit || slug === current.slug}>
               Change address
             </Button>
           </div>
-        </form>
+        </fieldset></form>
       </Card>
       {archive.error && <Banner kind="danger">{archive.error.message}</Banner>}
       {account?.owner && <Card className="flex flex-wrap items-center justify-between gap-3 p-5">

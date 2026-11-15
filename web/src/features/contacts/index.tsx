@@ -7,7 +7,7 @@ import type { ActionInput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Select, sourceLabel, Spinner, StatusBadge, statusLabel, Table, useFeedback } from '../../ui/index.tsx'
-import { FilterBuilder } from '../segments/FilterBuilder.tsx'
+import { FilterBuilder, isComplete } from '../segments/FilterBuilder.tsx'
 import { FieldsForm } from './FieldsForm.tsx'
 import { ContactPage } from './ContactPage.tsx'
 import { ContactSettings } from './Settings.tsx'
@@ -55,7 +55,7 @@ function ContactList({ newsletterId }: { newsletterId: string }) {
   const [operation, setOperation] = useState<ActionInput<'contacts.bulk'>['operation']>('tag')
   const [bulkTag, setBulkTag] = useState('')
   const tags = useActionQuery('tags.list', { newsletterId })
-  const query = useActionQuery('contacts.list', { newsletterId, search: search || undefined, status, tagId: tagId || undefined, filter, sort, direction, cursor: cursors.at(-1) })
+  const query = useActionQuery('contacts.list', { newsletterId, search: search || undefined, status, tagId: tagId || undefined, filter: isComplete(filter) ? filter : null, sort, direction, cursor: cursors.at(-1) })
   const bulk = useAction('contacts.bulk', { invalidate: ['contacts.list', 'contacts.get', 'segments.count'] })
   const reset = () => { setCursors([undefined]); setSelected([]) }
   const apply = async () => {

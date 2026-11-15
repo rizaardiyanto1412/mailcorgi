@@ -656,23 +656,37 @@ async function flows(browser: Browser, s: Seed) {
       await page.getByRole('button', { name: 'Insert block /' }).click()
       await page.getByRole('menuitem', { name: label, exact: true }).click()
     }
+    // Typing Enter inside lists, quotes and callouts nests the next block, so start each block on
+    // a fresh top-level paragraph at the end, as a writer would with the mouse.
+    const fresh = () => page.evaluate(() => {
+      const editor = (document.querySelector('.ProseMirror') as unknown as { editor: { state: { doc: { content: { size: number } } }; chain(): any } }).editor
+      editor.chain().insertContentAt(editor.state.doc.content.size, { type: 'paragraph' }).focus('end').run()
+    })
     for (const label of ['Heading', 'Bulleted list', 'Numbered list', 'Blockquote', 'Code block', 'Callout', 'Divider', 'Rule', 'Spacer']) {
-      await page.keyboard.press('End')
-      await page.keyboard.press('Enter')
+      await fresh()
       await block(label)
-      await page.keyboard.type(`${label} text`)
+      if (!['Divider', 'Rule', 'Spacer'].includes(label)) await page.keyboard.type(`${label} text`)
     }
+    await fresh()
     await block('Button')
     await page.getByRole('dialog').getByLabel('Address').fill('https://example.com/autumn')
     await page.getByRole('dialog').getByLabel('Label').fill('Read the guide')
     await page.getByRole('dialog').getByRole('button', { name: 'Apply' }).click()
+    await fresh()
     await block('Link card')
     await page.getByRole('dialog').getByLabel('Address').fill('https://example.com/video')
     await page.getByRole('dialog').getByLabel('Label').fill('Autumn video')
     await page.getByRole('dialog').getByRole('button', { name: 'Apply' }).click()
+    await fresh()
     await page.getByLabel('Alt text for the next image').fill('Leaves on a trail')
     await page.locator('.mail-editor input[type=file]').setInputFiles({ name: 'leaves.png', mimeType: 'image/png', buffer: Buffer.from(demoPng(), 'base64') })
     await page.locator('.mail-editor img').first().waitFor({ timeout: 15_000 })
+    const types = await page.evaluate(() => {
+      const editor = (document.querySelector('.ProseMirror') as unknown as { editor: { getJSON(): { content?: { type: string }[] } } }).editor
+      return (editor.getJSON().content ?? []).map((n) => n.type)
+    })
+    const missing = ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock', 'callout', 'divider', 'horizontalRule', 'spacer', 'button', 'embed', 'image'].filter((t) => !types.includes(t))
+    if (missing.length) throw new Error(`the editor is missing blocks: ${missing.join(', ')}`)
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await page.getByRole('status').filter({ hasText: 'Saved' }).first().waitFor({ timeout: 10_000 })
   })
@@ -692,8 +706,8 @@ async function flows(browser: Browser, s: Seed) {
 
   await step('invite', async (page) => {
     await page.goto(`${s.base}/settings/team`)
-    await page.getByLabel('Email').fill('new.teammate@example.com')
-    await page.getByLabel('Role').selectOption('admin')
+    await page.getByLabel('Email', { exact: true }).fill('new.teammate@example.com')
+    await page.getByLabel('Role', { exact: true }).selectOption('admin')
     await page.getByRole('button', { name: 'Send invitation' }).click()
     await page.getByText('new.teammate@example.com').waitFor({ timeout: 10_000 })
   })

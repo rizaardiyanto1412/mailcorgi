@@ -50,7 +50,7 @@ export function Welcome() {
                 id={id}
                 value={finalSlug}
                 maxLength={60}
-                pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]"
+                pattern="[a-z0-9][a-z0-9\-]{1,58}[a-z0-9]"
                 onChange={(e) => {
                   setSlugTouched(true)
                   setSlug(e.target.value.toLowerCase())

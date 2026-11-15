@@ -5,7 +5,7 @@ import type { ActionOutput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Spinner, useFeedback } from '../../ui/index.tsx'
-import { FilterBuilder } from './FilterBuilder.tsx'
+import { FilterBuilder, isComplete } from './FilterBuilder.tsx'
 import type { Feature } from '../../app/feature.ts'
 
 type Segment = ActionOutput<'segments.list'>['segments'][number]
@@ -14,7 +14,8 @@ function SegmentEditor({ newsletterId, segment, onClose }: { newsletterId: strin
   const [filter, setFilter] = useState<Filter | null>(segment?.filter ?? null)
   const create = useAction('segments.create', { invalidate: ['segments.list'] })
   const update = useAction('segments.update', { invalidate: ['segments.list'] })
-  const count = useActionQuery('segments.count', { newsletterId, filter })
+  const complete = isComplete(filter)
+  const count = useActionQuery('segments.count', { newsletterId, filter }, { enabled: complete })
   const { toast } = useFeedback()
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -25,7 +26,7 @@ function SegmentEditor({ newsletterId, segment, onClose }: { newsletterId: strin
       onClose()
     } catch {}
   }
-  return <Card className="p-4 sm:p-5"><form onSubmit={submit} className="flex flex-col gap-4"><Field label="Segment name">{(id) => <Input id={id} required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />}</Field><FilterBuilder newsletterId={newsletterId} value={filter} onChange={setFilter} /><p className="text-sm text-fg-3" aria-live="polite">{count.isFetching ? 'Counting…' : count.data ? `${count.data.count.toLocaleString()} matching contacts` : 'Choose valid conditions to count contacts.'}</p>{count.error && <Banner kind="danger">{count.error.message}</Banner>}{(create.error || update.error) && <Banner kind="danger">{create.error?.message ?? update.error?.message}</Banner>}<div className="flex gap-2"><Button type="submit" variant="primary" loading={create.isPending || update.isPending} disabled={!!count.error}>Save segment</Button><Button onClick={onClose}>Cancel</Button></div></form></Card>
+  return <Card className="p-4 sm:p-5"><form onSubmit={submit} className="flex flex-col gap-4"><Field label="Segment name">{(id) => <Input id={id} required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />}</Field><FilterBuilder newsletterId={newsletterId} value={filter} onChange={setFilter} /><p className="text-sm text-fg-3" aria-live="polite">{!complete ? 'Finish each condition to count contacts.' : count.isFetching ? 'Counting…' : count.data ? `${count.data.count.toLocaleString()} matching contacts` : 'Choose valid conditions to count contacts.'}</p>{count.error && <Banner kind="danger">{count.error.message}</Banner>}{(create.error || update.error) && <Banner kind="danger">{create.error?.message ?? update.error?.message}</Banner>}<div className="flex gap-2"><Button type="submit" variant="primary" loading={create.isPending || update.isPending} disabled={!!count.error || !complete}>Save segment</Button><Button onClick={onClose}>Cancel</Button></div></form></Card>
 }
 function SegmentCount({ newsletterId, filter }: { newsletterId: string; filter: Filter }) {
   const query = useActionQuery('segments.count', { newsletterId, filter })
