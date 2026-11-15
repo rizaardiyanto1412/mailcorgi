@@ -1,0 +1,3 @@
+email,creation_date,subscriber_type
+active@example.com,2024-01-02T03:04:05Z,regular
+optout@example.com,2024-01-02T03:04:05Z,unsubscribed

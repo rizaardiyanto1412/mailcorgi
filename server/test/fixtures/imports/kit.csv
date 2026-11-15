@@ -1,0 +1,3 @@
+Email Address,First Name,Status,Created at,Subscriber ID
+active@example.com,Reader,confirmed,2024-01-02T03:04:05Z,1
+optout@example.com,Reader,unsubscribed,2024-01-02T03:04:05Z,2
