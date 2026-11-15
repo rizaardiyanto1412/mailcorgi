@@ -376,7 +376,6 @@ a variable that is missing here.
 | `APP_SECRET` (secret) | Both | generated on first boot | Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable. |
 | `IMAGES_PUBLIC_URL` | Both | `APP_URL/img` | Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them. |
 | `SEND_BATCH_SIZE` | Both | 100 | Most emails one send run claims. The platform limit can lower it. |
-| `MAX_NEWSLETTERS` | Both | 3 | Read for older installs. It sets no limit: self-hosted accounts have unlimited newsletters and cloud plans set their own. |
 | `TURNSTILE_SITE_KEY` | Both |  | Cloudflare Turnstile site key for signup forms. Needs `TURNSTILE_SECRET_KEY` too. |
 | `TURNSTILE_SECRET_KEY` (secret) | Both |  | Cloudflare Turnstile secret key for signup forms. |
 
@@ -430,7 +429,8 @@ a variable that is missing here.
 | `HOST` | Node | 0.0.0.0 | Interface to listen on. |
 | `DATA_DIR` | Node | `./data` (`/data` in Docker) | Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`. |
 | `WEB_DIR` | Node | `web/dist` | Folder with the built web app. |
-| `NODE_ENV` | Node | `production` in Docker | Read into the config. No behavior depends on it today. |
+| `NODE_ENV` | Node | `production` in Docker | `production` turns off every development-only switch, such as `MC_TEST_DNS`. |
+| `MC_TEST_DNS` | Both |  | Development and tests only: a JSON object of canned DNS answers keyed `TYPE:name`, such as `{"TXT:example.com":["v=spf1 mx ~all"]}`. It replaces real lookups, turns on the dev outbox endpoints for install admins, and is ignored when `NODE_ENV` is `production` or the Worker is deployed. Never set it on a real install. |
 
 <!-- env-reference:end -->
 

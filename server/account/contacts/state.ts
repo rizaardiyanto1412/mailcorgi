@@ -109,7 +109,9 @@ export function subscribe(ctx: StoreCtx, input: SubscribeInput): { contact: Cont
     const deleted = !!ctx.db.get('SELECT 1 FROM deleted_contacts WHERE email_hash = ? AND newsletter_id = ?', hash, input.newsletterId)
     const accountSuppressed = !!ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', email)
     const inactive = existing && !['subscribed', 'unconfirmed'].includes(existing.status)
-    if (accountSuppressed || (input.consent !== 'confirmed' && (deleted || inactive || isSuppressed(ctx, email, input.newsletterId)))) return result('suppressed')
+    // A deleted or opted-out address may ask for a new confirmation email (its own action); only confirming revives it.
+    const rejoining = input.consent === 'pending' && !existing
+    if (accountSuppressed || (input.consent === 'asserted' && (deleted || inactive || isSuppressed(ctx, email, input.newsletterId))) || (input.consent === 'pending' && !rejoining && (inactive || isSuppressed(ctx, email, input.newsletterId)))) return result('suppressed')
     if ((!existing || inactive) && !reserveContacts(ctx, 1)) return result('limit')
     if (input.consent === 'confirmed') {
       ctx.db.run('DELETE FROM suppressions WHERE email = ? AND newsletter_id = ?', email, input.newsletterId)

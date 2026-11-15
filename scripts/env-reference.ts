@@ -30,7 +30,6 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'APP_SECRET', group: 'Core', platform: 'both', secret: true, default: 'generated on first boot', description: 'Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable.' },
   { name: 'IMAGES_PUBLIC_URL', group: 'Core', platform: 'both', default: '`APP_URL/img`', description: 'Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them.' },
   { name: 'SEND_BATCH_SIZE', group: 'Core', platform: 'both', default: '100', description: 'Most emails one send run claims. The platform limit can lower it.' },
-  { name: 'MAX_NEWSLETTERS', group: 'Core', platform: 'both', default: '3', description: 'Read for older installs. It sets no limit: self-hosted accounts have unlimited newsletters and cloud plans set their own.' },
   { name: 'TURNSTILE_SITE_KEY', group: 'Core', platform: 'both', description: 'Cloudflare Turnstile site key for signup forms. Needs `TURNSTILE_SECRET_KEY` too.' },
   { name: 'TURNSTILE_SECRET_KEY', group: 'Core', platform: 'both', secret: true, description: 'Cloudflare Turnstile secret key for signup forms.' },
   { name: 'EMAIL_PROVIDER', group: 'Email', platform: 'both', default: 'test', description: '`ses`, `resend`, `smtp` or `test`. `test` keeps every email in a local outbox. `smtp` works on Node only.' },
@@ -64,7 +63,8 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'HOST', group: 'Platform', platform: 'node', default: '0.0.0.0', description: 'Interface to listen on.' },
   { name: 'DATA_DIR', group: 'Platform', platform: 'node', default: '`./data` (`/data` in Docker)', description: 'Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`.' },
   { name: 'WEB_DIR', group: 'Platform', platform: 'node', default: '`web/dist`', description: 'Folder with the built web app.' },
-  { name: 'NODE_ENV', group: 'Platform', platform: 'node', default: '`production` in Docker', description: 'Read into the config. No behavior depends on it today.' },
+  { name: 'NODE_ENV', group: 'Platform', platform: 'node', default: '`production` in Docker', description: '`production` turns off every development-only switch, such as `MC_TEST_DNS`.' },
+  { name: 'MC_TEST_DNS', group: 'Platform', platform: 'both', description: 'Development and tests only: a JSON object of canned DNS answers keyed `TYPE:name`, such as `{"TXT:example.com":["v=spf1 mx ~all"]}`. It replaces real lookups, turns on the dev outbox endpoints for install admins, and is ignored when `NODE_ENV` is `production` or the Worker is deployed. Never set it on a real install.' },
 ]
 
 /** Names the code reads that are internal state, not operator settings. */

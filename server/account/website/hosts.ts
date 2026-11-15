@@ -13,13 +13,18 @@ export function hostInfo(ctx: StoreCtx, id: string) {
   const target = ctx.config.env.WEBSITE_CNAME_TARGET || new URL(ctx.config.appUrl).hostname
   return { hostname: host?.hostname ?? '', verifiedAt: host?.verified_at ?? null, cname: { name: host?.hostname ?? '', value: target }, txt: { name: host ? `_mailcorgi.${host.hostname}` : '', value: host?.token ?? '' }, url: baseUrl(ctx, id), cloudflareId: host?.cf_id ?? null }
 }
+/** The install admin's saved Cloudflare settings; `CF_API_TOKEN` and `CF_ZONE_ID` in the environment win. */
+async function cloudflareCredentials(ctx: StoreCtx): Promise<{ CF_API_TOKEN: string; CF_ZONE_ID: string }> {
+  const settings = await ctx.stores.control.getInstallSettings({ keys: ['cf_api_token', 'cf_zone_id'] })
+  return { CF_API_TOKEN: settings.cf_api_token ?? '', CF_ZONE_ID: settings.cf_zone_id ?? '' }
+}
 export const syncHost = (ctx: StoreCtx, id: string) => ctx.jobs.enqueue('website.syncHost', { newsletterId: id }, { dedupeKey: `website.syncHost:${id}` })
 export function registerHostJobs(reg: AccountRegistrar) {
   reg.job<{ id: string }>('website.deleteHost', async (ctx, { id }, budget) => {
-    const { CF_API_TOKEN, CF_ZONE_ID } = ctx.config.env
-    if (!CF_API_TOKEN || !CF_ZONE_ID || !/^[a-f0-9]{32}$/i.test(CF_ZONE_ID)) return 'done'
     if (ctx.db.get('SELECT newsletter_id FROM website_hosts WHERE cf_id = ?', id)) return 'done'
-    if (!budget.take(1)) return { again: ctx.now() + 1000 }
+    if (budget.take(2) < 2) return { again: ctx.now() + 1000 }
+    const { CF_API_TOKEN, CF_ZONE_ID } = await cloudflareCredentials(ctx)
+    if (!CF_API_TOKEN || !CF_ZONE_ID || !/^[a-f0-9]{32}$/i.test(CF_ZONE_ID)) return 'done'
     const response = await ctx.platform.fetch(`https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/custom_hostnames/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { authorization: `Bearer ${CF_API_TOKEN}` } })
     if (!response.ok && response.status !== 404) throw new AppError('host_delete_failed', 'Cloudflare could not remove the old hostname.', 502)
     return 'done'
@@ -34,10 +39,10 @@ export function registerHostJobs(reg: AccountRegistrar) {
   reg.job<{ newsletterId: string; hostname: string; token: string }>('website.provisionHost', async (ctx, input, budget) => {
     const host = websiteHost(ctx, input.newsletterId)
     if (!host || host.hostname !== input.hostname || host.token !== input.token || host.verified_at === null || host.cf_id) return 'done'
-    const { CF_API_TOKEN, CF_ZONE_ID } = ctx.config.env
+    if (budget.take(3) < 3) return { again: ctx.now() + 1000 }
+    const { CF_API_TOKEN, CF_ZONE_ID } = await cloudflareCredentials(ctx)
     if (!CF_API_TOKEN || !CF_ZONE_ID) return 'done'
     if (!/^[a-f0-9]{32}$/i.test(CF_ZONE_ID)) throw new AppError('invalid_cf_zone', 'Configure a valid Cloudflare zone id.')
-    if (budget.take(2) < 2) return { again: ctx.now() + 1000 }
     const endpoint = `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/custom_hostnames`
     const headers = { authorization: `Bearer ${CF_API_TOKEN}`, 'content-type': 'application/json' }
     const listed = await ctx.platform.fetch(`${endpoint}?hostname=${encodeURIComponent(host.hostname)}`, { headers })

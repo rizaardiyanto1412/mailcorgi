@@ -25,6 +25,14 @@ export interface Platform {
   resolveDns(name: string, type: DnsType): Promise<string[]>
   waitUntil(p: Promise<unknown>): void
   limits: { subrequestsPerRun: number }
+  /** Remove a store's database and alarm for good. Only the control store calls it, for an account whose data is wiped. */
+  destroyStore(store: StoreRef): Promise<void>
+}
+
+/** Answers from `MC_TEST_DNS` when the flag is on (never in production), else the real resolver. */
+export function dnsResolver(testDns: Record<string, string[]> | null, real: Platform['resolveDns']): Platform['resolveDns'] {
+  if (!testDns) return real
+  return async (name, type) => testDns[`${type}:${name.toLowerCase().replace(/\.$/, '')}`] ?? []
 }
 
 /** DNS over HTTPS through Cloudflare's resolver. Tests swap in a fake. */
