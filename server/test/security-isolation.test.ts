@@ -217,3 +217,22 @@ test('no action reaches a resource of another newsletter or another account thro
   assert.ok(attempts.length > 250, 'the walk must reach every id-shaped input')
   for (const name of ['contacts.bulk', 'campaigns.create', 'campaigns.update', 'notifications.markRead', 'website.publishPost', 'team.remove', 'billing.portal']) assert.ok(tried.has(name), `${name} was not walked`)
 })
+
+test('the edge drops smuggled x-mc headers on every route', async () => {
+  const install = await createInstall()
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const nl = await owner.action('newsletters.create', { name: 'Weekly' })
+    await owner.action('website.update', { newsletterId: nl.id, settings: { enabled: true } as never })
+    await install.runJobs()
+    const smuggled = { 'x-mc-site': nl.id, 'X-MC-Host': 'app.example.com', 'x-mc-account': owner.accountId!, 'x-mc-ip': '192.0.2.1', 'x-mc-actor': 'forged' }
+    const pixel = await install.fetch(`/t/o/${owner.accountId}.o.AAAA.AAAA`, { headers: smuggled })
+    assert.equal(pixel.headers.get('content-type'), 'image/gif', 'a token route must not turn into a website page')
+    const page = await install.fetch('/n/weekly', { headers: smuggled })
+    assert.equal(page.status, 200)
+    const action = await install.fetch('/api/actions/newsletters.list', { method: 'POST', headers: { ...smuggled, 'content-type': 'application/json' }, body: '{}' })
+    assert.equal(action.status, 401)
+  } finally {
+    install.close()
+  }
+})
