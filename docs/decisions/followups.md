@@ -88,3 +88,16 @@ each caller having to remember it. `reserveContacts` reads the counter, and reco
 row is missing. The hourly `usage.push` job recounts and resets it, which repairs any drift and
 supplies the usage snapshot it already sent. The triggers sit in the contacts module because it owns
 the table; the counter's readers are in `usage`.
+
+## Growth by source
+
+Cause: `stats_sources` changed only in the `stats.newsletter` rollup, which runs every five minutes
+and recounts only the last three days of `events`. A running import showed whatever part of it the
+last rollup had seen (the UI pass caught 490 of 2,940), and imported contacts whose signup date was
+older than three days never appeared at all. `daily_stats` did not have the problem because
+`setContactStatus` bumps it live.
+
+Fix: the stats migration `2026-11-16-stats-live-sources` adds a trigger on `events` that bumps the
+event's own day in `stats_sources` with exactly the rule the rollup uses, and recounts the table once.
+The rollup stays as the repair for recent days. The trigger is on the shared `events` table because
+every status change already writes an event there; no other module's code changes.
