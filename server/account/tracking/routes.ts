@@ -58,7 +58,8 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const d = deliveryById(ctx, Number(parts[0]))
     const now = ctx.now()
     if (!d || !['sent', 'delivered', 'complained'].includes(d.status) || isScanner(c.req.header('user-agent') ?? '') || (d.sent_at !== null && now - d.sent_at < OPEN_GRACE_MS)) return pixel()
-    recordOpen(ctx, d, now)
+    const privacyProxy = /apple-mail|mailprivacy|icloud|googleimageproxy/i.test(c.req.header('user-agent') ?? '')
+    recordOpen(ctx, d, now, privacyProxy)
     return pixel()
   })
 
@@ -115,7 +116,7 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const contact = parts && contactForPage(ctx, parts[0])
     if (!parts || !contact || ctx.now() - Number(parts[1] ?? 0) > 30 * 86_400_000) return jsonNotFound(c)
     if (contact.status === 'subscribed') ctx.db.tx(() => {
-      ctx.db.run('UPDATE contacts SET ignored_streak = 0, keep_asked_at = NULL, updated_at = ? WHERE id = ?', ctx.now(), contact.id)
+      ctx.db.run('UPDATE contacts SET ignored_streak = 0, strict_ignored_streak = 0, keep_asked_at = NULL, updated_at = ? WHERE id = ?', ctx.now(), contact.id)
       ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, at) VALUES (?, ?, ?, ?)', 'keep', contact.newsletter_id, contact.id, ctx.now())
     })
     return c.html(themedPage({ newsletter: contact, title: 'Thanks for staying', lines: [`${contact.email} keeps receiving ${contact.name}.`] }), 200, noStore)

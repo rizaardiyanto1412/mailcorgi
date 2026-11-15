@@ -102,21 +102,16 @@ test('dead jobs and invalid webhook signatures produce emailed admin alerts', as
   assert.equal(install.outbox().filter((r) => r.kind === 'system').length, 2)
 })
 
-test('completed imports notify once and campaign sends use the shared notification function', async (t) => {
+test('campaign sends and domain checks use the shared notification function', async (t) => {
   const { install, owner, nl, ctx } = await sendableInstall()
   t.after(() => install.close())
-  ctx.db.run("INSERT INTO imports (id, newsletter_id, status, added, created_by, created_at) VALUES ('imp_finished', ?, 'done', 10, ?, ?)", nl.id, owner.session.user.id, ctx.now())
   addContacts(ctx, nl.id, 2)
   const issue = await createIssue(owner, nl.id)
   await owner.action('campaigns.send', { campaignId: issue.id })
   await drive(install, owner, issue.id)
-  const first = await owner.action('notifications.list', {})
-  assert.equal(first.items.filter((r) => r.kind === 'import_finished').length, 1)
-  assert.equal(first.items.filter((r) => r.kind === 'campaign_sent').length, 1)
-  assert.equal(first.items.filter((r) => r.kind === 'domain_verified').length, 1)
-  install.clock.advance(61_000)
-  await install.runJobs()
-  assert.equal((await owner.action('notifications.list', {})).items.filter((r) => r.kind === 'import_finished').length, 1)
+  const items = (await owner.action('notifications.list', {})).items
+  assert.deepEqual(items.filter((r) => r.kind === 'campaign_sent').map((r) => r.body), ['2 emails went out.'])
+  assert.equal(items.filter((r) => r.kind === 'domain_verified').length, 1)
 })
 
 test('control-forwarded notifications are idempotent across duplicate RPC delivery', async (t) => {

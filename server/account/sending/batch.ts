@@ -2,6 +2,7 @@ import type { Budget, JobResult } from '../../core/jobs.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { randomToken } from '../../core/crypto.ts'
 import type { SendResult } from '../../email/index.ts'
+import { checkProtection, globalSuppressions, keepDeliveryAllowed, recordHygieneSend, protectionState, queueHygiene } from '../hygiene/index.ts'
 import { isSuppressed } from '../contacts/index.ts'
 import { getCampaignRow, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { countEmails, getPolicy } from '../usage/index.ts'
@@ -26,7 +27,9 @@ interface DeliveryRow {
 
 /** A delivery that just went out: contact counters, daily stats, usage, the event row. */
 export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'campaign_id' | 'contact_id'>, newsletterId: string, at: number) {
-  ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + 1, last_sent_at = ?, updated_at = ? WHERE id = ?', at, at, d.contact_id)
+  const issue = getCampaignRow(ctx, d.campaign_id).kind === 'issue'
+  ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + ?, strict_ignored_streak = strict_ignored_streak + ?, last_sent_at = ?, updated_at = ? WHERE id = ?', issue ? 1 : 0, issue ? 1 : 0, at, at, d.contact_id)
+  recordHygieneSend(ctx, d.id, d.campaign_id, d.contact_id, at)
   ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, at) VALUES (?, ?, ?, ?, ?, ?)', 'send', newsletterId, d.contact_id, d.campaign_id, d.id, at)
   daily(ctx, newsletterId, 'sent', at)
   bumpStat(ctx, d.campaign_id, 'sent')
@@ -60,7 +63,8 @@ export function finishCampaign(ctx: StoreCtx, row: CampaignRow) {
     ctx.db.run("UPDATE campaign_sends SET state = 'done' WHERE campaign_id = ?", row.id)
     ctx.db.run(`UPDATE contacts SET engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3), updated_at = ? WHERE id IN (SELECT contact_id FROM deliveries WHERE campaign_id = ?)`, ctx.now(), row.id)
     transitionCampaign(ctx, row.id, 'sent')
-    notify(ctx, { kind: 'campaign_sent', tone: 'ok', title: `“${row.subject || 'Untitled issue'}” was sent`, body: `${stats.sent} emails went out.`, href: `/campaigns/${row.id}/report` })
+    if (row.kind === 'issue') queueHygiene(ctx, row.newsletter_id)
+    if (row.kind === 'issue') notify(ctx, { kind: 'campaign_sent', tone: 'ok', title: `“${row.subject || 'Untitled issue'}” was sent`, body: `${stats.sent} emails went out.`, href: `/campaigns/${row.id}/report` })
   })
 }
 
@@ -68,7 +72,8 @@ function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: num
   return ctx.db.tx(() => {
     const d = ctx.db.get<DeliveryRow & { name: string | null; fields: string | null; contact_status: string | null }>(`SELECT d.*, c.name, c.fields, c.status AS contact_status FROM deliveries d LEFT JOIN contacts c ON c.id = d.contact_id AND c.newsletter_id = ? WHERE d.id = ? AND d.status = 'queued'`, newsletterId, id)
     if (!d) return null
-    if (d.contact_status !== 'subscribed' || isSuppressed(ctx, d.email, newsletterId)) {
+    const keepAllowed = getCampaignRow(ctx, d.campaign_id).kind !== 'keep' || keepDeliveryAllowed(ctx, newsletterId, d.contact_id)
+    if (!keepAllowed || d.contact_status !== 'subscribed' || isSuppressed(ctx, d.email, newsletterId)) {
       ctx.db.run("UPDATE deliveries SET status = 'skipped', error = ? WHERE id = ? AND status = 'queued'", d.contact_status === 'subscribed' ? 'Suppressed before sending.' : 'No longer subscribed.', id)
       bumpStat(ctx, d.campaign_id, 'skipped')
       return null
@@ -122,6 +127,7 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
   let row: CampaignRow
   try { row = getCampaignRow(ctx, campaignId) } catch { return 'done' }
   if (row.status !== 'sending') return 'done'
+  if (checkProtection(ctx)) return 'done'
   if (getPolicy(ctx).status !== 'active') {
     pauseCampaign(ctx, row, 'account_blocked')
     return 'done'
@@ -160,14 +166,23 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
     return 'done'
   }
   recordLinks(ctx, send)
-  const want = Math.min(ctx.config.sendBatchSize, ready, budget.left() - 1)
+  const candidates = ctx.db.all<{ id: number; email: string }>(`SELECT d.id, d.email FROM deliveries d WHERE ${releasedWhere} AND d.queued_at <= ? ORDER BY d.id LIMIT ?`, campaignId, campaignId, now, Math.min(row.kind === 'keep' ? 10 : ctx.config.sendBatchSize, ready, 1000))
+  const suppressed = await globalSuppressions(ctx, candidates.map((d) => d.email), budget)
+  if (!suppressed) return { again: now + 1000 }
+  if (protectionState(ctx)) return 'done'
+  for (const d of candidates) if (suppressed.has(d.email)) {
+    if (ctx.db.run("UPDATE deliveries SET status = 'skipped', error = 'Globally suppressed.' WHERE id = ? AND status = 'queued'", d.id).changes) bumpStat(ctx, campaignId, 'skipped')
+  }
+  const allowed = candidates.filter((d) => !suppressed.has(d.email))
+  if (!allowed.length) return { again: now + 1000 }
+  const want = Math.min(allowed.length, budget.left() - 1)
   if (want < 1) return { again: now + 1000 }
   budget.take(1)
   const permits = await ctx.stores.control.takeSendPermits({ accountId: ctx.accountId!, want })
   if (permits.granted < 1) return { again: permits.retryAt ?? now + 1000 }
-  const ids = ctx.db.all<{ id: number }>(`SELECT d.id FROM deliveries d WHERE ${releasedWhere} AND d.queued_at <= ? ORDER BY d.id LIMIT ?`, campaignId, campaignId, now, Math.min(permits.granted, budget.take(permits.granted))).map((r) => r.id)
+  const ids = allowed.slice(0, Math.min(permits.granted, budget.take(permits.granted))).map((d) => d.id)
   for (const id of ids) {
-    if (budget.expired()) break
+    if (budget.expired() || protectionState(ctx) || getPolicy(ctx).status !== 'active') break
     const d = claimDelivery(ctx, id, row.newsletter_id, ctx.now())
     if (!d) continue
     let result: SendResult

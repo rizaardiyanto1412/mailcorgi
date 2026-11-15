@@ -1,0 +1,3 @@
+email,subscription_status,created_at,subscription_type
+active@example.com,subscribed,2024-01-02T03:04:05Z,free
+optout@example.com,unsubscribed,2024-01-02T03:04:05Z,free

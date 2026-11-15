@@ -16,7 +16,7 @@ function reportSuppression(ctx: StoreCtx, raw: z.infer<typeof report>) {
 declare module '../rpc.ts' {
   interface ControlRpc {
     reportSuppression(args: z.infer<typeof report>): Promise<void>
-    checkSuppressed(args: { emailHashes: string[] }): Promise<{ suppressed: string[] }>
+    checkSuppressed(args: { emailHashes: string[] }): Promise<{ suppressed: string[]; spamTraps: string[] }>
   }
 }
 export const suppressionModule = {
@@ -29,11 +29,15 @@ export const suppressionModule = {
     reg.rpc('checkSuppressed', (ctx, raw) => {
       const { emailHashes } = z.object({ emailHashes: z.array(hash).max(1000) }).parse(raw)
       const suppressed: string[] = []
+      const spamTraps: string[] = []
       for (let i = 0; i < emailHashes.length; i += 90) {
         const batch = emailHashes.slice(i, i + 90)
-        if (batch.length) suppressed.push(...ctx.db.all<{ email_hash: string }>(`SELECT email_hash FROM global_suppressions WHERE email_hash IN (${batch.map(() => '?').join(',')}) AND (until IS NULL OR until > ?)`, ...batch, ctx.now()).map((r) => r.email_hash))
+        if (!batch.length) continue
+        const rows = ctx.db.all<{ email_hash: string; reason: string }>(`SELECT email_hash, reason FROM global_suppressions WHERE email_hash IN (${batch.map(() => '?').join(',')}) AND (until IS NULL OR until > ?)`, ...batch, ctx.now())
+        suppressed.push(...rows.map((r) => r.email_hash))
+        spamTraps.push(...rows.filter((r) => r.reason === 'spam_trap').map((r) => r.email_hash))
       }
-      return { suppressed: [...new Set(suppressed)] }
+      return { suppressed: [...new Set(suppressed)], spamTraps }
     })
     reg.maintenance((ctx) => { ctx.db.run('DELETE FROM global_suppressions WHERE until IS NOT NULL AND until <= ?', ctx.now()) })
   },

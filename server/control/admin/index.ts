@@ -15,6 +15,7 @@ import { suppressionHash } from '../suppression/index.ts'
 
 declare module '../rpc.ts' {
   interface ControlRpc {
+    requestBlock(args: { accountId: string; evidence: { incidentId: string; reason: 'bounce_rate' | 'complaint_rate' | 'spam_trap'; at: number; total: number; bounces: number; complaints: number } }): Promise<void>
     accountExists(args: { accountId: string }): Promise<boolean>
     resolveAppHost(args: { setupOrigin?: string }): Promise<string>
   }
@@ -63,7 +64,19 @@ export const adminModule = {
       }
       return origin ? new URL(origin).host : ''
     })
-    reg.rpc('raiseAlert', (ctx, args) => raiseAlert(ctx, args))
+    reg.rpc('requestBlock', (ctx, raw) => {
+      const { accountId, evidence } = z.object({ accountId: z.string().min(1), evidence: z.object({ incidentId: z.string().min(1), reason: z.enum(['bounce_rate', 'complaint_rate', 'spam_trap']), at: z.number(), total: z.number().int().nonnegative(), bounces: z.number().int().nonnegative(), complaints: z.number().int().nonnegative() }) }).parse(raw)
+      const title = `Sending paused (${evidence.incidentId})`
+      ctx.db.tx(() => {
+        if (ctx.db.get("SELECT id FROM admin_alerts WHERE kind = 'account_protection' AND account_id = ? AND title = ?", accountId, title)) return
+        blockAccount(ctx, accountId, `Account protection: ${evidence.reason}`)
+        raiseAlert(ctx, { kind: 'account_protection', accountId, title, body: JSON.stringify(evidence) })
+      })
+    })
+    reg.rpc('raiseAlert', (ctx, args) => {
+      if (args.kind === 'account_protection' && ctx.db.get('SELECT id FROM admin_alerts WHERE kind = ? AND account_id = ? AND title = ?', args.kind, args.accountId ?? null, args.title)) return
+      raiseAlert(ctx, args)
+    })
     reg.job<Parameters<typeof raiseAlert>[1]>('alerts.raise', async (ctx, alert) => {
       raiseAlert(ctx, alert)
       return 'done'

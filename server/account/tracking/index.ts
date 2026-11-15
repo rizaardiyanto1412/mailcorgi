@@ -5,6 +5,7 @@ import { mountTrackingRoutes } from './routes.ts'
 export { signToken, verifyToken, publicUrl } from './tokens.ts'
 export type { TokenPurpose } from './tokens.ts'
 export { ingestProviderEvents, recordOpen, recordClick } from './events.ts'
+export { providerEventStats } from './events.ts'
 
 export const trackingModule = {
   name: 'tracking',

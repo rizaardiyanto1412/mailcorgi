@@ -1,5 +1,6 @@
 import type { StoreCtx } from '../../core/store.ts'
 import type { ProviderEvent } from '../../email/index.ts'
+import { checkProtection } from '../hygiene/index.ts'
 import { setContactStatus } from '../contacts/index.ts'
 import { getCampaignRow } from '../campaigns/index.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, markSentEffects, pauseCampaign, rateBreach, readStats } from '../sending/index.ts'
@@ -105,19 +106,21 @@ export function ingestProviderEvents(ctx: StoreCtx, events: ProviderEvent[]): { 
     if (!e || typeof e.id !== 'string' || !e.id || typeof e.recipient !== 'string') continue
     if (ctx.db.tx(() => applyEvent(ctx, e))) applied++
   }
+  checkProtection(ctx)
   return { applied }
 }
 
 const score = (ctx: StoreCtx, contactId: string) => ctx.db.run('UPDATE contacts SET engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3) WHERE id = ?', contactId)
 
-export function recordOpen(ctx: StoreCtx, d: DeliveryWithNewsletter, at: number) {
+export function recordOpen(ctx: StoreCtx, d: DeliveryWithNewsletter, at: number, privacyProxy = false) {
   ctx.db.tx(() => {
     const first = !d.opened_at
     ctx.db.run('UPDATE deliveries SET open_count = open_count + 1, opened_at = COALESCE(opened_at, ?) WHERE id = ?', at, d.id)
     ctx.db.run('UPDATE contacts SET open_count = open_count + 1, last_opened_at = ?, ignored_streak = 0, updated_at = ? WHERE id = ?', at, at, d.contact_id)
+    if (!privacyProxy) ctx.db.run('UPDATE contacts SET strict_ignored_streak = 0 WHERE id = ?', d.contact_id)
     score(ctx, d.contact_id)
     if (!first) return
-    ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, at) VALUES (?, ?, ?, ?, ?, ?)', 'open', d.newsletter_id, d.contact_id, d.campaign_id, d.id, at)
+    ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, data, at) VALUES (?, ?, ?, ?, ?, ?, ?)', 'open', d.newsletter_id, d.contact_id, d.campaign_id, d.id, JSON.stringify({ privacyProxy }), at)
     bumpStat(ctx, d.campaign_id, 'opens')
     daily(ctx, d.newsletter_id, 'opens', at)
   })
@@ -142,7 +145,10 @@ export function recordClick(ctx: StoreCtx, d: DeliveryWithNewsletter, link: { id
     score(ctx, d.contact_id)
     const total = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM links WHERE campaign_id = ?', d.campaign_id)!.n
     const hit = new Set([...before.map((b) => b.link), link.id])
-    if (total < 2 || hit.size < total) return
+    if (total < 2 || hit.size < total) {
+      ctx.db.run('UPDATE contacts SET strict_ignored_streak = 0 WHERE id = ?', d.contact_id)
+      return
+    }
     const burst = ctx.db.all<{ id: number; data: string; at: number }>("SELECT id, data, at FROM events WHERE delivery_id = ? AND type = 'click' AND at >= ?", d.id, at - BURST_WINDOW_MS)
     for (const b of burst) {
       const data = JSON.parse(b.data) as { link: string; first: boolean; firstOnLink: boolean }
@@ -158,4 +164,10 @@ export function recordClick(ctx: StoreCtx, d: DeliveryWithNewsletter, link: { id
     ctx.db.run('UPDATE contacts SET click_count = MAX(0, click_count - ?), last_clicked_at = (SELECT MAX(at) FROM events WHERE contact_id = contacts.id AND type = ?) WHERE id = ?', burst.length, 'click', d.contact_id)
     score(ctx, d.contact_id)
   })
+}
+
+/** How many provider webhook events this store has accepted, and when the last one arrived. */
+export function providerEventStats(ctx: StoreCtx): { count: number; lastAt: number | null } {
+  const row = ctx.db.get<{ n: number; last: number | null }>('SELECT COUNT(*) AS n, MAX(received_at) AS last FROM provider_events')!
+  return { count: row.n, lastAt: row.last }
 }

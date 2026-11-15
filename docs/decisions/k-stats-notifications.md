@@ -67,10 +67,12 @@ reach it too, and account blocking raises an admin alert. Cooldowns reduce email
 preserving every alert row.
 
 The control store forwards invite acceptance through a durable job. The account RPC remembers the
-forwarded event id, so retrying that job cannot duplicate the notification. The existing imports
-module has no completion function in this checkout. `notifications.scan` checks completed import
-rows once a minute and records each import id before notifying. A future imports implementation
-can call `notify` directly and remove this scan, or reuse the event id to keep completion idempotent.
+forwarded event id, so retrying that job cannot duplicate the notification.
+
+Imports and list hygiene arrived from `main` with their own notification writes. Both now call
+`notify`. That adds two kinds: `import_failed` (warn, emailed) and `account_protection` (danger,
+emailed). Imports pass the importer's `userId`, so a teammate's import stays in that teammate's
+bell and only emails the owner when the owner ran it.
 
 ## Shared-file edits
 
@@ -80,15 +82,19 @@ can call `notify` directly and remove this scan, or reuse the event id to keep c
 - `server/account/sending/batch.ts` fixes the completion count and queues provider-refusal alerts.
 - `server/account/domains/index.ts` calls `notify` when verification changes.
 - `server/account/usage/index.ts` calls notification helpers for policy blocks and plan limits and
-  seeds the stats and notification jobs at bootstrap.
+  seeds the stats rollup job at bootstrap.
+- `server/account/hygiene/protection.ts` calls `notify` instead of inserting a `notifications` row.
+- `server/account/notifications/index.ts` replaces the minimal `notify` that `main` added for imports.
+  The imports call sites keep their arguments; they type-check against the full signature.
 - `server/control/accounts/team.ts` queues a notification when an invite is accepted.
 - `server/control/admin/index.ts`, `alerts.ts`, and `migrations.ts` add the exported alert function,
   cooldowns, email jobs, and the durable notification-forwarding job. The existing actions remain.
 - `server/edge/email-hooks.ts` reports failed webhook verification through control RPC.
 - `web/src/features/stats/index.tsx` keeps the existing feature registration and imports the new
   overview and report pages from the directories assigned to this unit.
-- Existing migration and sending tests now include module migrations and distinguish the send job
-  and campaign emails from background jobs and system emails.
+- Existing migration, sending and hygiene tests now include module migrations and distinguish the
+  send job and campaign emails from background jobs and system emails. The hygiene spam-trap test
+  now counts only campaign emails, because the owner gets an `account_protection` alert email.
 
 All schema changes are module migrations. No dependency was added. The smoke step is
 `scripts/smoke/65-k-stats-notifications.ts`. Permission entries are in separate stats and notification

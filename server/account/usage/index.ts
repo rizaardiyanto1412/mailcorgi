@@ -1,4 +1,5 @@
 import { notify, notifyLimitNear } from '../notifications/index.ts'
+import { observeProtectionPolicy } from '../hygiene/index.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { parseJson } from '../../core/db.ts'
 import { z } from 'zod'
@@ -20,6 +21,7 @@ export function applyPolicy(ctx: StoreCtx, policy: Policy): boolean {
     if (policy.version <= getPolicy(ctx).version) return false
     if (policy.status === 'blocked' && getPolicy(ctx).status !== 'blocked') notify(ctx, { kind: 'account_blocked', title: 'Your account is blocked', body: 'Sending is paused. Contact the install administrator.', href: '/settings/account' })
     setMeta(ctx, 'policy', JSON.stringify(policy))
+    observeProtectionPolicy(ctx, policy)
     return true
   })
 }
@@ -98,7 +100,6 @@ export const usageModule = {
         applyPolicy(ctx, policy)
         ctx.jobs.enqueue('usage.push', {}, { dedupeKey: 'usage.push' })
         ctx.jobs.enqueue('stats.rollup', {}, { dedupeKey: 'stats.rollup' })
-        ctx.jobs.enqueue('notifications.scan', {}, { dedupeKey: 'notifications.scan' })
       })
     })
     reg.rpc('applyPolicy', (ctx, policy) => ({ applied: applyPolicy(ctx, policySchema.parse(policy)) }))

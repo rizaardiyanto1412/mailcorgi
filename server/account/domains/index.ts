@@ -53,6 +53,9 @@ function recordsFor(name: string, identity?: Identity): DnsRecord[] {
 }
 const normalized = (value: string) => value.trim().replace(/\.$/, '').toLowerCase()
 
+/** How many sending domains are verified right now. */
+export const countVerifiedDomains = (ctx: StoreCtx) => ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM domains WHERE status = 'verified'")!.n
+
 export async function checkDomain(ctx: StoreCtx, id: string) {
   const row = getDomain(ctx, id)
   if (row.status === 'suspended') return output(row)

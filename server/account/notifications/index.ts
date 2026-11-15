@@ -6,14 +6,14 @@ import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { migrations } from './migrations.ts'
 
-export const notificationKinds = ['import_finished', 'campaign_sent', 'campaign_paused', 'campaign_failed', 'domain_verified', 'domain_failed', 'account_blocked', 'invite_accepted', 'plan_limit_near'] as const
+export const notificationKinds = ['import_finished', 'import_failed', 'campaign_sent', 'campaign_paused', 'campaign_failed', 'domain_verified', 'domain_failed', 'account_blocked', 'account_protection', 'invite_accepted', 'plan_limit_near'] as const
 export type NotificationKind = typeof notificationKinds[number]
 export type Tone = 'info' | 'ok' | 'warn' | 'danger'
 export const notificationTones = {
-  import_finished: 'ok', campaign_sent: 'ok', campaign_paused: 'warn', campaign_failed: 'danger',
-  domain_verified: 'ok', domain_failed: 'warn', account_blocked: 'danger', invite_accepted: 'info', plan_limit_near: 'warn',
+  import_finished: 'ok', import_failed: 'warn', campaign_sent: 'ok', campaign_paused: 'warn', campaign_failed: 'danger',
+  domain_verified: 'ok', domain_failed: 'warn', account_blocked: 'danger', account_protection: 'danger', invite_accepted: 'info', plan_limit_near: 'warn',
 } satisfies Record<NotificationKind, Tone>
-const important = new Set<NotificationKind>(['campaign_paused', 'campaign_failed', 'domain_failed', 'account_blocked', 'plan_limit_near'])
+const important = new Set<NotificationKind>(['import_failed', 'campaign_paused', 'campaign_failed', 'domain_failed', 'account_blocked', 'account_protection', 'plan_limit_near'])
 export interface NotificationInput { kind: NotificationKind; tone?: Tone; title: string; body?: string; href?: string; userId?: string }
 const meta = (ctx: StoreCtx, key: string) => ctx.db.get<{ value: string }>('SELECT value FROM account_meta WHERE key = ?', key)?.value
 const safeHref = (href: string) => href.startsWith('/') && !href.startsWith('//') && !/[\\\r\n]/.test(href) ? href : '/'
@@ -49,13 +49,7 @@ export const notificationsModule = {
   name: 'notifications',
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
-    reg.maintenance((ctx) => { if (ctx.db.get("SELECT 1 FROM account_meta WHERE key = 'policy' AND json_extract(value, '$.status') != 'deleting'")) ctx.jobs.enqueue('notifications.scan', {}, { dedupeKey: 'notifications.scan' }) })
     reg.rpc('receiveNotification', (ctx, { eventId, notification }) => receive(ctx, eventId, notificationSchema.parse(notification)))
-    reg.job('notifications.scan', async (ctx) => {
-      const rows = ctx.db.all<{ id: string; newsletter_id: string; added: number }>("SELECT i.id, i.newsletter_id, i.added FROM imports i LEFT JOIN notification_events e ON e.id = 'import:' || i.id WHERE i.status IN ('done','finished','completed') AND e.id IS NULL LIMIT 50")
-      for (const row of rows) receive(ctx, `import:${row.id}`, { kind: 'import_finished', title: 'Your import is finished', body: `${row.added} contacts added.`, href: '/imports' })
-      return { again: ctx.now() + (rows.length === 50 ? 1000 : 60_000) }
-    })
     reg.rpc('notify', (ctx, input) => ({ id: notify(ctx, notificationSchema.parse(input)) }))
     reg.job<{ id: string }>('notifications.email', async (ctx, { id }, budget) => {
       if (budget.take(2) < 2) return { again: ctx.now() + 1000 }

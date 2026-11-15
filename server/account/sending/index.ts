@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { assertSendingAllowed } from '../hygiene/index.ts'
 import { defineAction } from '../../core/actions.ts'
 import { AppError } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
@@ -15,7 +16,7 @@ import { buildMessage, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBaseline } from './stats.ts'
 export { sendHooks } from './provider.ts'
-export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, AUTO_PAUSE_MIN_SENT } from './stats.ts'
+export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, resetRateBaseline, AUTO_PAUSE_MIN_SENT } from './stats.ts'
 export { markSentEffects } from './batch.ts'
 export type { CampaignStats } from './stats.ts'
 
@@ -28,6 +29,7 @@ const options = {
 
 /** Everything a send needs: review errors, a verified sender and an install that sends. Throws the first problem. */
 async function assertSendable(ctx: StoreCtx, row: CampaignRow) {
+  assertSendingAllowed(ctx)
   if (row.kind !== 'issue') throw new AppError('not_issue', 'Only issues can be sent or scheduled.', 409)
   const nl = getNewsletterRow(ctx, row.newsletter_id)
   if (!nl || nl.archived_at) throw new AppError('newsletter_archived', 'This newsletter is archived.', 409)

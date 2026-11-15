@@ -18,11 +18,16 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ControlStore", "AccountStore"] }],
-  // Images. Without this bucket, images fall back to chunked blobs inside the account store.
+  // Images. R2 must be enabled on the account once. Without R2, delete this block: images then
+  // live in chunks inside each account's Durable Object.
   "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "mailcorgi-images" }],
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "observability": { "enabled": true },
+  // Variables set in the dashboard survive later deploys from Git.
+  "keep_vars": true,
   "vars": {
-    // Optional: "APP_URL": "https://news.example.com", "CLOUD": "true", "ADMIN_EMAILS": "you@example.com"
+    // Workers Free allows 50 outbound requests per run. Remove this line on Workers Paid.
+    "WORKERS_PLAN": "free"
+    // Optional, here or in the dashboard: "APP_URL": "https://news.example.com", "ADMIN_EMAILS": "you@example.com", "CLOUD": "true"
   }
 }

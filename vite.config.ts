@@ -13,6 +13,9 @@ export default defineConfig({
     proxy: {
       '/f/': { target: apiTarget, changeOrigin: false },
       '/embed.js': { target: apiTarget, changeOrigin: false },
+      '/t/': { target: apiTarget, changeOrigin: false },
+      '/u/': { target: apiTarget, changeOrigin: false },
+      '/keep/': { target: apiTarget, changeOrigin: false },
       '/confirm/': { target: apiTarget, changeOrigin: false },
       '/api': { target: apiTarget, changeOrigin: false },
       '^/n(?:/|$)': { target: apiTarget, changeOrigin: false },

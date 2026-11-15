@@ -23,7 +23,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "ci": "sh scripts/ci.sh",
     "deploy": "npm run build:web && wrangler deploy",
-    "docs:api": "tsx scripts/docs-api.ts"
+    "docs:api": "tsx scripts/docs-api.ts",
+    "test:slow": "tsx --test server/test/*.slow.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
@@ -39,6 +40,7 @@
     "hono": "^4.13.18",
     "marked": "^18.2.0",
     "nodemailer": "^10.5.0",
+    "papaparse": "^5.7.1",
     "sanitize-html": "^2.18.1",
     "zod": "^4.6.7"
   },
@@ -48,6 +50,7 @@
     "@tanstack/react-query": "^5.107.1",
     "@types/node": "^26.6.6",
     "@types/nodemailer": "^8.0.2",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/sanitize-html": "^2.16.2",
@@ -65,5 +68,21 @@
     "typescript-eslint": "^8.72.2",
     "vite": "^8.3.7",
     "wrangler": "^4.160.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "CONTROL": {
+        "description": "Durable Object for users, sessions, accounts and install settings. Created for you."
+      },
+      "ACCOUNT": {
+        "description": "One Durable Object per account: newsletters, contacts, campaigns and stats. Created for you."
+      },
+      "IMAGES": {
+        "description": "R2 bucket for uploaded images. R2 must be enabled on your account once (**R2 \u2192 Overview** in the dashboard). Without R2, delete the `r2_buckets` block in `wrangler.jsonc`."
+      },
+      "WORKERS_PLAN": {
+        "description": "Keep `free` on Workers Free. On Workers Paid, delete the `WORKERS_PLAN` line from `wrangler.jsonc` in your repository so each send run can make up to 900 requests."
+      }
+    }
   }
 }

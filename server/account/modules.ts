@@ -15,10 +15,11 @@ import { signupModule } from './signup/index.ts'
 import { websiteModule } from './website/index.ts'
 import { domainsModule } from './domains/index.ts'
 import { statsModule } from './stats/index.ts'
-import { hygieneModule } from './hygiene/index.ts'
+import { assertSendingAllowed, hygieneModule } from './hygiene/index.ts'
 import { teamModule } from './team/index.ts'
 import { notificationsModule } from './notifications/index.ts'
 import { apikeysModule } from './apikeys/index.ts'
+import { setupModule } from './setup/index.ts'
 
 /** Jobs and RPC every account store has, whatever modules are built. */
 const kernelModule = {
@@ -55,10 +56,12 @@ const modules = {
   team: teamModule,
   notifications: notificationsModule,
   apikeys: apikeysModule,
+  setup: setupModule,
 }
 
 export const accountRegistry = buildRegistry<'account', AccountRpc>('account', Object.values(modules), (ctx, action) => {
   if (getPolicy(ctx).status === 'deleting') throw new AppError('account_deleted', 'This account is being deleted.', 410)
+  if (action.effect === 'send') assertSendingAllowed(ctx)
   if (action.effect === 'send' && getPolicy(ctx).status !== 'active') throw new AppError('account_blocked', 'This account cannot send right now.', 403)
 })
 
