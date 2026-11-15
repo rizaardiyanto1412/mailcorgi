@@ -182,7 +182,7 @@ export const sendingModule = {
           const settings = await sendSettings(ctx)
           if (settings.sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
           const used = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0
-          if (used + recipients.length > limits(ctx).maxEmailsPerMonth) throw new AppError('limit_reached', 'This account has used its emails for this month.', 403)
+          if (used + recipients.length > limits(ctx).maxEmailsPerMonth) throw new AppError('limit_reached', `This account has used its emails for this month: ${used.toLocaleString('en-US')} of ${limits(ctx).maxEmailsPerMonth.toLocaleString('en-US')} sent.`, 403, { resource: 'emails', used, limit: limits(ctx).maxEmailsPerMonth })
           const provider = await sendProvider(ctx, settings)
           const sent: string[] = []
           const failed: { to: string; error: string }[] = []

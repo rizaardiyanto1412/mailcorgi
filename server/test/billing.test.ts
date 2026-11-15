@@ -162,7 +162,7 @@ test('payment recovery cancels expiry, signed malformed input is rejected, and l
   const accountId = owner.accountId!
   await owner.action('newsletters.create', { name: 'Free newsletter' })
   const limit = await expectError(() => owner.action('newsletters.create', { name: 'Over limit' }))
-  assert.deepEqual(limit.details, { billingUrl: '/settings/billing' })
+  assert.deepEqual(limit.details, { resource: 'newsletters', used: 1, limit: 1, billingUrl: '/settings/billing' })
   for (const [id, status] of [['evt_active', 'active'], ['evt_failed', 'past_due'], ['evt_recovered', 'active']]) {
     install.clock.advance(1000)
     await install.fetch('/hooks/stripe', await signed(install, 'stripe', eventFor(install, 'stripe', accountId, id!, 'growth', status), id!))

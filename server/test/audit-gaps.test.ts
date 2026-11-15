@@ -208,3 +208,26 @@ test('gap 4: past the contact limit, the API refuses, signup says so, imports sk
   const id = await upload(owner, nl.id, [{ email: 'six@example.com', status: 'subscribed' }])
   assert.deepEqual((await finish(install, owner, nl.id, id)).skipped, { contact_limit: 1 })
 })
+
+test('gap 5: billing shows live usage right after adding contacts; the admin list labels its snapshot time', async (t) => {
+  const install = await createInstall({ cloud: true, env: { ADMIN_EMAILS: 'owner@example.com' } })
+  t.after(() => install.close())
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  await install.runJobs()
+  const nl = await owner.action('newsletters.create', { name: 'Live' })
+  const snapshotAt = install.clock.now()
+  install.clock.advance(10 * 60_000)
+  for (const email of ['a@example.com', 'b@example.com', 'c@example.com']) await owner.action('contacts.create', { newsletterId: nl.id, email })
+  const billing = await owner.action('billing.get', { accountId: owner.accountId! })
+  assert.equal(billing.usage.contacts, 3)
+  assert.equal(billing.usage.live, true)
+
+  const accounts = await owner.action('admin.accounts', {})
+  const row = accounts.find((a) => a.id === owner.accountId)!
+  assert.equal(row.contacts, 0, 'the admin list stays on the snapshot')
+  assert.ok(row.usage_updated_at !== null && row.usage_updated_at <= snapshotAt, 'and says when it was taken')
+
+  const err = await expectError(() => owner.action('newsletters.create', { name: 'Second' }))
+  assert.equal(err.code, 'limit_reached')
+  assert.match(err.message, /1 of 1 active newsletters/)
+})

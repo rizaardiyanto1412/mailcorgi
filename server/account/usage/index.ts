@@ -128,6 +128,10 @@ export const usageModule = {
       })
     })
     reg.rpc('applyPolicy', (ctx, policy) => ({ applied: applyPolicy(ctx, policySchema.parse(policy)) }))
+    reg.rpc('liveUsage', (ctx) => ({
+      contacts: activeContacts(ctx),
+      emailsSent: ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0,
+    }))
     reg.rpc('summary', (ctx) => ({
       newsletters: ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n,
       contacts: ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM contacts WHERE status = 'subscribed'")!.n,
@@ -140,6 +144,8 @@ const policySchema = z.object({ version: z.number().int().nonnegative(), status:
 declare module '../rpc.ts' {
   interface AccountRpc {
     selfWipe(args: Record<string, never>): Promise<{ done: boolean }>
+    /** Plan-slot contacts (subscribed and unconfirmed) and this month's emails, read now. */
+    liveUsage(args: Record<string, never>): Promise<{ contacts: number; emailsSent: number }>
     updateOwnerEmail(args: { email: string }): Promise<void>
     adminDeadJobs(args: { operation: 'list' | 'retry' | 'discard'; id?: string }): Promise<{ id: string; kind: string; attempts: number; last_error: string; died_at: number }[]>
   }

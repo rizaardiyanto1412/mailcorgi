@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom'
 import type { Feature } from '../../app/feature.ts'
 import { useSession } from '../../lib/session.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
+import { timeAgo } from '../../lib/time.ts'
 import { Badge, Banner, Button, Card, Meter as Bar, NoAccess, PageHeader, Select, Spinner, StatusBadge, useFeedback } from '../../ui/index.tsx'
 
 function BillingPage() {
@@ -34,7 +35,7 @@ function Billing({ accountId }: { accountId: string }) {
         {data.graceUntil && <Banner kind="warn">Free limits apply after {new Date(data.graceUntil).toLocaleDateString()} unless payment is recovered.</Banner>}
         <Meter label="Contacts" value={data.usage.contacts} max={data.limits.maxContacts} />
         <Meter label="Emails this month" value={data.usage.emailsSent} max={data.limits.maxEmailsPerMonth} />
-        <p className="text-xs text-fg-3">Usage can take up to an hour to update.</p>
+        <p className="text-xs text-fg-3">{data.usage.live ? 'Live counts. Contacts include unconfirmed ones.' : data.usage.updatedAt ? `Usage as of ${timeAgo(data.usage.updatedAt)}. Live counts are unavailable right now.` : 'Usage is not available yet.'}</p>
         {data.periodEnd && <p className="text-sm text-fg-2">Billing period ends {new Date(data.periodEnd).toLocaleDateString()}.</p>}
         <div className="flex flex-wrap gap-2">
           {data.hasCustomer && <><Button disabled={busy} onClick={() => portal.mutate({ accountId })}>Manage billing</Button><Button disabled={busy} onClick={() => portal.mutate({ accountId })}>View invoices</Button></>}
