@@ -1,0 +1,223 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { signToken } from '../account/tracking/index.ts'
+import { addContacts, createIssue, drive, LINK_A, LINK_B, issueDoc, sendableInstall, tokensIn } from './sending-setup.ts'
+
+const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1'
+const hit = (install: Awaited<ReturnType<typeof sendableInstall>>['install'], path: string, init: RequestInit = {}) => install.fetch(path, { ...init, headers: { 'user-agent': UA, ...(init.headers as Record<string, string> | undefined) } })
+
+async function sentIssue(opts: Parameters<typeof sendableInstall>[0] = {}, links = [LINK_A]) {
+  const setup = await sendableInstall(opts)
+  const { install, owner, nl, ctx, accountId } = setup
+  const ids = addContacts(ctx, nl.id, 2)
+  const issue = await createIssue(owner, nl.id, { doc: issueDoc(links) })
+  await owner.action('campaigns.send', { campaignId: issue.id })
+  assert.equal((await drive(install, owner, issue.id)).status, 'sent')
+  const outbox = install.outbox(accountId).filter((r) => r.kind === 'campaign')
+  const html = outbox.find((r) => r.to_email === 'reader0@example.com')!.html
+  const delivery = ctx.db.get<{ id: number }>('SELECT id FROM deliveries WHERE campaign_id = ? AND contact_id = ?', issue.id, ids[0])!
+  install.clock.advance(5000)
+  return { ...setup, ids, issue, html, delivery, outbox }
+}
+
+test('the open pixel counts a person once per delivery and ignores scanners, early loads and bad tokens', async (t) => {
+  const { install, ctx, issue, html, ids, delivery, nl } = await sentIssue()
+  t.after(() => install.close())
+  const [token] = tokensIn(html, '/t/o/')
+  assert.ok(token)
+  const stats = () => JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats) as { opens: number }
+  const row = () => ctx.db.get<{ open_count: number; opened_at: number | null }>('SELECT open_count, opened_at FROM deliveries WHERE id = ?', delivery.id)!
+  install.clock.set(ctx.db.get<{ sent_at: number }>('SELECT sent_at FROM deliveries WHERE id = ?', delivery.id)!.sent_at + 1000)
+  let r = await hit(install, `/t/o/${token}`)
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get('content-type'), 'image/gif')
+  assert.equal(row().open_count, 0, 'an open within two seconds of delivery is a scanner')
+  install.clock.advance(10_000)
+  r = await hit(install, `/t/o/${token}`, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; Barracuda Sentinel bot)' } })
+  assert.equal(r.status, 200)
+  assert.equal(row().open_count, 0)
+  await hit(install, `/t/o/${token}`)
+  await hit(install, `/t/o/${token}`)
+  assert.equal(row().open_count, 2)
+  assert.equal(stats().opens, 1, 'opens count unique deliveries')
+  assert.equal(ctx.db.get<{ opens: number }>('SELECT SUM(opens) AS opens FROM daily_stats WHERE newsletter_id = ?', nl.id)!.opens, 1)
+  const contact = ctx.db.get<{ open_count: number; ignored_streak: number; last_opened_at: number; engaged_score: number }>('SELECT open_count, ignored_streak, last_opened_at, engaged_score FROM contacts WHERE id = ?', ids[0])!
+  assert.equal(contact.open_count, 2)
+  assert.equal(contact.ignored_streak, 0)
+  assert.equal(contact.last_opened_at, install.clock.now())
+  assert.ok(contact.engaged_score > 0)
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'open' AND delivery_id = ?", delivery.id)!.n, 1)
+  const tampered = token.slice(0, -2) + (token.endsWith('aa') ? 'bb' : 'aa')
+  r = await hit(install, `/t/o/${tampered}`)
+  assert.equal(r.status, 200, 'a tampered pixel still renders')
+  assert.equal(row().open_count, 2)
+  assert.equal((await hit(install, '/t/o/nonsense')).status, 404, 'the edge drops a token without an account id')
+})
+
+test('click redirects go only to the links recorded for that campaign', async (t) => {
+  const { install, ctx, owner, nl, issue, html, delivery, ids } = await sentIssue({}, [LINK_A, LINK_B])
+  t.after(() => install.close())
+  const tokens = tokensIn(html, '/t/c/')
+  assert.equal(tokens.length, 2)
+  install.clock.advance(60_000)
+  const r = await hit(install, `/t/c/${tokens[0]}`)
+  assert.equal(r.status, 302)
+  assert.equal(r.headers.get('location'), LINK_A)
+  const link = ctx.db.get<{ clicks: number; unique_clicks: number; url: string }>('SELECT clicks, unique_clicks, url FROM links WHERE campaign_id = ? AND url = ?', issue.id, LINK_A)!
+  assert.deepEqual([link.clicks, link.unique_clicks], [1, 1])
+  await hit(install, `/t/c/${tokens[0]}`)
+  const again = ctx.db.get<{ clicks: number; unique_clicks: number }>('SELECT clicks, unique_clicks FROM links WHERE campaign_id = ? AND url = ?', issue.id, LINK_A)!
+  assert.deepEqual([again.clicks, again.unique_clicks], [2, 1])
+  assert.equal(ctx.db.get<{ click_count: number }>('SELECT click_count FROM contacts WHERE id = ?', ids[0])!.click_count, 2)
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats).clicks, 1)
+  const tampered = tokens[1].slice(0, -2) + (tokens[1].endsWith('aa') ? 'bb' : 'aa')
+  assert.equal((await hit(install, `/t/c/${tampered}`)).status, 404)
+  const other = await createIssue(owner, nl.id, { doc: issueDoc(['https://example.com/other']) })
+  await owner.action('campaigns.send', { campaignId: other.id })
+  await drive(install, owner, other.id)
+  const foreign = ctx.db.get<{ id: string }>('SELECT id FROM links WHERE campaign_id = ?', other.id)!
+  const crossed = await signToken(ctx, 'c', [delivery.id, foreign.id])
+  assert.equal((await hit(install, `/t/c/${crossed}`)).status, 404, 'a link from another campaign is never a redirect target')
+  const open = await signToken(ctx, 'o', [delivery.id])
+  assert.equal((await hit(install, `/t/c/${open}`)).status, 404, 'an open token does not pass as a click token')
+  assert.equal((await hit(install, `/t/c/${tokens[1]}`, { headers: { 'user-agent': 'python-requests/2.31' } })).status, 302, 'scanners are redirected without counting')
+  assert.equal(ctx.db.get<{ clicks: number }>('SELECT clicks FROM links WHERE campaign_id = ? AND url = ?', issue.id, LINK_B)!.clicks, 0)
+})
+
+test('a burst that hits every link within seconds is undone as a scanner', async (t) => {
+  const { install, ctx, issue, outbox, ids } = await sentIssue({}, [LINK_A, LINK_B])
+  t.after(() => install.close())
+  install.clock.advance(60_000)
+  const second = outbox.find((r) => r.to_email === 'reader1@example.com')!.html
+  const tokens = tokensIn(second, '/t/c/')
+  await hit(install, `/t/c/${tokens[0]}`)
+  install.clock.advance(2000)
+  await hit(install, `/t/c/${tokens[1]}`)
+  const links = () => ctx.db.all<{ clicks: number }>('SELECT clicks FROM links WHERE campaign_id = ? ORDER BY position', issue.id).map((l) => l.clicks)
+  assert.deepEqual(links(), [0, 0])
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats).clicks, 0)
+  assert.equal(ctx.db.get<{ click_count: number; clicked_at: number | null }>('SELECT click_count, clicked_at FROM deliveries WHERE contact_id = ?', ids[1])!.clicked_at, null)
+  assert.equal(ctx.db.get<{ click_count: number }>('SELECT click_count FROM contacts WHERE id = ?', ids[1])!.click_count, 0)
+  install.clock.advance(60_000)
+  await hit(install, `/t/c/${tokens[0]}`)
+  install.clock.advance(60_000)
+  await hit(install, `/t/c/${tokens[1]}`)
+  assert.deepEqual(links(), [1, 1], 'clicks a minute apart are a person')
+})
+
+test('one-click unsubscribe works without a session and suppresses only that newsletter', async (t) => {
+  const { install, ctx, owner, issue, html, delivery, ids, nl } = await sentIssue()
+  t.after(() => install.close())
+  const [token] = tokensIn(html, '/u/')
+  const other = await owner.action('newsletters.create', { name: 'Other' })
+  addContacts(ctx, other.id, 1)
+  const page = await hit(install, `/u/${token}`)
+  assert.equal(page.status, 200)
+  const body = await page.text()
+  assert.match(body, /Unsubscribe\?/)
+  assert.match(body, /<form method="post" action="\/u\//)
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[0])!.status, 'subscribed', 'a GET never unsubscribes')
+  const r = await install.fetch(`/u/${token}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' })
+  assert.equal(r.status, 200)
+  assert.equal(await r.text(), 'Unsubscribed.')
+  const contact = ctx.db.get<{ status: string; unsubscribe_reason: string }>('SELECT status, unsubscribe_reason FROM contacts WHERE id = ?', ids[0])!
+  assert.equal(contact.status, 'unsubscribed')
+  assert.equal(contact.unsubscribe_reason, 'link')
+  assert.deepEqual(ctx.db.all<{ newsletter_id: string | null }>('SELECT newsletter_id FROM suppressions WHERE email = ?', 'reader0@example.com').map((r) => r.newsletter_id), [nl.id])
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE newsletter_id = ?', other.id)!.status, 'subscribed')
+  assert.ok(ctx.db.get<{ unsubscribed_at: number | null }>('SELECT unsubscribed_at FROM deliveries WHERE id = ?', delivery.id)!.unsubscribed_at)
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats).unsubscribes, 1)
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'unsubscribe' AND campaign_id = ?", issue.id)!.n, 1)
+  const again = await install.fetch(`/u/${token}`, { method: 'POST', body: 'confirm=1', headers: { 'content-type': 'application/x-www-form-urlencoded' } })
+  assert.equal(again.status, 200)
+  assert.match(await again.text(), /You are unsubscribed/)
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats).unsubscribes, 1, 'a second click counts once')
+  const tampered = token.slice(0, -2) + (token.endsWith('aa') ? 'bb' : 'aa')
+  assert.equal((await install.fetch(`/u/${tampered}`, { method: 'POST' })).status, 404)
+  const preferences = tokensIn(html, '/u/').find((x) => x.split('.')[1] === 'p')!
+  const prefs = await hit(install, `/u/${preferences}`)
+  assert.equal(prefs.status, 200)
+  assert.match(await prefs.text(), /Your preferences/)
+  const click = await signToken(ctx, 'u', [ids[1], issue.id])
+  assert.equal((await install.fetch(`/u/${(await signToken(ctx, 'o', [delivery.id]))}`, { method: 'POST' })).status, 404, 'an open token is not an unsubscribe token')
+  assert.equal((await install.fetch(`/u/${click}`, { method: 'POST', body: 'confirm=1', headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status, 200)
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[1])!.status, 'unsubscribed')
+})
+
+test('provider events are applied once, in any order, and before the send result is stored', async (t) => {
+  const { install, ctx, issue, delivery, ids, accountId, nl } = await sentIssue()
+  t.after(() => install.close())
+  const stores = install.app.stores.account(accountId)
+  const now = install.clock.now()
+  const delivered = { id: 'ev-delivered', type: 'delivered' as const, accountId, deliveryId: String(delivery.id), messageId: 'msg-1', recipient: 'reader0@example.com', occurredAt: now }
+  for (let i = 0; i < 3; i++) await stores.ingestProviderEvents({ events: [delivered] })
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', delivery.id)!.status, 'delivered')
+  const stats = () => JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats)
+  assert.equal(stats().delivered, 1)
+  assert.equal(ctx.db.get<{ n: number }>('SELECT SUM(delivered) AS n FROM daily_stats WHERE newsletter_id = ?', nl.id)!.n, 1)
+  const bounce = { id: 'ev-bounce', type: 'bounce' as const, bounce: { permanent: true, nonexistent: true, reason: 'No such user' }, accountId, deliveryId: null, messageId: ctx.db.get<{ provider_message_id: string }>('SELECT provider_message_id FROM deliveries WHERE id = ?', delivery.id)!.provider_message_id, recipient: 'reader0@example.com', occurredAt: now + 1 }
+  assert.equal((await stores.ingestProviderEvents({ events: [bounce, bounce] })).applied, 1, 'found by message id, applied once')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', delivery.id)!.status, 'bounced')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[0])!.status, 'bounced')
+  assert.deepEqual([stats().delivered, stats().bounced], [0, 1])
+  assert.equal((await stores.ingestProviderEvents({ events: [{ ...delivered, id: 'ev-late' }] })).applied, 0, 'a delivered event after the bounce changes nothing')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', delivery.id)!.status, 'bounced')
+  await install.runJobs()
+  assert.equal(install.app.control.ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM global_suppressions WHERE reason = 'hard_bounce'")!.n, 1, 'a nonexistent mailbox reaches the global list')
+  const second = ctx.db.get<{ id: number; email: string }>('SELECT id, email FROM deliveries WHERE contact_id = ?', ids[1])!
+  ctx.db.run("UPDATE deliveries SET status = 'sending', sent_at = NULL, provider_message_id = NULL WHERE id = ?", second.id)
+  ctx.db.run('UPDATE contacts SET sent_count = 0 WHERE id = ?', ids[1])
+  ctx.db.run("UPDATE campaigns SET stats = json_set(stats, '$.sent', 0) WHERE id = ?", issue.id)
+  const early = { id: 'ev-early', type: 'delivered' as const, accountId, deliveryId: String(second.id), messageId: 'msg-2', recipient: second.email, occurredAt: now }
+  assert.equal((await stores.ingestProviderEvents({ events: [early, early] })).applied, 1)
+  const row = ctx.db.get<{ status: string; provider_message_id: string; sent_at: number | null }>('SELECT status, provider_message_id, sent_at FROM deliveries WHERE id = ?', second.id)!
+  assert.deepEqual([row.status, row.provider_message_id], ['delivered', 'msg-2'])
+  assert.ok(row.sent_at)
+  assert.equal(stats().sent, 1, 'the early event marks it sent once')
+  assert.equal(ctx.db.get<{ sent_count: number }>('SELECT sent_count FROM contacts WHERE id = ?', ids[1])!.sent_count, 1)
+  assert.equal((await stores.ingestProviderEvents({ events: [{ id: 'ev-wrong', type: 'delivered', accountId, deliveryId: String(second.id), messageId: 'x', recipient: 'someone-else@example.com', occurredAt: now }] })).applied, 0, 'a recipient mismatch is ignored')
+})
+
+test('three soft bounces across campaigns become a hard bounce; complaints suppress the contact', async (t) => {
+  const { install, ctx, owner, nl, issue, delivery, ids, accountId } = await sentIssue()
+  t.after(() => install.close())
+  const stores = install.app.stores.account(accountId)
+  const soft = (id: string, deliveryId: number, email: string) => ({ id, type: 'bounce' as const, bounce: { permanent: false, nonexistent: false, reason: 'Mailbox full' }, accountId, deliveryId: String(deliveryId), messageId: 'm', recipient: email, occurredAt: install.clock.now() })
+  await stores.ingestProviderEvents({ events: [soft('s1', delivery.id, 'reader0@example.com'), soft('s1', delivery.id, 'reader0@example.com')] })
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', delivery.id)!.status, 'sent')
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', issue.id)!.stats).softBounces, 1)
+  const second = await createIssue(owner, nl.id)
+  await owner.action('campaigns.send', { campaignId: second.id })
+  await drive(install, owner, second.id)
+  const d2 = ctx.db.get<{ id: number }>('SELECT id FROM deliveries WHERE campaign_id = ? AND contact_id = ?', second.id, ids[0])!
+  await stores.ingestProviderEvents({ events: [soft('s2', d2.id, 'reader0@example.com')] })
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[0])!.status, 'subscribed')
+  await stores.ingestProviderEvents({ events: [soft('s3', d2.id, 'reader0@example.com')] })
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[0])!.status, 'bounced')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', d2.id)!.status, 'bounced')
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM suppressions WHERE email = 'reader0@example.com' AND newsletter_id IS NULL")!.n, 1)
+  const d3 = ctx.db.get<{ id: number }>('SELECT id FROM deliveries WHERE campaign_id = ? AND contact_id = ?', second.id, ids[1])!
+  await stores.ingestProviderEvents({ events: [{ id: 'c1', type: 'complaint', accountId, deliveryId: String(d3.id), messageId: 'm', recipient: 'reader1@example.com', occurredAt: install.clock.now() }] })
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', ids[1])!.status, 'complained')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM deliveries WHERE id = ?', d3.id)!.status, 'complained')
+  assert.equal(JSON.parse(ctx.db.get<{ stats: string }>('SELECT stats FROM campaigns WHERE id = ?', second.id)!.stats).complained, 1)
+})
+
+test('the keep page confirms with a POST, resets the ignored streak and expires after 30 days', async (t) => {
+  const { install, ctx, ids } = await sentIssue()
+  t.after(() => install.close())
+  ctx.db.run('UPDATE contacts SET ignored_streak = 8, keep_asked_at = ? WHERE id = ?', install.clock.now(), ids[0])
+  const token = await signToken(ctx, 'k', [ids[0], install.clock.now()])
+  const page = await hit(install, `/keep/${token}`)
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /Keep me subscribed/)
+  assert.equal(ctx.db.get<{ ignored_streak: number }>('SELECT ignored_streak FROM contacts WHERE id = ?', ids[0])!.ignored_streak, 8, 'a GET changes nothing')
+  const r = await install.fetch(`/keep/${token}`, { method: 'POST', body: 'confirm=1', headers: { 'content-type': 'application/x-www-form-urlencoded' } })
+  assert.equal(r.status, 200)
+  const c = ctx.db.get<{ ignored_streak: number; keep_asked_at: number | null }>('SELECT ignored_streak, keep_asked_at FROM contacts WHERE id = ?', ids[0])!
+  assert.deepEqual([c.ignored_streak, c.keep_asked_at], [0, null])
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'keep' AND contact_id = ?", ids[0])!.n, 1)
+  const old = await signToken(ctx, 'k', [ids[0], install.clock.now() - 31 * 86_400_000])
+  assert.equal((await hit(install, `/keep/${old}`)).status, 404)
+  assert.equal((await install.fetch(`/keep/${await signToken(ctx, 'u', [ids[0], 0])}`, { method: 'POST' })).status, 404)
+})
