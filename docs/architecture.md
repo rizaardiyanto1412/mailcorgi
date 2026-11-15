@@ -96,8 +96,18 @@ interface Db {
 ```
 
 No global database. Every function that touches data takes a `StoreCtx` (or a `Db`). Migrations are
-ordered string arrays per store (`server/control/schema.ts`, `server/account/schema.ts`), tracked in a
-`_migrations` table, append-only once merged to `main`. At most 100 bound parameters per statement and
+`{ id: string, sql: string }` records tracked by id in `_migrations`. Each store's `schema.ts` retains
+the fixed base ids (`0001-base`, `0002-base`, …) in their original order. Legacy integer history is
+converted transactionally to those ids on first startup, without replaying applied SQL.
+Modules export lists from `server/<store>/<module>/migrations.ts` and contribute them through
+`reg.migrations(list)` in `register(reg)`. Base migrations run first; pending module migrations run
+in lexical id order, each SQL change and history entry in one transaction. Module ids use a real
+date, module name and description (`2026-11-16-imports-add-foo`). Duplicate ids within a store,
+malformed ids and wrong module names are rejected. Shipped ids and SQL are immutable.
+A migration may touch only its module's tables or add columns/indexes it owns, and must be safe
+after any other module's migrations. Feature units add their own migration and smoke step files;
+see `docs/development.md`. Contract deviations go in `docs/decisions/<unit>.md` instead of edits
+here. At most 100 bound parameters per statement and
 100 columns per table (Durable Object limits): batch inserts in chunks.
 
 ### 3.2 StoreCtx and Platform
