@@ -6,7 +6,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
-import os from 'node:os'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '..')
@@ -70,6 +69,33 @@ async function scenario(base: string) {
   expect(read.name === 'Smoke Weekly', 'the newsletter reads back')
   const list = await json('POST', '/api/actions/newsletters.list', {})
   expect(list.newsletters.length === 1, 'the list has one newsletter')
+  const key = await json('POST', '/api/actions/apikeys.create', { name: 'Smoke API', access: 'full' })
+  const apiHeaders = { authorization: `Bearer ${key.secret}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+  const api = await fetch(`${base}/api/v1/newsletters`, { headers: apiHeaders })
+  expect(api.ok && (await api.json()).newsletters[0].id === created.id, 'API key reads newsletters')
+  const mcp = async (id: number, method: string, params: unknown = {}) => {
+    const response = await fetch(`${base}/mcp`, { method: 'POST', headers: apiHeaders, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) })
+    expect(response.ok, `MCP ${method} answered ${response.status}`)
+    return response.json()
+  }
+  const initialized = await mcp(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'MailCorgi smoke', version: '1' } })
+  expect(initialized.result?.protocolVersion === '2025-06-18', 'MCP initializes')
+  const tools = await mcp(2, 'tools/list')
+  expect(tools.result?.tools.some((tool: { name: string }) => tool.name === 'newsletters_list'), 'MCP lists registry tools')
+  const tool = await mcp(3, 'tools/call', { name: 'newsletters_list', arguments: {} })
+  expect(tool.result?.isError === false && tool.result.structuredContent.newsletters[0].id === created.id, 'MCP calls a tool')
+  const docs = await json('POST', '/api/actions/api.reference', {})
+  expect(docs.endpoints.some((endpoint: { name: string }) => endpoint.name === 'newsletters.list'), 'API reference reads the registry')
+  const keys = await json('POST', '/api/actions/apikeys.list', {})
+  expect(keys.keys.some((item: { id: string }) => item.id === key.id), 'API settings lists the created key')
+  for (const page of ['/settings/api', '/docs/api']) {
+    const response = await call(base, jar, 'GET', page)
+    expect(response.ok && (await response.text()).includes('id="root"'), `${page} serves the SPA`)
+  }
+  const llms = await fetch(`${base}/llms.txt`)
+  expect(llms.ok && (await llms.text()).includes('newsletters_list'), 'llms.txt serves the generated reference')
+  await json('POST', '/api/actions/apikeys.revoke', { keyId: key.id })
+  expect((await fetch(`${base}/api/v1/newsletters`, { headers: apiHeaders })).status === 401, 'revoked API keys are refused')
   const deepLink = await call(base, jar, 'GET', '/campaigns')
   expect(deepLink.status === 200, 'client-side routes fall back to the SPA')
   await json('POST', '/api/auth/signout', {})
@@ -131,7 +157,7 @@ function stop(child: ChildProcess) {
 async function runNode() {
   if (!fs.existsSync(path.join(root, 'dist/index.js')) || !fs.existsSync(path.join(root, 'web/dist/index.html'))) throw new Error('smoke: run "npm run build" first')
   const port = await freePort()
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailcorgi-smoke-node-'))
+  const dataDir = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-node-'))
   const base = `http://127.0.0.1:${port}`
   const child = start('node', ['--disable-warning=ExperimentalWarning', 'dist/index.js'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base }, 'node')
   try {
@@ -144,10 +170,28 @@ async function runNode() {
   }
 }
 
+async function runDev() {
+  const port = await freePort()
+  const webPort = await freePort()
+  const dataDir = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-dev-'))
+  const base = `http://127.0.0.1:${webPort}`
+  const api = start('npx', ['tsx', 'server/index.ts'], { PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base }, 'dev-api')
+  const web = start('npx', ['vite', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], { PORT: String(port), WEB_PORT: String(webPort) }, 'dev-web')
+  try {
+    await waitFor(`${base}/healthz`, web, 20_000)
+    await scenario(base)
+    console.log(`smoke: Vite dev pages and actions ok (${base})`)
+  } finally {
+    stop(web)
+    stop(api)
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  }
+}
+
 async function runWrangler() {
   const port = await freePort()
   const inspector = await freePort()
-  const persist = fs.mkdtempSync(path.join(os.tmpdir(), 'mailcorgi-smoke-cf-'))
+  const persist = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-smoke-cf-'))
   const base = `http://127.0.0.1:${port}`
   const child = start(
     'npx',
@@ -165,10 +209,14 @@ async function runWrangler() {
   }
 }
 
+fs.mkdirSync(path.join(root, '.audit'), { recursive: true })
+
 try {
   if (argUrl) {
     await scenario(argUrl)
     console.log(`smoke: ok (${argUrl})`)
+  } else if (process.argv.includes('--dev')) {
+    await runDev()
   } else {
     await runNode()
     await runWrangler()
