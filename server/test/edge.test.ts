@@ -64,8 +64,8 @@ test('public tokens route by their account prefix', async () => {
   assert.equal(bad.status, 404)
   const key = (await owner.action('newsletters.create', { name: 'Routed' })).key
   const form = await install.fetch(`/f/${key}`)
-  assert.equal(form.status, 404)
-  assert.equal((await form.json()).code, 'not_found')
+  assert.equal(form.status, 200)
+  assert.match(await form.text(), /name="email"/)
   assert.equal((await install.fetch('/f/nl_bad')).status, 404)
 })
 
