@@ -24,8 +24,8 @@ export interface EnvVar {
 export const ENV_VARS: EnvVar[] = [
   { name: 'APP_URL', group: 'Core', platform: 'both', default: 'learned from the first sign-in', description: 'Public address of the install, for example `https://news.example.com`. Links in emails and secure cookies use it.' },
   { name: 'CLOUD', group: 'Core', platform: 'both', default: 'off', description: '`true` turns on cloud mode: open sign-up with emailed codes, plans, limits and billing.' },
-  { name: 'ADMIN_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email.' },
-  { name: 'ALLOWED_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated addresses that may sign up on a self-hosted install. Adds to the list in **Admin → Settings**.' },
+  { name: 'ADMIN_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. Admin rights start only after the address is confirmed with an emailed code or an invite link.' },
+  { name: 'ALLOWED_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated addresses that may sign up on a self-hosted install with an emailed code. Adds to the list in **Admin → Settings**.' },
   { name: 'SIGNUP_MODE', group: 'Core', platform: 'both', default: 'open in cloud mode, allowlist otherwise', description: '`closed`, `allowlist` or `open`. Overrides the setting in **Admin → Settings**.' },
   { name: 'APP_SECRET', group: 'Core', platform: 'both', secret: true, default: 'generated on first boot', description: 'Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable.' },
   { name: 'IMAGES_PUBLIC_URL', group: 'Core', platform: 'both', default: '`APP_URL/img`', description: 'Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them.' },

@@ -69,16 +69,21 @@ test('a resolver outage during a sending domain check or the daily recheck leave
   assert.equal((await owner.action('domains.list', {}))[0].status, 'failed')
 })
 
-test('a resolver outage during an import skips nobody for missing MX and caches nothing', async (t) => {
+test('a resolver outage during an import marks nobody as missing MX and caches nothing; the import finishes once DNS is back', async (t) => {
   const install = await createInstall()
   t.after(() => install.close())
   const owner = await install.signUp({ email: 'owner@example.com' })
   const nl = await owner.action('newsletters.create', { name: 'Imports' })
+  install.dns.set('example.com', 'MX', ['mx.example.com'])
+  install.dns.set('example.net', 'MX', ['mx.example.net'])
   install.dns.fail(true)
   const id = await upload(owner, nl.id, [{ email: 'a@example.com', status: 'subscribed' }, { email: 'b@example.net', status: 'subscribed' }])
+  await install.runJobs()
+  const ctx = install.app.account(owner.accountId!).ctx
+  assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM import_dns')!.n, 0)
+  assert.equal((await owner.action('imports.get', { newsletterId: nl.id, importId: id })).processedRows, 0)
+  install.dns.fail(false)
   const report = await finish(install, owner, nl.id, id)
   assert.equal(report.added, 2)
   assert.deepEqual(report.skipped, {})
-  const ctx = install.app.account(owner.accountId!).ctx
-  assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM import_dns')!.n, 0)
 })

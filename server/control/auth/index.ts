@@ -139,7 +139,7 @@ function createUser(ctx: StoreCtx, input: { email: string; name: string; passwor
     input.name,
     input.passwordHash,
     input.verified ? now : null,
-    input.installAdmin || ctx.config.adminEmails.includes(input.email) ? 1 : 0,
+    input.installAdmin ? 1 : 0,
     now,
   )
   return userByEmail(ctx, input.email)!
@@ -188,16 +188,19 @@ export const authModule = {
         if (input.inviteToken) await validateInviteSignup(ctx, input.inviteToken, input.email)
         if (!input.inviteToken && !mayJoin(ctx, input.email)) throw new AppError('signup_closed', 'Sign-up is by invitation. Ask the person who runs this install.', 403)
         const passwordHash = await hashPassword(input.password)
+        // Outside first-run setup an address must be proved: an emailed code, or (self-hosted) the
+        // emailed invite link. Otherwise anyone could claim an allowlisted or ADMIN_EMAILS address.
+        const needsCode = ctx.config.cloud || !input.inviteToken
         const save = (codeHash?: string) => {
           const existing = userByEmail(ctx, input.email)
           if (existing?.email_verified_at != null) throw new AppError('email_taken', 'An account with that email already exists. Sign in instead.', 409)
           // Pending credentials carry the code digest, so a different submission cannot activate them.
           const stored = codeHash ? `pending:${codeHash}:${passwordHash}` : passwordHash
-          if (!existing) return createUser(ctx, { ...input, passwordHash: stored, verified: !ctx.config.cloud })
-          ctx.db.run('UPDATE users SET name = ?, password_hash = ?, email_verified_at = ? WHERE id = ?', input.name, stored, ctx.config.cloud ? null : ctx.now(), existing.id)
+          if (!existing) return createUser(ctx, { ...input, passwordHash: stored, verified: !needsCode })
+          ctx.db.run('UPDATE users SET name = ?, password_hash = ?, email_verified_at = ? WHERE id = ?', input.name, stored, needsCode ? null : ctx.now(), existing.id)
           return userByEmail(ctx, input.email)!
         }
-        if (!ctx.config.cloud) {
+        if (!needsCode) {
           const user = ctx.db.tx(() => save())
           await createAccountForUser(ctx, user)
           learnAppUrl(ctx, requestOrigin(c))

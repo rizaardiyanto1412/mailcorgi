@@ -78,6 +78,6 @@ test('SES domains need DNS records and provider verification; DMARC is suggested
   assert.equal(checked.status, 'verified')
   assert.equal(checked.records.find((r) => r.purpose === 'DMARC')?.found, false)
   install.app.control.ctx.platform.resolveDns = async () => { throw new Error('DNS service outage') }
-  assert.equal((await expectError(() => owner.action('domains.check', { domainId: domain.id }))).status, 502)
+  assert.equal((await expectError(() => owner.action('domains.check', { domainId: domain.id }))).status, 503)
   assert.equal((await owner.action('domains.list', {}))[0].status, 'verified')
 })

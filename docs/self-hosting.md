@@ -165,7 +165,10 @@ Put a reverse proxy with HTTPS in front of port 3000. The included `Caddyfile` w
    - **Sending domain verified**: at least one domain passed its DNS check.
 
 To let other people sign up, add their addresses to `ALLOWED_EMAILS` or to **Admin → Settings**, or
-invite them to a newsletter from **Settings → Team**. Each person gets their own account.
+invite them to a newsletter from **Settings → Team**. Each person gets their own account. Outside
+first-run setup, a new user proves their address: with the 6-digit code MailCorgi emails them, or with
+the invite link. So configure an email provider before you let other people sign up. The same goes for
+`ADMIN_EMAILS`: an address there gets admin rights only after it is confirmed this way.
 
 Until you configure a provider, MailCorgi uses the `test` provider. It stores emails in the database
 and sends nothing.
@@ -384,8 +387,8 @@ a variable that is missing here.
 |---|---|---|---|
 | `APP_URL` | Both | learned from the first sign-in | Public address of the install, for example `https://news.example.com`. Links in emails and secure cookies use it. |
 | `CLOUD` | Both | off | `true` turns on cloud mode: open sign-up with emailed codes, plans, limits and billing. |
-| `ADMIN_EMAILS` | Both |  | Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. |
-| `ALLOWED_EMAILS` | Both |  | Comma-separated addresses that may sign up on a self-hosted install. Adds to the list in **Admin → Settings**. |
+| `ADMIN_EMAILS` | Both |  | Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. Admin rights start only after the address is confirmed with an emailed code or an invite link. |
+| `ALLOWED_EMAILS` | Both |  | Comma-separated addresses that may sign up on a self-hosted install with an emailed code. Adds to the list in **Admin → Settings**. |
 | `SIGNUP_MODE` | Both | open in cloud mode, allowlist otherwise | `closed`, `allowlist` or `open`. Overrides the setting in **Admin → Settings**. |
 | `APP_SECRET` (secret) | Both | generated on first boot | Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable. |
 | `IMAGES_PUBLIC_URL` | Both | `APP_URL/img` | Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them. |
