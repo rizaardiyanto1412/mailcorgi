@@ -77,7 +77,8 @@ test('a request on an unknown host is a 404, a known slug reaches the account', 
   const site = await install.app.stores.control.lookupSite({ slug: 'sited' })
   assert.equal(site?.newsletter_id, nl.id)
   const page = await install.fetch('/n/sited')
-  assert.equal(page.status, 404, 'the website module is not built yet')
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /<h1>Sited<\/h1>/)
   assert.equal((await install.fetch('/n/unknown-slug')).status, 404)
 })
 
