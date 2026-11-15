@@ -81,6 +81,8 @@ interface Part {
 interface RenderContext {
   theme: Theme
   tracking: boolean
+  /** Text for a card excerpt: images contribute only their caption, never `[alt]`. */
+  excerpt?: boolean
   merge(value: string): string
   href(value: string): string
   footnote(url: string): string
@@ -189,9 +191,9 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
       const src = safeUrl(merge(attr('src')), true)
       const alt = merge(attr('alt'))
       const caption = merge(attr('caption'))
-      if (!src) return { html: '', text: alt ? `[${alt}]\n\n` : '' }
+      if (!src) return { html: '', text: alt && !ctx.excerpt ? `[${alt}]\n\n` : '' }
       const image = `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" width="${size(attrs.width, 600, 1200)}"${attrs.height ? ` height="${size(attrs.height, 400, 4000)}"` : ''} style="display:block;max-width:100%;height:auto;border:0" loading="lazy">`
-      return { html: `<figure style="margin:18px 0">${attr('href') ? link(image, attr('href')) : image}${caption ? `<figcaption style="font-size:13px;color:${t.muted};padding-top:8px">${escapeHtml(caption)}</figcaption>` : ''}</figure>`, text: `[${alt || 'Image'}]${attr('href') ? ctx.footnote(attr('href')) : ctx.footnote(attr('src'))}${caption ? ` ${caption}` : ''}\n\n` }
+      return { html: `<figure style="margin:18px 0">${attr('href') ? link(image, attr('href')) : image}${caption ? `<figcaption style="font-size:13px;color:${t.muted};padding-top:8px">${escapeHtml(caption)}</figcaption>` : ''}</figure>`, text: ctx.excerpt ? (caption ? `${caption}\n\n` : '') : `[${alt || 'Image'}]${attr('href') ? ctx.footnote(attr('href')) : ctx.footnote(attr('src'))}${caption ? ` ${caption}` : ''}\n\n` }
     }
     case 'button': {
       const label = merge(attr('label') || 'Read more')
@@ -276,10 +278,11 @@ export function renderWeb(input: RenderWebInput): {
   const theme = parseTheme(input.theme)
   const { ctx } = makeContext(theme, {}, { unsubscribe: '', preferences: '', web: '' })
   const part = body(input.campaign, ctx, true)
+  const excerptText = body(input.campaign, { ...ctx, excerpt: true }, true).text
   const title = `<h1 style="font-size:${theme.headingSizes[0]}px">${escapeHtml(ctx.merge(string(input.campaign.subject)))}</h1>`
   const author = input.author ? `<p>${escapeHtml(string(input.author.name))}</p>` : ''
   const findImage = (node: DocNode): string | undefined => node.type === 'image' ? safeUrl(string(node.attrs?.src), true) || undefined : node.content?.map(findImage).find(Boolean)
-  return { html: page(header(theme, input.newsletter) + title + author + part.html, theme), excerpt: excerptOf(part.text), image: findImage(campaignDoc(input.campaign)) }
+  return { html: page(header(theme, input.newsletter) + title + author + part.html, theme), excerpt: excerptOf(excerptText), image: findImage(campaignDoc(input.campaign)) }
 }
 export function renderDocPreview(doc: unknown, theme: Record<string, unknown>): string {
   const parsed = parseTheme(theme)

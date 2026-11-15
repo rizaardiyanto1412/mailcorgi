@@ -143,7 +143,7 @@ function Draft({ initial, reload }: {
     </> : <>
       {serialized !== saved && <Banner kind="warn">Save your changes before reviewing or sending.</Banner>}
       {preview.error && <Banner kind="danger">{preview.error.message}</Banner>}
-      {preview.data && <><section className="space-y-3 rounded-xl border border-line bg-surface p-4"><h2 className="font-semibold">Review your issue</h2>{preview.data.checks.length ? preview.data.checks.map((check) => <Banner key={check.id} kind={check.level === 'error' ? 'danger' : 'warn'}>{check.message}</Banner>) : <Banner kind="ok">Your issue is ready for the send step.</Banner>}
+      {preview.data && (step === 'review' || editable) && <><section className="space-y-3 rounded-xl border border-line bg-surface p-4"><h2 className="font-semibold">Review your issue</h2>{preview.data.checks.length ? preview.data.checks.map((check) => <Banner key={check.id} kind={check.level === 'error' ? 'danger' : 'warn'}>{check.message}</Banner>) : <Banner kind="ok">{editable ? 'Your issue is ready for the send step.' : 'No problems found.'}</Banner>}
         <p className="text-sm text-fg-3">Subject: {preview.data.email.subject || 'No subject'} · {Math.ceil(new TextEncoder().encode(preview.data.email.html).length / 1024)} KB</p>
         <TestSend campaignId={initial.id} />
       </section><Preview email={preview.data.email.html} web={preview.data.web.html} /></>}

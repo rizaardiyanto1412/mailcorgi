@@ -101,3 +101,13 @@ Fix: the stats migration `2026-11-16-stats-live-sources` adds a trigger on `even
 event's own day in `stats_sources` with exactly the rule the rollup uses, and recounts the table once.
 The rollup stays as the repair for recent days. The trigger is on the shared `events` table because
 every status change already writes an event there; no other module's code changes.
+
+## UI follow-ups
+
+- The Send tab of a campaign that is no longer a draft shows only its progress, not the review box.
+- Website excerpts come from a text pass where images add only their caption, so a card never shows
+  `[alt text]`. The text email keeps `[alt]` for its readers.
+- Settings tabs on a phone scroll the open tab into view; domain and record names wrap after dots;
+  the Found and Missing badges keep their own width.
+- The sidebar user card shows the name, then the email (only the email when there is no name).
+- The overview's Getting started card hides once all three items are done.
