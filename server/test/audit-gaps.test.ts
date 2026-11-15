@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { StoreCtx } from '../core/store.ts'
-import { expectError } from './harness.ts'
+import { createInstall, expectError } from './harness.ts'
 import { addContacts, createIssue, sendableInstall } from './sending-setup.ts'
 
 type Sendable = Awaited<ReturnType<typeof sendableInstall>>
@@ -90,4 +90,36 @@ test('gap 1: engaged-first "send to more" is gated too, and passes when rates ar
   await install.runJobs()
   const { steps } = await owner.action('campaigns.sendMore', { campaignId: second.id })
   assert.equal(steps[1].state, 'released')
+})
+
+test('gap 2: choosing an email provider needs its credentials, checked against saved values and env', async (t) => {
+  const install = await createInstall({ env: { SES_SECRET_ACCESS_KEY: 'environment-secret' } })
+  t.after(() => install.close())
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  const refused = async (values: Record<string, string>) => {
+    const err = await expectError(() => owner.action('install.settings.set', { values }))
+    assert.equal(err.code, 'missing_credentials')
+    assert.equal(err.status, 400)
+    return { message: err.message, missing: (err.details as { missing: string[] }).missing }
+  }
+
+  const ses = await refused({ email_provider: 'ses' })
+  assert.deepEqual(ses.missing, ['ses_region', 'ses_access_key_id'], 'the env secret counts; the rest are named')
+  assert.match(ses.message, /Amazon SES needs ses_region, ses_access_key_id/)
+  assert.deepEqual((await refused({ email_provider: 'resend' })).missing, ['resend_api_key'])
+  assert.deepEqual((await refused({ email_provider: 'smtp' })).missing, ['smtp_host'])
+  assert.deepEqual((await refused({ email_provider: 'smtp', smtp_host: 'smtp.example.com', smtp_user: 'mailer' })).missing, ['smtp_password'])
+  assert.equal((await owner.action('install.settings.get', {})).values.email_provider, '', 'nothing was saved')
+
+  await owner.action('install.settings.set', { values: { email_provider: 'ses', ses_region: 'us-east-1', ses_access_key_id: 'fixture-id' } })
+  let settings = await owner.action('install.settings.get', {})
+  assert.equal(settings.values.email_provider, 'ses')
+  assert.deepEqual(settings.missing, [])
+
+  await owner.action('install.settings.set', { values: { resend_api_key: 'fixture-key' } })
+  assert.deepEqual((await refused({ ses_access_key_id: '' })).missing, ['ses_access_key_id'], 'clearing a needed credential is refused')
+  await owner.action('install.settings.set', { values: { email_provider: 'resend' } })
+  await owner.action('install.settings.set', { values: { email_provider: 'test', resend_api_key: '' } })
+  settings = await owner.action('install.settings.get', {})
+  assert.equal(settings.values.email_provider, 'test')
 })

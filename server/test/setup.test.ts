@@ -18,13 +18,15 @@ for (const cloud of [false, true]) test(`setup checklist follows real install st
 
   // A test email through the local outbox does not count once a real provider is chosen.
   await owner.action('install.email.test', { to: 'reader@example.com' })
-  await owner.action('install.settings.set', { values: { email_provider: 'resend', email_from: 'system@example.com' } })
+  assert.equal((await expectError(() => owner.action('install.settings.set', { values: { email_provider: 'resend', email_from: 'system@example.com' } }))).code, 'missing_credentials')
+  // A provider saved before credentials were required still shows what it lacks.
+  install.app.control.ctx.db.run("INSERT INTO install_settings (key, value) VALUES ('email_provider', 'resend')")
   let list = await checklist()
   assert.equal(states(list).provider, 'todo')
   assert.match(list.items[0].detail, /resend_api_key/)
   assert.equal(states(list).testEmail, 'todo')
 
-  await owner.action('install.settings.set', { values: { resend_api_key: 're_test_key' } })
+  await owner.action('install.settings.set', { values: { resend_api_key: 're_test_key', email_from: 'system@example.com' } })
   assert.equal(states(await checklist()).provider, 'done')
 
   // A refused send records nothing.

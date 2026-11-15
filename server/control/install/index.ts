@@ -86,6 +86,28 @@ declare module '../rpc.ts' {
   }
 }
 
+export const PROVIDER_NAMES: Record<string, string> = { ses: 'Amazon SES', resend: 'Resend', smtp: 'SMTP' }
+/** Settings a provider cannot send without. */
+export const PROVIDER_CREDENTIALS: Record<string, readonly string[]> = {
+  ses: ['ses_region', 'ses_access_key_id', 'ses_secret_access_key'],
+  resend: ['resend_api_key'],
+  smtp: ['smtp_host'],
+}
+
+/** The credentials the chosen provider still lacks, after `pending` is applied and env overrides win. */
+export async function missingCredentials(ctx: StoreCtx, pending: Record<string, string> = {}): Promise<{ provider: string; missing: string[] }> {
+  const read = async (key: string) => {
+    const fromEnv = ctx.config.env[envName(key)]
+    if (fromEnv !== undefined && fromEnv !== '') return fromEnv
+    return key in pending ? pending[key] : getSetting(ctx, key)
+  }
+  const provider = (await read('email_provider')) || 'test'
+  const missing: string[] = []
+  for (const key of PROVIDER_CREDENTIALS[provider] ?? []) if (!(await read(key))) missing.push(key)
+  if (provider === 'smtp' && (await read('smtp_user')) && !(await read('smtp_password'))) missing.push('smtp_password')
+  return { provider, missing }
+}
+
 function validateSettings(values: Record<string, string>) {
   for (const [key, value] of Object.entries(values)) {
     if (/[\r\n\0]/.test(value)) throw new AppError('invalid_setting', 'Settings must fit on one line.', 400)
@@ -136,12 +158,13 @@ export const installModule = {
             if (isSecretSetting(key)) secretsSet[key] = value !== ''
             else values[key] = value
           }
-          return { values, secretsSet, fromEnv, webhookUrls: { ses: `${appUrl(ctx)}/hooks/ses`, resend: `${appUrl(ctx)}/hooks/resend` } }
+          const { missing } = await missingCredentials(ctx)
+          return { values, secretsSet, fromEnv, missing, webhookUrls: { ses: `${appUrl(ctx)}/hooks/ses`, resend: `${appUrl(ctx)}/hooks/resend` } }
         },
       }),
       defineAction({
         name: 'install.settings.set',
-        description: 'Change install settings. An empty string clears a setting.',
+        description: 'Change install settings. An empty string clears a setting. The result is checked as a whole: choosing an email provider needs its credentials (saved, sent in the same call, or set by environment).',
         scope: 'control',
         role: 'installAdmin',
         effect: 'write',
@@ -149,6 +172,8 @@ export const installModule = {
         mcp: { title: 'Change install settings', destructive: true },
         handler: async (ctx, { values }) => {
           validateSettings(values)
+          const { provider, missing } = await missingCredentials(ctx, values)
+          if (missing.length) throw new AppError('missing_credentials', `${PROVIDER_NAMES[provider]} needs ${missing.join(', ')}. Nothing was saved.`, 400, { provider, missing })
           const stored = await Promise.all(Object.entries(values).map(async ([key, value]) => [key, isSecretSetting(key) ? await encrypt(ctx.keys.credentials, value) : value] as const))
           ctx.db.tx(() => {
             for (const [key, value] of stored) {

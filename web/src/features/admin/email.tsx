@@ -10,6 +10,7 @@ const fields = {
   smtp: [['smtp_host', 'SMTP host'], ['smtp_port', 'SMTP port'], ['smtp_security', 'Security (tls, starttls or none)'], ['smtp_user', 'Username'], ['smtp_password', 'Password']],
   test: [],
 } satisfies Record<string, [keyof Values, string][]>
+const providerName: Record<string, string> = { ses: 'Amazon SES', resend: 'Resend', smtp: 'SMTP' }
 const secretField = (key: string) => /(secret|password|api_key|access_key_id|smtp_user)/.test(key)
 
 function EmailForm({ settings }: { settings: ActionOutput<'install.settings.get'> }) {
@@ -22,7 +23,9 @@ function EmailForm({ settings }: { settings: ActionOutput<'install.settings.get'
   const provider = value('email_provider') || 'test'
   const providerFields = provider === 'ses' ? fields.ses : provider === 'resend' ? fields.resend : provider === 'smtp' ? fields.smtp : fields.test
   const set = (key: keyof Values, text: string) => setDraft((current) => ({ ...current, [key]: text }))
-  const renderField = (key: keyof Values, label: string, type = 'text') => <Field key={key} label={label} hint={settings.fromEnv[key] ? 'Set by environment' : secretField(key) && settings.secretsSet[key] ? 'Saved. Leave blank to keep it.' : undefined}>{(id) => <Input id={id} type={secretField(key) ? 'password' : type} autoComplete={secretField(key) ? 'new-password' : undefined} disabled={settings.fromEnv[key]} value={value(key)} onChange={(e) => set(key, e.target.value)} />}</Field>
+  const refused = save.error?.code === 'missing_credentials' ? (save.error.details as { missing?: string[] } | null)?.missing : undefined
+  const missing = new Set(refused ?? (draft.email_provider === undefined ? settings.missing : []))
+  const renderField = (key: keyof Values, label: string, type = 'text') => <Field key={key} label={label} error={missing.has(key) ? `Required for ${providerName[provider] ?? provider}.` : undefined} hint={settings.fromEnv[key] ? 'Set by environment' : secretField(key) && settings.secretsSet[key] ? 'Saved. Leave blank to keep it.' : undefined}>{(id) => <Input id={id} type={secretField(key) ? 'password' : type} autoComplete={secretField(key) ? 'new-password' : undefined} disabled={settings.fromEnv[key]} value={value(key)} onChange={(e) => set(key, e.target.value)} />}</Field>
   return <div className="flex flex-col gap-5">
     <PageHeader title="Email provider" description="Configure newsletter and system email delivery for this install." />
     {(save.error || test.error) && <Banner kind="danger">{(save.error || test.error)?.message}</Banner>}
