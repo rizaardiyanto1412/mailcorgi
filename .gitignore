@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+.env
+*.log
+.DS_Store
+web/dist
+.wrangler
+.dev.vars
+.claude/worktrees
+.audit
