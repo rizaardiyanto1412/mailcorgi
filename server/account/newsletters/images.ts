@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { fromBase64 } from '../../core/crypto.ts'
 import { AppError } from '../../core/http.ts'
+import type { StoreCtx } from '../../core/store.ts'
+import type { Budget, JobResult } from '../../core/jobs.ts'
 export const imageShape = {
   contentType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).describe('The image MIME type'),
   data: z.string().min(1).max(2796204).describe('Base64-encoded image bytes, up to 2 MB'),
@@ -12,4 +14,19 @@ export function decodeImage(input: z.infer<z.ZodObject<typeof imageShape>>): Uin
   const valid = input.contentType === 'image/png' ? hex.startsWith('89504e470d0a1a0a') : input.contentType === 'image/jpeg' ? hex.startsWith('ffd8ff') : input.contentType === 'image/gif' ? hex.startsWith('474946383761') || hex.startsWith('474946383961') : hex.startsWith('52494646') && hex.slice(16) === '57454250'
   if (!valid || bytes.length > 2097152) throw new AppError('invalid_input', 'Use a PNG, JPEG, GIF or WebP image under 2 MB.', 400)
   return bytes
+}
+
+/** Queue removal of a replaced or orphaned logo, icon or avatar. Call it in the transaction that stops using the key. */
+export function queueImageRemoval(ctx: StoreCtx, newsletterId: string, key: string | null) {
+  if (key) ctx.jobs.enqueue('newsletters.deleteImage', { newsletterId, key }, { dedupeKey: `newsletters.deleteImage:${key}` })
+}
+
+export async function deleteBrandingImage(ctx: StoreCtx, { newsletterId, key }: { newsletterId: string; key: string }, budget: Budget): Promise<JobResult> {
+  if (ctx.db.get('SELECT 1 FROM newsletters WHERE logo_key = ? OR icon_key = ? UNION ALL SELECT 1 FROM authors WHERE avatar_key = ?', key, key, key)) return 'done'
+  if (budget.take(1) < 1) return { again: ctx.now() + 1000 }
+  const fullKey = `${ctx.accountId}/${key}`
+  // Blob first: a failure keeps the row, so the retry tries the file again instead of leaking it.
+  await ctx.platform.blobs.delete(fullKey)
+  ctx.db.run('DELETE FROM uploads WHERE key = ? AND newsletter_id = ?', fullKey, newsletterId)
+  return 'done'
 }
