@@ -58,6 +58,7 @@ const modules = {
 }
 
 export const accountRegistry = buildRegistry<'account', AccountRpc>('account', Object.values(modules), (ctx, action) => {
+  if (getPolicy(ctx).status === 'deleting') throw new AppError('account_deleted', 'This account is being deleted.', 410)
   if (action.effect === 'send' && getPolicy(ctx).status !== 'active') throw new AppError('account_blocked', 'This account cannot send right now.', 403)
 })
 

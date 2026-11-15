@@ -29,7 +29,7 @@ register('t.again', async (ctx, payload: { until: number }) => (ctx.now() >= pay
 register('t.slow', async (ctx, _p, budget) => (budget.take(1) ? 'done' : { again: ctx.now() }))
 
 const store = () => install.app.account(accountId)
-const rows = () => store().ctx.db.all<{ id: string; kind: string; attempts: number; run_at: number; locked_until: number | null; last_error: string | null }>('SELECT * FROM jobs ORDER BY created_at')
+const rows = () => store().ctx.db.all<{ id: string; kind: string; attempts: number; run_at: number; locked_until: number | null; last_error: string | null }>("SELECT * FROM jobs WHERE kind LIKE 't.%' ORDER BY created_at")
 
 test('a job enqueued in an account store runs from the alarm', async () => {
   store().ctx.jobs.enqueue('t.ok', {})
