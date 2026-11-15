@@ -4,7 +4,10 @@ import { AppError } from '../../core/http.ts'
 import { randomBase32 } from '../../core/ids.ts'
 
 const MAX_BYTES = 5 * 1024 * 1024
-function imageType(bytes: Uint8Array): { ext: string; contentType: string } | null {
+function imageType(bytes: Uint8Array): {
+  ext: string
+  contentType: string
+} | null {
   const starts = (magic: number[]) => magic.every((b, i) => bytes[i] === b)
   if (starts([137, 80, 78, 71, 13, 10, 26, 10])) return { ext: 'png', contentType: 'image/png' }
   if (starts([255, 216, 255])) return { ext: 'jpg', contentType: 'image/jpeg' }
@@ -38,7 +41,10 @@ export const uploadImageAction = defineAction({
     await ctx.platform.blobs.put(fullKey, bytes, type.contentType)
     try {
       ctx.db.run('INSERT INTO uploads (key, newsletter_id, content_type, bytes, width, height, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', key, input.newsletterId, type.contentType, bytes.length, input.width, input.height, actor.userId, ctx.now())
-    } catch (error) { await ctx.platform.blobs.delete(fullKey); throw error }
+    } catch (error) {
+      await ctx.platform.blobs.delete(fullKey)
+      throw error
+    }
     const base = ctx.config.imagesPublicUrl || `${ctx.config.appUrl}/img`
     return { key, url: `${base}/${ctx.accountId}/${key}`, width: input.width, height: input.height, bytes: bytes.length, contentType: type.contentType }
   },

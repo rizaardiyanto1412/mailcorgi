@@ -1,6 +1,6 @@
 import sanitizeHtml from 'sanitize-html'
 import type { AccountRegistrar } from '../rpc.ts'
-import { parseDoc, markdownToDoc, type DocNode } from './doc.ts'
+import { parseDoc, markdownToDoc, decodeText, type DocNode } from './doc.ts'
 import { parseTheme, fontStacks, type Theme } from './theme.ts'
 export { nodeSchema, markSchema, emptyDoc, parseDoc, markdownToDoc } from './doc.ts'
 export type { DocNode, DocMark } from './doc.ts'
@@ -14,17 +14,40 @@ export interface RecipientLinks {
   openPixel?: string
   wrap?(url: string): string
 }
+export interface RenderCampaign {
+  format?: string
+  subject?: string
+  previewText?: string
+  preview_text?: string
+  doc?: unknown
+  source?: string | null
+  html?: string | null
+  text?: string | null
+}
+export interface RenderNewsletter {
+  name?: string
+  postalAddress?: string
+  postal_address?: string
+}
+export interface RenderContact {
+  name?: string
+  email?: string
+  fields?: unknown
+}
 export interface RenderEmailInput {
-  campaign: Record<string, unknown>
-  newsletter: Record<string, unknown>
+  campaign: RenderCampaign
+  newsletter: RenderNewsletter
   theme: Record<string, unknown>
-  recipient: { contact: Record<string, unknown>; links: RecipientLinks }
+  recipient: {
+    contact: RenderContact
+    links: RecipientLinks
+  }
 }
 export interface RenderWebInput {
-  campaign: Record<string, unknown>
-  newsletter: Record<string, unknown>
+  campaign: RenderCampaign
+  newsletter: RenderNewsletter
   theme: Record<string, unknown>
-  author?: Record<string, unknown>
+  author?: { name?: string }
 }
 export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 const string = (v: unknown) => typeof v === 'string' ? v : ''
@@ -42,7 +65,7 @@ function fields(value: unknown): Record<string, unknown> {
   }
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {}
 }
-export function mergeFields(value: string, contact: Record<string, unknown>, links: RecipientLinks): string {
+export function mergeFields(value: string, contact: RenderContact, links: RecipientLinks): string {
   const custom = fields(contact.fields)
   const name = string(contact.name)
   return value.replace(/\{\{\s*([\w.]+)(?:\|([^}]*))?\s*\}\}/g, (_match, key: string, fallback: string | undefined) => {
@@ -51,20 +74,27 @@ export function mergeFields(value: string, contact: Record<string, unknown>, lin
     return (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') && String(v) !== '' ? String(v) : fallback?.trim() ?? ''
   })
 }
-interface Part { html: string; text: string }
+interface Part {
+  html: string
+  text: string
+}
 interface RenderContext {
   theme: Theme
+  tracking: boolean
   merge(value: string): string
   href(value: string): string
   footnote(url: string): string
 }
-function makeContext(theme: Theme, contact: Record<string, unknown>, links: RecipientLinks): { ctx: RenderContext; notes: string[] } {
+function makeContext(theme: Theme, contact: RenderContact, links: RecipientLinks): {
+  ctx: RenderContext
+  notes: string[]
+} {
   const notes: string[] = []
   const merge = (value: string) => mergeFields(value, contact, links)
   return {
     notes,
     ctx: {
-      theme, merge,
+      theme, merge, tracking: typeof links.wrap === 'function',
       href: (value) => {
         const url = safeUrl(merge(value), true)
         return url ? safeUrl(links.wrap?.(url) ?? url, true) : ''
@@ -73,7 +103,10 @@ function makeContext(theme: Theme, contact: Record<string, unknown>, links: Reci
         const url = safeUrl(merge(value), true)
         if (!url) return ''
         let index = notes.indexOf(url)
-        if (index < 0) { index = notes.length; notes.push(url) }
+        if (index < 0) {
+          index = notes.length
+          notes.push(url)
+        }
         return ` [${index + 1}]`
       },
     },
@@ -85,7 +118,10 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
   const attrs = node.attrs ?? {}
   const attr = (key: string) => string(attrs[key])
   const content = () => (node.content ?? []).map((child) => renderNode(child, ctx))
-  const children = () => { const parts = content(); return { html: parts.map((p) => p.html).join(''), text: parts.map((p) => p.text).join('') } }
+  const children = () => {
+    const parts = content()
+    return { html: parts.map((p) => p.html).join(''), text: parts.map((p) => p.text).join('') }
+  }
   const link = (html: string, url: string) => {
     const href = ctx.href(url)
     return href ? `<a href="${escapeHtml(href)}" style="color:${t.accent};text-decoration:underline" rel="noopener noreferrer">${html}</a>` : html
@@ -96,12 +132,18 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
       let text = merge(node.text ?? '')
       for (const mark of node.marks ?? []) {
         switch (mark.type) {
-          case 'bold': html = `<strong>${html}</strong>`; break
-          case 'italic': html = `<em>${html}</em>`; break
-          case 'underline': html = `<u>${html}</u>`; break
-          case 'strike': html = `<s>${html}</s>`; break
-          case 'code': html = `<code style="font-family:${fontStacks.mono};background:${t.background};padding:2px 4px">${html}</code>`; break
-          case 'highlight': html = `<mark style="background:#fef08a;color:#20242c">${html}</mark>`; break
+          case 'bold': html = `<strong>${html}</strong>`
+            break
+          case 'italic': html = `<em>${html}</em>`
+            break
+          case 'underline': html = `<u>${html}</u>`
+            break
+          case 'strike': html = `<s>${html}</s>`
+            break
+          case 'code': html = `<code style="font-family:${fontStacks.mono};background:${t.background};padding:2px 4px">${html}</code>`
+            break
+          case 'highlight': html = `<mark style="background:#fef08a;color:#20242c">${html}</mark>`
+            break
           case 'link': {
             const url = string(mark.attrs?.href)
             html = link(html, url)
@@ -114,7 +156,10 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
     }
     case 'hardBreak': return { html: '<br>', text: '\n' }
     case 'doc': return children()
-    case 'paragraph': { const p = children(); return { html: `<p style="margin:0 0 18px;line-height:1.65">${p.html || '<br>'}</p>`, text: `${p.text}\n\n` } }
+    case 'paragraph': {
+      const p = children()
+      return { html: `<p style="margin:0 0 18px;line-height:1.65">${p.html || '<br>'}</p>`, text: `${p.text}\n\n` }
+    }
     case 'heading': {
       const p = children()
       const level = size(attrs.level, 2, 3)
@@ -126,9 +171,18 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
       const start = size(attrs.start, 1, 100000)
       return { html: `<${tag}${tag === 'ol' ? ` start="${start}"` : ''} style="padding-left:24px;margin:0 0 18px">${parts.map((p) => p.html).join('')}</${tag}>`, text: parts.map((p, i) => `${tag === 'ol' ? `${start + i}.` : '-'} ${p.text.trim()}\n`).join('') + '\n' }
     }
-    case 'listItem': { const p = children(); return { html: `<li style="padding:3px 0">${p.html}</li>`, text: p.text } }
-    case 'blockquote': { const p = children(); return { html: `<blockquote style="margin:18px 0;padding:8px 18px;border-left:4px solid ${t.accent}">${p.html}</blockquote>`, text: p.text.trim().split('\n').map((l) => `> ${l}`).join('\n') + '\n\n' } }
-    case 'codeBlock': { const p = children(); return { html: `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;background:${t.background};color:${t.text};font-family:${fontStacks.mono}">${p.html}</pre>`, text: `${p.text}\n\n` } }
+    case 'listItem': {
+      const p = children()
+      return { html: `<li style="padding:3px 0">${p.html}</li>`, text: p.text }
+    }
+    case 'blockquote': {
+      const p = children()
+      return { html: `<blockquote style="margin:18px 0;padding:8px 18px;border-left:4px solid ${t.accent}">${p.html}</blockquote>`, text: p.text.trim().split('\n').map((l) => `> ${l}`).join('\n') + '\n\n' }
+    }
+    case 'codeBlock': {
+      const p = children()
+      return { html: `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;background:${t.background};color:${t.text};font-family:${fontStacks.mono}">${p.html}</pre>`, text: `${p.text}\n\n` }
+    }
     case 'horizontalRule': case 'divider': return { html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid ${t.muted};height:20px"></td></tr></table>`, text: '\n---\n\n' }
     case 'spacer': return { html: `<div style="height:${size(attrs.height, 24, 160)}px;line-height:1px" aria-hidden="true">&#160;</div>`, text: '\n' }
     case 'image': {
@@ -161,7 +215,7 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
     }
   }
 }
-export function campaignDoc(campaign: Record<string, unknown>): DocNode {
+export function campaignDoc(campaign: RenderCampaign): DocNode {
   return campaign.format === 'markdown' ? markdownToDoc(string(campaign.source)) : parseDoc(campaign.doc)
 }
 const sanitise = (html: string) => sanitizeHtml(html, {
@@ -170,36 +224,35 @@ const sanitise = (html: string) => sanitizeHtml(html, {
   allowedSchemes: ['https', 'http'], allowProtocolRelative: false,
   transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer nofollow' }) },
 })
-function decodeText(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/gi, (entity, key: string) => {
-    const named: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
-    if (!key.startsWith('#')) return named[key.toLowerCase()] ?? entity
-    const code = key[1].toLowerCase() === 'x' ? parseInt(key.slice(2), 16) : parseInt(key.slice(1), 10)
-    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
-  })
-}
+
 function htmlText(html: string, ctx: RenderContext): string {
   const safe = sanitise(html)
   const annotated = safe.replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_all, href: string, label: string) => `${label}${escapeHtml(ctx.footnote(decodeText(href)))}`)
   const plain = sanitizeHtml(annotated.replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n').replace(/<br\s*\/?\s*>/gi, '\n'), { allowedTags: [], allowedAttributes: {} })
   return decodeText(plain).trim()
 }
-function body(campaign: Record<string, unknown>, ctx: RenderContext, web: boolean): Part {
+function body(campaign: RenderCampaign, ctx: RenderContext, web: boolean): Part {
   if (campaign.format === 'html') {
     const html = string(campaign.html) || string(campaign.source)
     const merged = html.replace(/\{\{[^}]*\}\}/g, (field) => escapeHtml(ctx.merge(field)))
-    return { html: web ? sanitise(merged) : merged, text: string(campaign.text) ? ctx.merge(string(campaign.text)) : htmlText(merged, ctx) }
+    const tracked = !web && ctx.tracking ? merged.replace(/(<a\b[^>]*\bhref\s*=\s*)(["'])(.*?)\2/gi, (_match, prefix: string, quote: string, href: string) => `${prefix}${quote}${escapeHtml(ctx.href(decodeText(href)))}${quote}`) : merged
+    return { html: web ? sanitise(merged) : tracked, text: string(campaign.text) ? ctx.merge(string(campaign.text)) : htmlText(merged, ctx) }
   }
   return renderNode(campaignDoc(campaign), ctx)
 }
 function page(content: string, theme: Theme, preview = ''): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"></head><body style="margin:0;background:${theme.background};color:${theme.text};font-family:${fontStacks[theme.font]};font-size:16px">${preview ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all">${escapeHtml(preview)}</div>` : ''}<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:${theme.background}"><tr><td align="center" style="padding:24px 12px"><table role="presentation" cellpadding="0" cellspacing="0" width="600" style="width:100%;max-width:600px;background:${theme.surface};color:${theme.text}"><tr><td style="padding:28px;overflow-wrap:anywhere">${content}</td></tr></table></td></tr></table></body></html>`
 }
-function header(theme: Theme, newsletter: Record<string, unknown>): string {
+function header(theme: Theme, newsletter: RenderNewsletter): string {
   const logo = safeUrl(theme.header.logo, true)
   return `${logo ? `<img src="${escapeHtml(logo)}" width="160" alt="${escapeHtml(string(newsletter.name))}" style="max-width:100%;height:auto;margin-bottom:20px">` : ''}${theme.header.title ? `<p style="font-weight:bold;color:${theme.accent}">${escapeHtml(theme.header.title)}</p>` : ''}`
 }
-export function renderEmail(input: RenderEmailInput): { subject: string; html: string; text: string; headers: Record<string, string> } {
+export function renderEmail(input: RenderEmailInput): {
+  subject: string
+  html: string
+  text: string
+  headers: Record<string, string>
+} {
   const theme = parseTheme(input.theme)
   const { ctx, notes } = makeContext(theme, input.recipient.contact, input.recipient.links)
   const part = body(input.campaign, ctx, false)
@@ -212,7 +265,11 @@ export function renderEmail(input: RenderEmailInput): { subject: string; html: s
   const text = `${part.text.trim()}${notes.length ? '\n\n' + notes.map((url, i) => `[${i + 1}] ${url}`).join('\n') : ''}\n\n${ctx.merge(theme.footerText)}\n${address}\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}\nPreferences: ${safeUrl(links.preferences, true)}\nView on the web: ${safeUrl(links.web, true)}`
   return { subject: ctx.merge(string(input.campaign.subject)).replace(/[\r\n]/g, ' '), html, text, headers: { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } }
 }
-export function renderWeb(input: RenderWebInput): { html: string; excerpt: string; image?: string } {
+export function renderWeb(input: RenderWebInput): {
+  html: string
+  excerpt: string
+  image?: string
+} {
   const theme = parseTheme(input.theme)
   const { ctx } = makeContext(theme, {}, { unsubscribe: '', preferences: '', web: '' })
   const part = body(input.campaign, ctx, true)
@@ -226,4 +283,4 @@ export function renderDocPreview(doc: unknown, theme: Record<string, unknown>): 
   const { ctx } = makeContext(parsed, {}, { unsubscribe: '#', preferences: '#', web: '#' })
   return page(renderNode(parseDoc(doc), ctx).html, parsed)
 }
-export const renderModule = { name: 'render', register(_reg: AccountRegistrar) {} }
+export const renderModule = { name: 'render', register(_reg: AccountRegistrar) { } }

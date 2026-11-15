@@ -1,7 +1,16 @@
 import { campaignDoc, renderEmail, safeUrl, type DocNode } from '../render/index.ts'
 
-export interface ReviewCheck { id: string; level: 'error' | 'warning'; message: string }
-export function reviewChecks(input: { campaign: Record<string, unknown>; newsletter: Record<string, unknown>; theme: Record<string, unknown>; domainVerified: boolean }): ReviewCheck[] {
+export interface ReviewCheck {
+  id: string
+  level: 'error' | 'warning'
+  message: string
+}
+export function reviewChecks(input: {
+  campaign: Record<string, unknown>
+  newsletter: Record<string, unknown>
+  theme: Record<string, unknown>
+  domainVerified: boolean
+}): ReviewCheck[] {
   const { campaign, newsletter } = input
   const checks: ReviewCheck[] = []
   const add = (id: string, level: ReviewCheck['level'], message: string) => checks.push({ id, level, message })
@@ -19,7 +28,10 @@ export function reviewChecks(input: { campaign: Record<string, unknown>; newslet
     if (typeof url === 'string' && url && !/^\{\{(unsubscribe_url|web_url|preferences_url)\}\}$/.test(url) && !safeUrl(url)) invalidLink = true
   }
   const visit = (node: DocNode) => {
-    if (node.type === 'image') { if (!node.attrs?.alt || !String(node.attrs.alt).trim()) missingAlt = true; checkLink(node.attrs?.href) }
+    if (node.type === 'image') {
+      if (!node.attrs?.alt || !String(node.attrs.alt).trim()) missingAlt = true
+      checkLink(node.attrs?.href)
+    }
     if (node.type === 'button') checkLink(node.attrs?.href)
     if (node.type === 'embed') checkLink(node.attrs?.url)
     for (const mark of node.marks ?? []) if (mark.type === 'link') checkLink(mark.attrs?.href)

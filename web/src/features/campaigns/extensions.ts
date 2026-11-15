@@ -4,10 +4,12 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
 import Highlight from '@tiptap/extension-highlight'
 
-const attrs = (defaults: Record<string, string | number | null>) => Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { default: value, parseHTML: (el: HTMLElement) => {
-  const raw = el.getAttribute(`data-${key}`) ?? el.getAttribute(key)
-  return typeof value === 'number' ? Number(raw) || value : raw ?? value
-} }]))
+const attrs = (defaults: Record<string, string | number | null>) => Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, {
+  default: value, parseHTML: (el: HTMLElement) => {
+    const raw = el.getAttribute(`data-${key}`) ?? el.getAttribute(key)
+    return typeof value === 'number' ? Number(raw) || value : raw ?? value
+  }
+}]))
 const ButtonNode = Node.create({
   name: 'button', group: 'block', atom: true,
   addAttributes: () => attrs({ label: 'Read more', href: '', align: 'left' }),

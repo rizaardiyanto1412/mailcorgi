@@ -20,7 +20,13 @@ for (const cloud of [false, true]) test(`campaign draft lifecycle and revision c
     assert.deepEqual(initial.audience, { all: true })
     const schema = getSchema(campaignExtensions())
     const editorDoc = Node.fromJSON(schema, { type: 'doc', content: [
-      { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'News' }] },
+      ...[1, 2, 3].map((level) => ({ type: 'heading', attrs: { level }, content: [{ type: 'text', text: 'News' }] })),
+      { type: 'paragraph', content: [{ type: 'hardBreak' }, ...['bold', 'italic', 'underline', 'strike', 'code', 'highlight'].map((type) => ({ type: 'text', text: `${type} text `, marks: [{ type }] }))] },
+      { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Bullet' }] }] }] },
+      { type: 'orderedList', attrs: { start: 3 }, content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Numbered' }] }] }] },
+      { type: 'blockquote', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A quote' }] }] },
+      { type: 'codeBlock', content: [{ type: 'text', text: 'x < y' }] },
+      { type: 'horizontalRule' },
       { type: 'paragraph', content: [{ type: 'text', text: 'Hello {{first_name|reader}}', marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'https://example.com' } }] }] },
       { type: 'callout', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A useful note' }] }] },
       { type: 'button', attrs: { label: 'Read', href: 'https://example.com' } },
@@ -73,9 +79,9 @@ test('permissions isolate newsletters, accounts and read-only actors; members ca
     ] satisfies [string, unknown][]) await assert.rejects(() => runAction(ctx, name, input, actor), (e: unknown) => e instanceof AppError && e.status === 403)
     await assert.rejects(() => runAction(ctx, 'campaigns.update', { campaignId: draft.id, revision: 2 }, { ...actor, access: 'read' }), (e: unknown) => e instanceof AppError && e.status === 403)
     const other = await install.signUp({ email: 'other@example.com' })
-    for (const name of ['campaigns.get', 'campaigns.preview', 'campaigns.duplicate']) assert.equal((await expectError(() => other.actionRaw(name, { campaignId: draft.id }).then(async (r) => {
-      if (!r.ok) { const data = await r.json(); const { ActionError } = await import('./harness.ts'); throw new ActionError(r.status, data.code, data.error) }
-    }))).status, 404)
+    for (const name of ['campaigns.get', 'campaigns.preview', 'campaigns.duplicate']) {
+      assert.equal((await other.actionRaw(name, { campaignId: draft.id })).status, 404)
+    }
   } finally { install.close() }
 })
 test('only transitionCampaign writes status; non-drafts reject editing and deleting and copies reset state', async () => {
@@ -158,6 +164,25 @@ test('image uploads inspect magic bytes, cap size, record metadata and serve the
     assert.equal((await expectError(() => owner.action('campaigns.uploadImage', { newsletterId: nl.id, data: '!', width: 1, height: 1 }))).code, 'invalid_image')
     const big = await expectError(() => owner.action('campaigns.uploadImage', { newsletterId: nl.id, data: 'A'.repeat(Math.ceil(5 * 1024 * 1024 / 3) * 4 + 4), width: 1, height: 1 }))
     assert.equal(big.status, 400)
+    const overLimit = Buffer.alloc(5 * 1024 * 1024 + 1)
+    overLimit.set([137, 80, 78, 71, 13, 10, 26, 10])
+    const decodedTooBig = await expectError(() => owner.action('campaigns.uploadImage', { newsletterId: nl.id, data: overLimit.toString('base64'), width: 1, height: 1 }))
+    assert.equal(decodedTooBig.code, 'image_size')
     assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM uploads')!.n, 1)
+  } finally { install.close() }
+})
+
+test('concurrent autosaves from the same revision keep exactly one edit', async () => {
+  const install = await createInstall()
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const nl = await owner.action('newsletters.create', { name: 'Weekly' })
+    const draft = await owner.action('campaigns.create', { newsletterId: nl.id })
+    const responses = await Promise.all(['One', 'Two'].map((subject) => owner.actionRaw('campaigns.update', { campaignId: draft.id, revision: 1, subject })))
+    assert.deepEqual(responses.map((r) => r.status).sort(), [200, 409])
+    const winner = await responses.find((r) => r.status === 200)!.json()
+    const saved = await owner.action('campaigns.get', { campaignId: draft.id })
+    assert.equal(saved.subject, winner.subject)
+    assert.equal(saved.revision, 2)
   } finally { install.close() }
 })

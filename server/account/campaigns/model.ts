@@ -24,13 +24,31 @@ export const draftFields = {
   audience: audienceSchema.describe('Exactly one of all, segmentId, tagIds or engaged, plus exclusions'),
 }
 export interface CampaignRow {
-  id: string; newsletter_id: string; author_id: string | null; kind: 'issue' | 'welcome' | 'keep'
-  format: 'doc' | 'markdown' | 'html'; subject: string; preview_text: string
-  doc: string | null; source: string | null; html: string | null; text: string | null; slug: string
-  status: CampaignStatus; pause_reason: string | null; audience: string
-  scheduled_at: number | null; send_started_at: number | null; sent_at: number | null
-  published_at: number | null; web_visible: number; stats: string; revision: number
-  created_by: string; created_at: number; updated_at: number
+  id: string
+  newsletter_id: string
+  author_id: string | null
+  kind: 'issue' | 'welcome' | 'keep'
+  format: 'doc' | 'markdown' | 'html'
+  subject: string
+  preview_text: string
+  doc: string | null
+  source: string | null
+  html: string | null
+  text: string | null
+  slug: string
+  status: CampaignStatus
+  pause_reason: string | null
+  audience: string
+  scheduled_at: number | null
+  send_started_at: number | null
+  sent_at: number | null
+  published_at: number | null
+  web_visible: number
+  stats: string
+  revision: number
+  created_by: string
+  created_at: number
+  updated_at: number
 }
 export function getCampaignRow(ctx: StoreCtx, id: string): CampaignRow {
   const row = ctx.db.get<CampaignRow>('SELECT * FROM campaigns WHERE id = ?', id)
@@ -59,7 +77,10 @@ export function assertRevision(row: CampaignRow, revision: number) {
 const transitions: Record<CampaignStatus, CampaignStatus[]> = {
   draft: ['scheduled', 'canceled'], scheduled: ['sending', 'canceled'], sending: ['paused', 'sent'], paused: ['sending'], sent: [], canceled: [],
 }
-export function transitionCampaign(ctx: StoreCtx, campaignId: string, status: CampaignStatus, detail: { scheduledAt?: number; reason?: string } = {}): Campaign {
+export function transitionCampaign(ctx: StoreCtx, campaignId: string, status: CampaignStatus, detail: {
+  scheduledAt?: number
+  reason?: string
+} = {}): Campaign {
   return ctx.db.tx(() => {
     const row = getCampaignRow(ctx, campaignId)
     if (row.status === status) return serializeCampaign(row)

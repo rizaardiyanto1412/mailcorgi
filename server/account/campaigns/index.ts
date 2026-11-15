@@ -76,7 +76,8 @@ export const campaignsModule = {
       }),
       defineAction({
         name: 'campaigns.update', description: 'Autosave a draft only if its revision is still current.', scope: 'account', role: 'member', effect: 'write', resource: campaignResource,
-        input: z.object({ campaignId, revision,
+        input: z.object({
+          campaignId, revision,
           subject: draftFields.subject.optional().describe('Email subject or draft name'), previewText: draftFields.previewText.optional().describe('Inbox preview text'),
           format: draftFields.format.optional().describe('Content format'), doc: draftFields.doc.optional().describe('TipTap document JSON'), source: draftFields.source.optional().describe('Markdown or HTML source'),
           html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.optional().describe('Audience selection and exclusions'),
@@ -107,7 +108,8 @@ export const campaignsModule = {
         input: z.object({ campaignId, revision }), rest: { method: 'DELETE', path: '/campaigns/:campaignId' }, mcp: { title: 'Delete a campaign draft', destructive: true },
         handler: (ctx, input) => ctx.db.tx(() => {
           const row = getCampaignRow(ctx, input.campaignId)
-          assertEditable(row); assertRevision(row, input.revision)
+          assertEditable(row)
+          assertRevision(row, input.revision)
           ctx.db.run('DELETE FROM campaigns WHERE id = ? AND newsletter_id = ?', row.id, row.newsletter_id)
           return { deleted: true }
         }),
@@ -120,7 +122,15 @@ export const campaignsModule = {
       defineAction({
         name: 'campaigns.audienceOptions', description: 'List saved segments and tags for the audience picker.', scope: 'account', role: 'member', effect: 'read', resource: newsletterResource,
         input: z.object({ newsletterId }), rest: { method: 'GET', path: '/newsletters/:newsletterId/campaign-audiences' }, mcp: { title: 'List campaign audiences', destructive: false },
-        handler: (ctx, input) => ({ tags: ctx.db.all<{ id: string; name: string }>('SELECT id, name FROM tags WHERE newsletter_id = ? ORDER BY name', input.newsletterId), segments: ctx.db.all<{ id: string; name: string }>('SELECT id, name FROM segments WHERE newsletter_id = ? ORDER BY name', input.newsletterId) }),
+        handler: (ctx, input) => ({
+          tags: ctx.db.all<{
+            id: string
+            name: string
+          }>('SELECT id, name FROM tags WHERE newsletter_id = ? ORDER BY name', input.newsletterId), segments: ctx.db.all<{
+            id: string
+            name: string
+          }>('SELECT id, name FROM segments WHERE newsletter_id = ? ORDER BY name', input.newsletterId)
+        }),
       }),
       defineAction({
         name: 'campaigns.getTheme', description: 'Read the newsletter email and web design.', scope: 'account', role: 'member', effect: 'read', resource: newsletterResource,

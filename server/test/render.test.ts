@@ -130,3 +130,26 @@ test('the editor schema round-trips every node and mark without losing JSON', ()
   assert.deepEqual(Node.fromJSON(schema, first.toJSON()).toJSON(), first.toJSON())
   for (const type of new Set(cases.map((c) => c.node.type))) assert.ok(JSON.stringify(first.toJSON()).includes(`"type":"${type}"`))
 })
+
+test('Markdown images remain block nodes and entity text renders once', () => {
+  const doc = markdownToDoc('Before &amp; after ![A &amp; B](https://example.com/a.png) more text.\n\n[![Photo](https://example.com/p.png)](https://example.com/story)')
+  const schema = getSchema(campaignExtensions())
+  Node.fromJSON(schema, doc).check()
+  const rendered = render(doc)
+  assert.match(rendered.email.html, /Before &amp; after/)
+  assert.doesNotMatch(rendered.email.html, /Before &amp;amp;/)
+  assert.match(rendered.email.html, /alt="A &amp; B"/)
+  assert.match(rendered.email.html, /href="https:\/\/example.com\/story"[^>]*><img/)
+})
+test('raw HTML links are wrapped exclusively by the recipient hook', () => {
+  const html = '<!-- keep this --><p style="color:red"><a href="https://example.com/story?x=1&amp;y=2">Read</a></p>'
+  const campaign = { subject: 'HTML', format: 'html', html }
+  const plain = renderEmail({ campaign, newsletter, theme: {}, recipient: { contact: {}, links } })
+  assert.ok(plain.html.includes(html))
+  const visited: string[] = []
+  const wrapped = renderEmail({ campaign, newsletter, theme: {}, recipient: { contact: {}, links: { ...links, wrap: (url) => { visited.push(url); return 'https://example.com/tracked' } } } })
+  assert.deepEqual(visited, ['https://example.com/story?x=1&y=2'])
+  assert.match(wrapped.html, /<!-- keep this -->/)
+  assert.match(wrapped.html, /<a href="https:\/\/example.com\/tracked">Read/)
+  assert.match(wrapped.text, /https:\/\/example.com\/story\?x=1&y=2/)
+})
