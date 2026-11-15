@@ -9,6 +9,8 @@ import { newId, newNewsletterKey } from '../../core/ids.ts'
 import { themeSchema, type Theme } from '../render/theme.ts'
 import { limits } from '../usage/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
+import { deleteNewsletterAction, registerNewsletterDelete } from './delete.ts'
+import { migrations } from './migrations.ts'
 
 export interface NewsletterRow {
   id: string
@@ -92,7 +94,7 @@ export function getNewsletter(ctx: StoreCtx, id: string): Newsletter {
 
 /** Newsletters the actor may see: all of them for the owner, granted ones for a team member. */
 export function visibleNewsletters(ctx: StoreCtx, actor: Actor, includeArchived = false): Newsletter[] {
-  const rows = ctx.db.all<NewsletterRow>(`SELECT * FROM newsletters ${includeArchived ? '' : 'WHERE archived_at IS NULL'} ORDER BY created_at`)
+  const rows = ctx.db.all<NewsletterRow>(`SELECT * FROM newsletters WHERE deleting_at IS NULL ${includeArchived ? '' : 'AND archived_at IS NULL'} ORDER BY created_at`)
   return rows.filter((r) => actor.owner || r.id in actor.grants).map(serializeNewsletter)
 }
 
@@ -129,7 +131,10 @@ const newsletterLimitError = (ctx: StoreCtx, used: number) => new AppError('limi
 export const newslettersModule = {
   name: 'newsletters',
   register(reg: AccountRegistrar) {
-    reg.resolver('newsletter', (ctx, id) => (getNewsletterRow(ctx, id) ? id : null))
+    reg.migrations(migrations)
+    registerNewsletterDelete(reg)
+    // A newsletter being deleted no longer exists for actions; its rows are going away.
+    reg.resolver('newsletter', (ctx, id) => (ctx.db.get('SELECT id FROM newsletters WHERE id = ? AND deleting_at IS NULL', id) ? id : null))
     reg.resolver('author', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM authors WHERE id = ?', id)?.newsletter_id ?? null)
 
     reg.job<{ newsletterId: string }>('directory.sync', async (ctx, { newsletterId }) => {
@@ -145,6 +150,7 @@ export const newslettersModule = {
 
     return reg.actions(
       ...authorActions,
+      deleteNewsletterAction,
       defineAction({
         name: 'newsletters.uploadImage', description: 'Upload a newsletter logo or icon as PNG, JPEG, GIF or WebP, up to 2 MB.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' },
         input: z.object({ newsletterId, kind: z.enum(['logo', 'icon']).describe('Which newsletter image to replace'), ...imageShape }),

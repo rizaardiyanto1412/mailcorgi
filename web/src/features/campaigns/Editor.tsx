@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react'
 import { EditorContent, useEditor, useEditorState, type Editor, type JSONContent } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
-import { Bold, Italic, Link as LinkIcon, ImagePlus, Undo, Redo, Underline, Strikethrough, Highlighter, List, ListOrdered, Code, Quote } from 'lucide-react'
+import { Bold, Italic, Link as LinkIcon, ImagePlus, Undo, Redo, Underline, Strikethrough, Highlighter, List, ListOrdered, Code, Quote, Images } from 'lucide-react'
 import { Button, IconButton, Input, Field, Modal, Select, Banner } from '../../ui/index.tsx'
 import { callAction } from '../../lib/api.ts'
 import { campaignExtensions } from './extensions.ts'
 import { NodeControls } from './NodeControls.tsx'
+import { ImageLibrary } from './Images.tsx'
 import './editor.css'
 
 function FormatTools({ editor, link }: {
@@ -33,6 +34,7 @@ interface Props {
 }
 export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }: Props) {
   const [slash, setSlash] = useState(false)
+  const [library, setLibrary] = useState(false)
   const [dialog, setDialog] = useState<'link' | 'button' | 'embed' | 'merge' | null>(null)
   const [mergeKey, setMergeKey] = useState('first_name')
   const [fallback, setFallback] = useState('friend')
@@ -139,6 +141,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
       <IconButton label="Quote" onClick={() => insert('blockquote')}><Quote /></IconButton>
       <IconButton label="Code block" onClick={() => insert('codeBlock')}><Code /></IconButton>
       <IconButton label="Upload image" onClick={() => fileInput.current?.click()}><ImagePlus /></IconButton>
+      <IconButton label="Images" onClick={() => setLibrary(true)}><Images /></IconButton>
       <Button size="sm" onClick={() => setSlash(!slash)}>Insert block /</Button>
       <Select aria-label="Insert merge field" className="!w-44" value="" onChange={(e) => { if (e.target.value) editor.chain().focus().insertContent(e.target.value).run() }}>
         <option value="">Merge field…</option><option value="{{first_name|friend}}">First name</option><option value="{{name|reader}}">Name</option><option value="{{email}}">Email</option><option value="{{field.company|your company}}">Company</option><option value="{{unsubscribe_url}}">Unsubscribe URL</option><option value="{{web_url}}">Web URL</option><option value="{{preferences_url}}">Preferences URL</option>
@@ -155,6 +158,11 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     {progress !== null && <div className="px-4 pb-3" role="status"><p className="text-xs">Uploading image…</p><progress className="w-full" max={100} value={progress} /></div>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line p-3 text-xs text-fg-3"><span>{stats?.words ?? 0} words · ⌘S to save</span>{editable && <Input aria-label="Alt text for the next image" placeholder="Alt text for the next image" className="!w-64" value={alt} onChange={(e) => setAlt(e.target.value)} />}</div>
+    {editable && <ImageLibrary newsletterId={newsletterId} open={library} onClose={() => setLibrary(false)} onUpload={() => { setLibrary(false); fileInput.current?.click() }} onPick={(image) => {
+      setLibrary(false)
+      editor.chain().focus().setImage({ src: image.url, alt, ...(image.width && image.height ? { width: image.width, height: image.height } : {}) }).run()
+      setAlt('')
+    }} />}
     <input type="file" aria-label="Upload an image" accept="image/png,image/jpeg,image/gif,image/webp" hidden ref={fileInput} onChange={(e) => {
       if (e.target.files?.[0]) void upload(e.target.files[0])
       e.target.value = ''

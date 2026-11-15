@@ -139,6 +139,8 @@ export function resolveNewsletterId(ctx: StoreCtx, type: ResourceType, id: strin
   if (!resolver) throw new Error(`No resolver registered for resource type ${type}.`)
   const newsletterId = resolver(ctx, id)
   if (!newsletterId) throw notFound()
+  // A row can outlive its newsletter while a deletion job removes it in chunks.
+  if (type !== 'newsletter' && ctx.registry.resolvers.get('newsletter')?.(ctx, newsletterId) === null) throw notFound()
   return newsletterId
 }
 

@@ -6,7 +6,8 @@ import type { ActionOutput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, NoAccess, PageHeader, Select, Spinner, Textarea } from '../../ui/index.tsx'
-const CampaignEditor = lazy(() => import('../campaigns/Editor.tsx').then((module) => ({ default: module.CampaignEditor })))
+import { loadChunk } from '../../lib/reload.ts'
+const CampaignEditor = lazy(loadChunk(() => import('../campaigns/Editor.tsx').then((module) => ({ default: module.CampaignEditor }))))
 
 function FormsPage() {
   useDocumentTitle('Signup forms')

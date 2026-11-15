@@ -695,6 +695,20 @@ async function flows(browser: Browser, s: Seed) {
     await page.getByRole('status').filter({ hasText: 'Saved' }).first().waitFor({ timeout: 10_000 })
   })
 
+  await step('image-library', async (page) => {
+    if (!campaignUrl) throw new Error('the campaign flow did not create a draft')
+    await page.goto(campaignUrl)
+    await page.getByRole('button', { name: 'Images', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Images' })
+    await dialog.locator('img').first().waitFor({ timeout: 10_000 })
+    await dialog.getByRole('button', { name: 'Delete image' }).first().click()
+    // The draft uses the image, so the question names it; keep the image.
+    const inUse = page.getByRole('dialog', { name: 'This image is still used' })
+    await inUse.getByText('Autumn leaves and short legs').waitFor({ timeout: 10_000 })
+    await inUse.getByRole('button', { name: 'Cancel' }).click()
+    await dialog.locator('img').first().waitFor()
+  })
+
   await step('review-and-send', async (page) => {
     if (!campaignUrl) throw new Error('the campaign flow did not create a draft')
     await page.goto(campaignUrl)
@@ -712,8 +726,10 @@ async function flows(browser: Browser, s: Seed) {
     await page.goto(`${s.base}/settings/team`)
     await page.getByLabel('Email', { exact: true }).fill('new.teammate@example.com')
     await page.getByLabel('Role', { exact: true }).selectOption('admin')
-    await page.getByRole('button', { name: 'Send invitation' }).click()
-    await page.getByText('new.teammate@example.com').waitFor({ timeout: 10_000 })
+    // The pass runs on the `test` provider, so the page offers the link instead of an email.
+    await page.getByRole('button', { name: 'Create invitation' }).click()
+    await page.getByRole('textbox', { name: 'Invitation link' }).waitFor({ timeout: 10_000 })
+    await page.getByRole('cell', { name: /new\.teammate@example\.com/ }).waitFor({ timeout: 10_000 })
   })
 
   await step('api-key', async (page) => {
@@ -767,6 +783,19 @@ async function flows(browser: Browser, s: Seed) {
     if (!inside) throw new Error('focus left the open dialog')
     await page.keyboard.press('Escape')
     await dialog.waitFor({ state: 'detached' })
+  })
+
+  await step('delete-newsletter', async (page) => {
+    await page.goto(`${s.base}/settings/newsletter`)
+    // Each page load starts on the seeded newsletter; switch to the one the create flow made.
+    await page.getByRole('button', { name: 'The Corgi Weekly' }).first().click()
+    await page.getByRole('menuitem', { name: /Dog park digest/ }).click()
+    await page.getByRole('button', { name: 'Delete Dog park digest', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Delete Dog park digest?' })
+    await dialog.getByLabel('Type Dog park digest to confirm').fill('Dog park digest')
+    await dialog.getByRole('button', { name: 'Delete newsletter' }).click()
+    await toast(page, 'Newsletter deleted.')
+    await page.getByRole('button', { name: 'Delete Dog park digest', exact: true }).waitFor({ state: 'detached', timeout: 10_000 })
   })
   await context.close()
 }

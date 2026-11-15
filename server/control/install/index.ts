@@ -44,6 +44,9 @@ export async function setSetting(ctx: StoreCtx, key: string, value: string): Pro
 /** The public URL: APP_URL, else what the first sign-in taught us. */
 export const appUrl = (ctx: StoreCtx) => ctx.config.appUrl || getSettingSync(ctx, 'app_url')
 
+/** Whether system email reaches anyone. The built-in `test` provider only writes to the outbox. */
+export const emailConfigured = (ctx: StoreCtx) => (getSettingSync(ctx, 'email_provider') || 'test') !== 'test'
+
 export function learnAppUrl(ctx: StoreCtx, origin: string) {
   if (ctx.config.appUrlFixed || !origin.startsWith('http')) return
   if (!getSettingSync(ctx, 'app_url')) ctx.db.run('INSERT OR IGNORE INTO install_settings (key, value) VALUES (?, ?)', 'app_url', origin)

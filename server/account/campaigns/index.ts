@@ -8,7 +8,7 @@ import { getNewsletterRow } from '../newsletters/index.ts'
 import { emptyDoc, parseTheme, themeSchema, renderEmail, renderWeb } from '../render/index.ts'
 import { assertEditable, assertRevision, audienceSchema, draftFields, getCampaign, getCampaignRow, serializeCampaign, statusSchema, type CampaignAudience, type CampaignRow } from './model.ts'
 import { reviewChecks } from './review.ts'
-import { uploadImageAction } from './uploads.ts'
+import { deleteImageAction, imageUsageAction, listImagesAction, uploadImageAction } from './uploads.ts'
 export { getCampaign, getCampaignRow, serializeCampaign, transitionCampaign, statusSchema, audienceSchema } from './model.ts'
 export type { Campaign, CampaignRow, CampaignStatus, CampaignAudience } from './model.ts'
 export { reviewChecks } from './review.ts'
@@ -156,6 +156,9 @@ export const campaignsModule = {
         },
       }),
       uploadImageAction,
+      listImagesAction,
+      imageUsageAction,
+      deleteImageAction,
     )
   },
 }

@@ -16,6 +16,7 @@ import { controlMigrations } from '../server/control/schema.ts'
 import { accountRegistry } from '../server/account/modules.ts'
 import { accountMigrations } from '../server/account/schema.ts'
 import { createEdge, type Edge } from '../server/edge/index.ts'
+import { withSpaFallback } from '../server/edge/assets.ts'
 
 interface Env {
   CONTROL: DurableObjectNamespace<ControlStore>
@@ -302,7 +303,7 @@ function edgeFor(env: Env): Edge {
       }
     },
     blobs: env.IMAGES ? r2Blobs(env.IMAGES) : null,
-    assets: (request) => env.ASSETS.fetch(request),
+    assets: withSpaFallback((request) => env.ASSETS.fetch(request)),
     now: Date.now,
     clientIp: (request) => request.headers.get('cf-connecting-ip') || '',
   })

@@ -7,8 +7,9 @@ import { newId } from '../../core/ids.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
 import { planLimits } from '../billing/index.ts'
-import { appUrl } from '../install/index.ts'
+import { appUrl, emailConfigured } from '../install/index.ts'
 import { ownedAccount } from './index.ts'
+import type { ControlRegistrar } from '../rpc.ts'
 
 const accountId = z.string().min(1).describe('The account that owns the newsletter.')
 const newsletterId = z.string().min(1).describe('The newsletter to share.')
@@ -66,20 +67,45 @@ function limitInvites(ctx: StoreCtx, email: string, ownerId: string) {
   if (!allowRate(ctx.db, `team:email:${email}`, 5, 86_400_000, ctx.now()) || !allowRate(ctx.db, `team:owner:${ownerId}`, 50, 3_600_000, ctx.now())) throw new AppError('rate_limited', 'Too many invitations. Try again later.', 429)
 }
 
-async function emailInvite(ctx: StoreCtx, invite: Invite, secret: string, name: string) {
-  const failed = () => new AppError('email_failed', 'The invitation was saved but email delivery failed. Check email settings, then use resend to try again.', 502)
+const inviteLink = (ctx: StoreCtx, secret: string) => `${appUrl(ctx)}/invite?token=${encodeURIComponent(secret)}`
+
+/** Whether the email went out. A failure keeps the invite: the owner can share the link or resend. */
+async function emailInvite(ctx: StoreCtx, invite: Invite, secret: string, name: string): Promise<boolean> {
   try {
     const result = await sendSystemEmail(ctx, {
       to: invite.email, subject: `Join ${name} on MailCorgi`, kind: 'team.invite',
-      ...simpleEmail({ title: `You’re invited to ${name}`, lines: [`Join as ${invite.role === 'admin' ? 'an admin' : 'a member'}. This link expires in 7 days.`, 'Sign in or create an account with this email address to accept.'], link: { label: 'Accept invitation', url: `${appUrl(ctx)}/invite?token=${encodeURIComponent(secret)}` } }),
+      ...simpleEmail({ title: `You’re invited to ${name}`, lines: [`Join as ${invite.role === 'admin' ? 'an admin' : 'a member'}. This link expires in 7 days.`, 'Sign in or create an account with this email address to accept.'], link: { label: 'Accept invitation', url: inviteLink(ctx, secret) } }),
     })
-    if (!result.ok) throw failed()
+    return result.ok
   } catch {
-    throw failed()
+    return false
   }
 }
 
 const inviteSummary = (i: Invite) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expires_at })
+
+// Only the owner reaches these responses, and the owner may invite anyone, so the link leaks nothing.
+// The token is stored hashed, so this response is the only time it exists in readable form.
+async function sendInvite(ctx: StoreCtx, invite: Invite, secret: string, name: string) {
+  const emailed = await emailInvite(ctx, invite, secret, name)
+  return { ...inviteSummary(invite), link: inviteLink(ctx, secret), emailed }
+}
+
+declare module '../rpc.ts' {
+  interface ControlRpc {
+    removeNewsletterAccess(args: { accountId: string; newsletterId: string }): Promise<void>
+  }
+}
+
+/** A deleted newsletter's team grants and pending invites. Called by the account store's delete job. */
+export function registerTeamRpc(reg: ControlRegistrar) {
+  reg.rpc('removeNewsletterAccess', (ctx, { accountId, newsletterId }) => {
+    ctx.db.tx(() => {
+      ctx.db.run('DELETE FROM memberships WHERE account_id = ? AND newsletter_id = ? AND role != ?', accountId, newsletterId, 'owner')
+      ctx.db.run('DELETE FROM invites WHERE account_id = ? AND newsletter_id = ?', accountId, newsletterId)
+    })
+  })
+}
 
 export const teamActions = [
   defineAction({ name: 'team.list', description: 'List this newsletter’s members and pending invitations. Only the owner manages the team.', scope: 'control', role: 'user', effect: 'read', resource: { type: 'account', param: 'accountId' }, input: z.object(scope), handler: async (ctx, input, actor) => {
@@ -87,9 +113,10 @@ export const teamActions = [
     return {
       members: ctx.db.all<{ userId: string; name: string; email: string; role: 'admin' | 'member' }>('SELECT u.id AS userId, u.name, u.email, m.role FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.account_id = ? AND m.newsletter_id = ? ORDER BY m.created_at, u.id', input.accountId, input.newsletterId),
       invites: ctx.db.all<Invite>('SELECT * FROM invites WHERE account_id = ? AND newsletter_id = ? AND accepted_at IS NULL AND expires_at > ? ORDER BY expires_at, id', input.accountId, input.newsletterId, ctx.now()).map(inviteSummary),
+      emailConfigured: emailConfigured(ctx),
     }
   } }),
-  defineAction({ name: 'team.invite', description: 'Invite someone to a newsletter. Pending invitations reserve team seats.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ ...scope, email: z.string().trim().toLowerCase().email().max(254).describe('The address that must accept this invitation.'), role }), handler: async (ctx, input, actor) => {
+  defineAction({ name: 'team.invite', description: 'Invite someone to a newsletter. Pending invitations reserve team seats. Returns the invitation link once, to share by hand when email is not set up.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ ...scope, email: z.string().trim().toLowerCase().email().max(254).describe('The address that must accept this invitation.'), role }), handler: async (ctx, input, actor) => {
     const nl = await ownerNewsletter(ctx, input, actor)
     const secret = randomToken()
     const hash = await sha256Hex(secret)
@@ -104,10 +131,9 @@ export const teamActions = [
       ctx.db.run('INSERT INTO invites (id, account_id, newsletter_id, email, role, token_hash, invited_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', row.id, row.account_id, row.newsletter_id, row.email, row.role, row.token_hash, row.invited_by, row.expires_at)
       return row
     })
-    await emailInvite(ctx, invite, secret, nl.name)
-    return inviteSummary(invite)
+    return sendInvite(ctx, invite, secret, nl.name)
   } }),
-  defineAction({ name: 'team.resend', description: 'Replace an unused invitation link and email it again.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ ...scope, inviteId }), handler: async (ctx, input, actor) => {
+  defineAction({ name: 'team.resend', description: 'Replace an unused invitation link and email it again. Returns the new link once.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ ...scope, inviteId }), handler: async (ctx, input, actor) => {
     const nl = await ownerNewsletter(ctx, input, actor)
     const secret = randomToken()
     const hash = await sha256Hex(secret)
@@ -123,8 +149,7 @@ export const teamActions = [
       ctx.db.run('UPDATE invites SET token_hash = ?, expires_at = ? WHERE id = ?', hash, row.expires_at, row.id)
       return row
     })
-    await emailInvite(ctx, invite, secret, nl.name)
-    return inviteSummary(invite)
+    return sendInvite(ctx, invite, secret, nl.name)
   } }),
   defineAction({ name: 'team.revoke', description: 'Revoke a pending newsletter invitation.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ ...scope, inviteId }), handler: (ctx, input, actor) => {
     ownedAccount(ctx, input.accountId, actor.userId)

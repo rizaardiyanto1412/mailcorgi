@@ -150,8 +150,8 @@ export function SignUpPage() {
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [key]: e.target.value })
   if (!boot.signupOpen) {
     return (
-      <AuthCard title="Sign-up is closed" subtitle="This install is by invitation" footer={<Link to="/signin" className="font-medium text-accent-fg">Back to sign in</Link>}>
-        <p className="text-sm text-fg-2">Ask the person who runs this install to invite you.</p>
+      <AuthCard title="Sign-up is by invitation" subtitle="You need an invitation link to join" footer={<Link to="/signin" className="font-medium text-accent-fg">Back to sign in</Link>}>
+        <p className="text-sm text-fg-2">Ask the person who runs this install to invite you. Open the invitation link they send you to create your account.</p>
       </AuthCard>
     )
   }

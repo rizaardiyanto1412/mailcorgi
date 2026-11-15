@@ -4,11 +4,13 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
-  // The built web app. The Worker runs first for everything except hashed build assets.
+  // The built web app. The Worker runs first for everything except hashed build assets, and serves
+  // the SPA shell for client routes itself, so a missing /assets/ file is a 404, not index.html.
+  // web/public/_headers makes /assets/* immutable.
   "assets": {
     "directory": "./web/dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    "not_found_handling": "none",
     "run_worker_first": ["/*", "!/assets/*"]
   },
   "durable_objects": {

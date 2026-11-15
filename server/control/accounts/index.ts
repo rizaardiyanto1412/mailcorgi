@@ -1,4 +1,4 @@
-import { teamActions } from './team.ts'
+import { registerTeamRpc, teamActions } from './team.ts'
 import { planLimits } from '../billing/index.ts'
 import { accountActions, registerAccountJobs } from './management.ts'
 import { AppError } from '../../core/http.ts'
@@ -110,6 +110,7 @@ export const accountsModule = {
   name: 'accounts',
   register(reg: ControlRegistrar) {
     registerAccountJobs(reg)
+    registerTeamRpc(reg)
     reg.rpc('resolveSession', (ctx, { sessionId, wantAccountId }) => resolveSession(ctx, sessionId, wantAccountId))
     reg.rpc('masterKey', (ctx) => ({ master: ctx.keys.master }))
     reg.job<{ accountId: string }>('policy.push', async (ctx, { accountId }, budget) => {

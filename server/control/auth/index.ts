@@ -7,7 +7,7 @@ import { newId } from '../../core/ids.ts'
 import { AppError, clientIp, readJson, validate, type StoreEnv } from '../../core/http.ts'
 import { allowRate, clearRate } from '../../core/ratelimit.ts'
 import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
-import { appUrl, learnAppUrl, getSettingSync } from '../install/index.ts'
+import { appUrl, emailConfigured, learnAppUrl, getSettingSync } from '../install/index.ts'
 import { createAccountForUser, isInstallAdmin, resolveSession, validateInviteSignup } from '../accounts/index.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 
@@ -118,7 +118,8 @@ function consumeCode(ctx: StoreCtx, address: string, purpose: 'signup' | 'signin
   if (!accepted) throw new AppError('bad_code', 'That code is wrong or has expired. Ask for a new one.', 400)
 }
 
-export const signupOpen = (ctx: StoreCtx) => getSettingSync(ctx, 'signup_mode') !== 'closed' && (ctx.config.cloud || allowedEmails(ctx).length > 0)
+// Self-hosted sign-up outside setup needs an emailed code, so without a real provider it is by invitation only.
+export const signupOpen = (ctx: StoreCtx) => getSettingSync(ctx, 'signup_mode') !== 'closed' && (ctx.config.cloud || (allowedEmails(ctx).length > 0 && emailConfigured(ctx)))
 const allowedEmails = (ctx: StoreCtx) => [...ctx.config.allowedEmails, ...getSettingSync(ctx, 'allowed_emails').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)]
 
 /** Whether an address may sign itself up. Invitations are handled by the team unit. */

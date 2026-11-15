@@ -17,6 +17,7 @@ import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
 import { markdown } from '../api/index.ts'
 import { controlRegistry } from '../control/modules.ts'
+import { HSTS_VALUE, wantsHsts } from './assets.ts'
 
 export const SESSION_COOKIE = 'mc_session'
 export const ACCOUNT_COOKIE = 'mc_account'
@@ -250,11 +251,15 @@ export function createEdge(deps: EdgeDeps): Edge {
 
   return {
     async fetch(request, peer = null) {
+      let response: Response
       try {
-        return withSecurityHeaders(await handle(request, peer))
+        response = withSecurityHeaders(await handle(request, peer))
       } catch (err) {
-        return withSecurityHeaders(errorResponse(err))
+        response = withSecurityHeaders(errorResponse(err))
       }
+      const forwardedProto = deps.trustsProxy?.(peer) ? request.headers.get('x-forwarded-proto') : null
+      if (wantsHsts(deps.config.appUrl, new URL(request.url), forwardedProto)) response.headers.set('Strict-Transport-Security', HSTS_VALUE)
+      return response
     },
   }
 }

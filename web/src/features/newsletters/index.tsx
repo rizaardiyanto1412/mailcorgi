@@ -7,6 +7,7 @@ import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Textarea, useFeedback } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
+import { DeleteNewsletterButton } from './DeleteNewsletter.tsx'
 
 function NewsletterSettings() {
   const { current, account, refreshNewsletters, setCurrent } = useSession()
@@ -14,7 +15,7 @@ function NewsletterSettings() {
   const canAdmin = useCanAdmin()
   const restore = useAction('newsletters.unarchive', { invalidate: ['newsletters.list'] })
   const archived = all.data?.newsletters.filter((n) => n.archivedAt !== null) ?? []
-  return <div className="flex flex-col gap-5"><PageHeader title="Newsletter" description={!canAdmin ? 'You can view these settings. Newsletter admins and the owner can change them.' : current ? `Name, address, sender and images for ${current.name}.` : 'Name, address, sender and images.'} />{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
+  return <div className="flex flex-col gap-5"><PageHeader title="Newsletter" description={!canAdmin ? 'You can view these settings. Newsletter admins and the owner can change them.' : current ? `Name, address, sender and images for ${current.name}.` : 'Name, address, sender and images.'} />{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><div className="flex gap-2"><Button size="sm" loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button><DeleteNewsletterButton size="sm" newsletter={n} onDeleted={async () => { await all.refetch() }} /></div></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
 }
 
 function NewsletterForm() {
@@ -100,6 +101,19 @@ function NewsletterForm() {
         <Button variant="danger" onClick={() => void doArchive()} loading={archive.isPending}>
           Archive newsletter
         </Button>
+      </Card>}
+      {account?.owner && <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <h2 className="text-[15px] font-semibold">Delete</h2>
+          <p className="text-[13px] text-fg-3">Removes the newsletter and everything in it for good. Not possible while a campaign is sending or scheduled.</p>
+        </div>
+        <DeleteNewsletterButton newsletter={current} onDeleted={async () => {
+          await refreshNewsletters()
+          const next = newsletters.find((n) => n.id !== current.id)
+          if (next) setCurrent(next.id)
+          toast('Newsletter deleted.')
+          navigate(next ? '/settings/newsletter' : '/welcome')
+        }} />
       </Card>}
     </div>
   )
