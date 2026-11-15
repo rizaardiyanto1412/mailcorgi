@@ -24,7 +24,8 @@
     "ci": "sh scripts/ci.sh",
     "deploy": "npm run build:web && wrangler deploy",
     "docs:api": "tsx scripts/docs-api.ts",
-    "test:slow": "tsx --test server/test/*.slow.ts"
+    "test:slow": "tsx --test server/test/*.slow.ts",
+    "ui:pass": "tsx scripts/ui-pass.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
@@ -59,6 +60,7 @@
     "eslint": "^10.0.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "lucide-react": "^1.71.0",
+    "playwright": "^1.65.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -78,7 +80,7 @@
         "description": "One Durable Object per account: newsletters, contacts, campaigns and stats. Created for you."
       },
       "IMAGES": {
-        "description": "R2 bucket for uploaded images. R2 must be enabled on your account once (**R2 \u2192 Overview** in the dashboard). Without R2, delete the `r2_buckets` block in `wrangler.jsonc`."
+        "description": "R2 bucket for uploaded images. R2 must be enabled on your account once (**R2 → Overview** in the dashboard). Without R2, delete the `r2_buckets` block in `wrangler.jsonc`."
       },
       "WORKERS_PLAN": {
         "description": "Keep `free` on Workers Free. On Workers Paid, delete the `WORKERS_PLAN` line from `wrangler.jsonc` in your repository so each send run can make up to 900 requests."

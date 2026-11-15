@@ -265,6 +265,9 @@ export function renderEmail(input: RenderEmailInput): {
   const text = `${part.text.trim()}${notes.length ? '\n\n' + notes.map((url, i) => `[${i + 1}] ${url}`).join('\n') : ''}\n\n${ctx.merge(theme.footerText)}\n${address}\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}\nPreferences: ${safeUrl(links.preferences, true)}\nView on the web: ${safeUrl(links.web, true)}`
   return { subject: ctx.merge(string(input.campaign.subject)).replace(/[\r\n]/g, ' '), html, text, headers: { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } }
 }
+/** Plain text for cards and meta descriptions: no link footnotes, list markers or merge-field fallbacks. */
+const excerptOf = (text: string) => text.split('\n').filter((line) => !/^\s*\[\d+\]\s/.test(line)).map((line) => line.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')).join(' ').replace(/\s\[\d+\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240)
+
 export function renderWeb(input: RenderWebInput): {
   html: string
   excerpt: string
@@ -276,7 +279,7 @@ export function renderWeb(input: RenderWebInput): {
   const title = `<h1 style="font-size:${theme.headingSizes[0]}px">${escapeHtml(ctx.merge(string(input.campaign.subject)))}</h1>`
   const author = input.author ? `<p>${escapeHtml(string(input.author.name))}</p>` : ''
   const findImage = (node: DocNode): string | undefined => node.type === 'image' ? safeUrl(string(node.attrs?.src), true) || undefined : node.content?.map(findImage).find(Boolean)
-  return { html: page(header(theme, input.newsletter) + title + author + part.html, theme), excerpt: part.text.replace(/\s+/g, ' ').trim().slice(0, 240), image: findImage(campaignDoc(input.campaign)) }
+  return { html: page(header(theme, input.newsletter) + title + author + part.html, theme), excerpt: excerptOf(part.text), image: findImage(campaignDoc(input.campaign)) }
 }
 export function renderDocPreview(doc: unknown, theme: Record<string, unknown>): string {
   const parsed = parseTheme(theme)

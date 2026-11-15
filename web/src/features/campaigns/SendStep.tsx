@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import type { Campaign, ReviewCheck } from '../../../../server/account/campaigns/index.ts'
 import { useSession } from '../../lib/session.tsx'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { Badge, Banner, Button, Field, Input, Select, Spinner, Switch, useFeedback } from '../../ui/index.tsx'
+import { Badge, Banner, Button, Field, Input, Select, Spinner, StatusBadge, statusLabel, Switch, useFeedback } from '../../ui/index.tsx'
 
 const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const zones = (): string[] => {
@@ -115,7 +115,7 @@ export function Progress({ campaign, onChange }: {
   const pct = counts.planned ? Math.round((done / counts.planned) * 100) : 0
   const pending = steps.find((s) => s.state === 'pending')
   return <section className="space-y-4 rounded-xl border border-line bg-surface p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">{status === 'scheduled' ? 'Scheduled' : status === 'sent' ? 'Sent' : status === 'paused' ? 'Paused' : status === 'canceled' ? 'Canceled' : 'Sending'}</h2><Badge tone={status === 'sent' ? 'ok' : status === 'paused' ? 'warn' : status === 'canceled' ? 'danger' : 'accent'}>{status}</Badge></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">{status === 'scheduled' ? 'Scheduled' : status === 'sent' ? 'Sent' : status === 'paused' ? 'Paused' : status === 'canceled' ? 'Canceled' : 'Sending'}</h2><StatusBadge status={status} /></div>
     {status === 'scheduled' && <p className="text-sm">Goes out {when(progress.data.scheduledAt)}.</p>}
     {status === 'paused' && progress.data.pauseMessage && <Banner kind="warn">{progress.data.pauseMessage}</Banner>}
     {status === 'sent' && <p className="text-sm text-fg-3">Finished {when(progress.data.sentAt)}. <Link className="underline" to={`/campaigns/${campaign.id}/report`}>Open the report</Link></p>}
@@ -124,7 +124,7 @@ export function Progress({ campaign, onChange }: {
       <p className="text-sm text-fg-3">{done.toLocaleString()} of {counts.planned.toLocaleString()} handled{counts.queued ? `, ${counts.queued.toLocaleString()} waiting` : ''}{counts.sending ? `, ${counts.sending} in flight` : ''}</p>
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">{LABELS.map(([key, label]) => <div key={key} className="rounded-lg bg-sunken p-3"><dt className="text-xs text-fg-3">{label}</dt><dd className="text-lg font-semibold">{(counts[key as keyof typeof counts] ?? 0).toLocaleString()}</dd></div>)}</dl>
     </>}
-    {steps.length > 1 && <ol className="space-y-1 text-sm">{steps.map((s) => <li key={s.id} className="flex flex-wrap items-center gap-2"><Badge tone={s.state === 'done' ? 'ok' : s.state === 'released' ? 'accent' : 'neutral'}>{s.state}</Badge><span>Step {s.step}: {s.kind === 'warmup' ? 'warm-up' : s.kind === 'more' ? 'the rest' : 'main'} · {s.planned.toLocaleString()} subscribers{s.state === 'pending' && s.releaseAt ? ` · releases ${when(s.releaseAt)}` : ''}</span></li>)}</ol>}
+    {steps.length > 1 && <ol className="space-y-1 text-sm">{steps.map((s) => <li key={s.id} className="flex flex-wrap items-center gap-2"><Badge tone={s.state === 'done' ? 'ok' : s.state === 'released' ? 'accent' : 'neutral'}>{statusLabel(s.state)}</Badge><span>Step {s.step}: {s.kind === 'warmup' ? 'warm-up' : s.kind === 'more' ? 'the rest' : 'main'} · {s.planned.toLocaleString()} subscribers{s.state === 'pending' && s.releaseAt ? ` · releases ${when(s.releaseAt)}` : ''}</span></li>)}</ol>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap gap-2">
       {status === 'sending' && <Button loading={pause.isPending} onClick={() => pause.mutate({ campaignId: campaign.id })}>Pause</Button>}

@@ -17,6 +17,8 @@
   --accent-hover: #9a3412;
   --accent-soft: #fdeee4;
   --accent-fg: #b23a0a;
+  --on-accent: #ffffff;
+  --on-danger: #ffffff;
   --ok: #17803d;
   --ok-soft: #e4f6ea;
   --warn: #a15c00;
@@ -43,6 +45,8 @@
   --accent-hover: #fb923c;
   --accent-soft: #3a2316;
   --accent-fg: #fdba74;
+  --on-accent: #1d1007;
+  --on-danger: #1f0b0a;
   --ok: #4cc27a;
   --ok-soft: #13291c;
   --warn: #e3a44a;
@@ -71,6 +75,8 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);
   --color-accent-fg: var(--accent-fg);
+  --color-on-accent: var(--on-accent);
+  --color-on-danger: var(--on-danger);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-warn: var(--warn);

@@ -53,6 +53,23 @@ function FilterNode({ value, onChange, onRemove, options, depth = 0 }: { value: 
   if (!('field' in value)) return null
   return <div className="flex min-w-0 items-start gap-2"><ConditionEditor condition={value} onChange={onChange} options={options} />{onRemove && <Button size="sm" variant="ghost" onClick={onRemove}>Remove</Button>}</div>
 }
+/** True when every condition has the values the server needs, so a count or list can run. */
+export function isComplete(filter: Filter | null): boolean {
+  if (!filter) return true
+  if ('all' in filter) return filter.all.every(isComplete)
+  if ('any' in filter) return filter.any.every(isComplete)
+  if ('not' in filter) return isComplete(filter.not)
+  const c: Condition = filter
+  switch (c.field) {
+    case 'tag': return !!c.id
+    case 'custom': return /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(c.key) && (c.op === 'set' || c.op === 'unset' || (c.value !== undefined && c.value !== ''))
+    case 'email': return !!c.value
+    case 'status': case 'source': case 'provider': return c.in.length > 0
+    case 'engagement': return Number.isInteger(c.issues) && c.issues >= 1
+    default: return c.op === 'never' || (typeof c.value === 'number' && Number.isFinite(c.value))
+  }
+}
+
 export function FilterBuilder({ newsletterId, value, onChange }: { newsletterId: string; value: Filter | null; onChange: (v: Filter | null) => void }) {
   const tags = useActionQuery('tags.list', { newsletterId })
   const fields = useActionQuery('contactFields.list', { newsletterId })

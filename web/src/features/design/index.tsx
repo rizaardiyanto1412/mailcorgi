@@ -3,7 +3,7 @@ import type { Feature } from '../../app/feature.ts'
 import { themePresets, themeSchema, type Theme } from '../../../../server/account/render/theme.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useDocumentTitle, useSession } from '../../lib/session.tsx'
-import { Banner, Button, EmptyState, Field, Input, Select, Spinner, Textarea } from '../../ui/index.tsx'
+import { Banner, Button, EmptyState, Field, Input, PageHeader, Select, Spinner, Textarea } from '../../ui/index.tsx'
 import { Preview } from '../campaigns/Preview.tsx'
 
 function DesignPage() {
@@ -28,15 +28,15 @@ function ThemeEditor({ newsletterId, initial }: {
     setValidation('')
   }
   const colors = ['background', 'surface', 'text', 'muted', 'accent', 'buttonColor', 'buttonText'] satisfies (keyof Theme)[]
-  return <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
-    <div className="flex items-center justify-between gap-3"><h1 className="text-xl font-semibold">Newsletter design</h1><Button variant="primary" loading={update.isPending} onClick={() => {
+  return <div className="flex flex-col gap-5">
+    <PageHeader title="Design" description="Colors, fonts and layout for your emails and website." action={<Button variant="primary" loading={update.isPending} onClick={() => {
       const parsed = themeSchema.safeParse(theme)
       if (!parsed.success) {
         setValidation('Check the design values before saving.')
         return
       }
       update.mutate({ newsletterId, theme: parsed.data })
-    }}>Save design</Button></div>
+    }}>Save design</Button>} />
     {(validation || update.error) && <Banner kind="danger">{validation || update.error?.message}</Banner>}
     {saved && <Banner kind="ok">Design saved.</Banner>}
     <div className="flex flex-wrap gap-2" aria-label="Design presets">{themePresets.map((preset) => <Button key={preset.name} onClick={() => change(preset.theme)}>{preset.name}</Button>)}</div>

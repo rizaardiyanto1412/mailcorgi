@@ -4,15 +4,17 @@ import { nodeSchema } from '../../../../server/account/render/doc.ts'
 import type { Feature } from '../../app/feature.ts'
 import type { ActionOutput } from '../../../../server/registry.ts'
 import { useAction, useActionQuery } from '../../lib/api.ts'
-import { useDocumentTitle, useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, EmptyState, Field, Input, PageHeader, Select, Spinner, Textarea } from '../../ui/index.tsx'
+import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
+import { Banner, Button, Card, EmptyState, Field, Input, NoAccess, PageHeader, Select, Spinner, Textarea } from '../../ui/index.tsx'
 const CampaignEditor = lazy(() => import('../campaigns/Editor.tsx').then((module) => ({ default: module.CampaignEditor })))
 
 function FormsPage() {
   useDocumentTitle('Signup forms')
   const { current } = useSession()
-  const query = useActionQuery('signup.get', { newsletterId: current?.id ?? '' }, { enabled: !!current })
+  const canAdmin = useCanAdmin()
+  const query = useActionQuery('signup.get', { newsletterId: current?.id ?? '' }, { enabled: !!current && canAdmin })
   if (!current) return <EmptyState title="Choose a newsletter" body="Create a newsletter to set up its signup form." />
+  if (!canAdmin) return <div className="flex flex-col gap-5"><PageHeader title="Signup forms" description="Invite readers to subscribe on your site or with a hosted form." /><NoAccess title="Newsletter admins manage signup forms" body="Ask an admin or the owner to change the form." /></div>
   if (query.isPending) return <Spinner />
   if (query.error) return <Banner kind="danger">{query.error.message}</Banner>
   return <FormsEditor key={current.id} newsletterId={current.id} initial={query.data} />
@@ -71,4 +73,4 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     </section>
   </div>
 }
-export const signupFeature: Feature = { name: 'signup', settings: [{ to: '/settings/forms', label: 'Signup forms' }], settingsRoutes: [{ path: 'forms', element: <FormsPage /> }] }
+export const signupFeature: Feature = { name: 'signup', settings: [{ to: '/settings/forms', label: 'Signup forms', role: 'admin' }], settingsRoutes: [{ path: 'forms', element: <FormsPage /> }] }
