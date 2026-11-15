@@ -1,0 +1,3 @@
+email,name,status,date_created
+active@example.com,Reader,active,2024-01-02 03:04:05
+optout@example.com,Reader,unsubscribed,2024-01-02 03:04:05

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { newId } from '../../core/ids.ts'
 import { defineAction, runAction } from '../../core/actions.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { AppError, unauthorized } from '../../core/http.ts'
@@ -7,8 +8,24 @@ import { compileFilter, filterSchema, type Filter } from '../segments/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { contactRow, deleteContact, emailSchema, fieldValuesSchema, serializeContact, statusSchema, subscribe, unsubscribe, validateFields, validateTags, type ContactRow } from './state.ts'
 import { taxonomyActions } from './taxonomy.ts'
-export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider } from './state.ts'
+import { emailHash } from './hash.ts'
+export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider, validateFields } from './state.ts'
 export type { Contact, ContactStatus, SubscribeInput, SubscribeOutcome } from './state.ts'
+
+export function isDeleted(ctx: StoreCtx, email: string, newsletterId: string): boolean {
+  return !!ctx.db.get('SELECT 1 FROM deleted_contacts WHERE email_hash = ? AND newsletter_id = ?', emailHash(email.trim().toLowerCase()), newsletterId)
+}
+
+export function ensureTags(ctx: StoreCtx, newsletterId: string, rawNames: string[]): string[] {
+  const names = z.array(z.string().trim().min(1).max(120)).max(100).parse(rawNames)
+  return ctx.db.tx(() => names.map((name) => {
+    const existing = ctx.db.get<{ id: string }>('SELECT id FROM tags WHERE newsletter_id = ? AND name = ?', newsletterId, name)
+    if (existing) return existing.id
+    const id = newId('tag')
+    ctx.db.run('INSERT INTO tags (id, newsletter_id, name) VALUES (?, ?, ?)', id, newsletterId, name)
+    return id
+  }))
+}
 
 export const newsletterIdSchema = z.string().min(1).describe('The newsletter id')
 const contactId = z.string().min(1).describe('The contact id')
