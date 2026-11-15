@@ -13,6 +13,16 @@ import { testBillingProvider } from './test.ts'
 export { plans, planLimits, unlimited } from './plans.ts'
 export type { BillingProvider, BillingEvent } from './provider.ts'
 
+/** Live counts from the account store. The hourly snapshot, with its age, is the fallback when the store cannot answer. */
+async function liveUsage(ctx: StoreCtx, accountId: string): Promise<{ contacts: number; emailsSent: number; live: boolean; updatedAt: number | null }> {
+  try {
+    return { ...(await ctx.stores.account(accountId).liveUsage({})), live: true, updatedAt: ctx.now() }
+  } catch {
+    const snapshot = ctx.db.get<{ contacts: number; emails_sent: number; updated_at: number }>('SELECT contacts, emails_sent, updated_at FROM usage_snapshots WHERE account_id = ? AND period = ?', accountId, period(ctx.now()))
+    return { contacts: snapshot?.contacts ?? 0, emailsSent: snapshot?.emails_sent ?? 0, live: false, updatedAt: snapshot?.updated_at ?? null }
+  }
+}
+
 export const GRACE_MS = 7 * 86_400_000
 export const BLOCK_CANCEL_MS = 30 * 86_400_000
 const period = (now: number) => new Date(now).toISOString().slice(0, 7)
@@ -111,11 +121,11 @@ export const billingModule = {
       return 'done'
     })
     return reg.actions(
-      defineAction({ name: 'billing.get', description: 'Read your current plan, prices and usage.', scope: 'control', role: 'user', effect: 'read', resource: { type: 'account', param: 'accountId' }, input: z.object({ accountId }), handler: (ctx, input, actor) => {
+      defineAction({ name: 'billing.get', description: 'Read your current plan, prices and usage. Usage is counted live from the account; when the account cannot answer, the last hourly snapshot is returned with its time.', scope: 'control', role: 'user', effect: 'read', resource: { type: 'account', param: 'accountId' }, input: z.object({ accountId }), handler: async (ctx, input, actor) => {
         requireCloud(ctx)
         const account = ownedAccount(ctx, input.accountId, actor.userId)
-        const usage = ctx.db.get<{ contacts: number; emails_sent: number }>('SELECT contacts, emails_sent FROM usage_snapshots WHERE account_id = ? AND period = ?', account.id, period(ctx.now()))
-        return { plan: account.plan, status: account.billing_status, periodEnd: account.plan_period_end, graceUntil: account.billing_grace_until, hasSubscription: !!account.billing_subscription_id, hasCustomer: !!account.billing_customer_id, provider: account.billing_provider || ctx.config.billingProvider, limits: planLimits(account.plan), plans: Object.values(plans), usage: { contacts: usage?.contacts ?? 0, emailsSent: usage?.emails_sent ?? 0 } }
+        const usage = await liveUsage(ctx, account.id)
+        return { plan: account.plan, status: account.billing_status, periodEnd: account.plan_period_end, graceUntil: account.billing_grace_until, hasSubscription: !!account.billing_subscription_id, hasCustomer: !!account.billing_customer_id, provider: account.billing_provider || ctx.config.billingProvider, limits: planLimits(account.plan), plans: Object.values(plans), usage }
       } }),
       defineAction({ name: 'billing.checkout', description: 'Open checkout for a paid plan.', scope: 'control', role: 'user', effect: 'write', resource: { type: 'account', param: 'accountId' }, input: z.object({ accountId, ...choice }), handler: async (ctx, input, actor) => {
         requireCloud(ctx)

@@ -20,4 +20,7 @@ export const migrations: readonly Migration[] = [{
     );
     CREATE INDEX imports_stalled ON imports(status, uploaded_at);
   `,
+}, {
+  id: '2026-11-16-imports-added-detail',
+  sql: "ALTER TABLE imports ADD COLUMN added_detail TEXT NOT NULL DEFAULT '{}';",
 }]

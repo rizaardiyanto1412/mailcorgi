@@ -27,7 +27,6 @@ function AddContact({ newsletterId, onClose }: { newsletterId: string; onClose: 
     try {
       const r = await create.mutateAsync({ newsletterId, email, name, fields })
       if (r.outcome === 'suppressed') setResult('This address opted out or is suppressed. Only the contact can confirm a new subscription.')
-      else if (r.outcome === 'limit') setResult('Your account has reached its contact limit. Remove inactive contacts or change your plan.')
       else onClose()
     } catch {}
   }

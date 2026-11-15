@@ -21,10 +21,15 @@ With `CLOUD=true`:
 - Anyone can sign up. MailCorgi emails a 6-digit code to confirm the address, so the email provider
   and the system sender in **Admin → Email** must work first. To limit sign-up, set `SIGNUP_MODE` to
   `allowlist` or `closed`, or change it in **Admin → Settings**.
-- New accounts start on the free plan. Owners see **Settings → Billing** with their plan, usage and an
-  upgrade button.
-- Limits apply to contacts, emails a month, newsletters and team members per newsletter. A blocked
-  account stops sending within one batch.
+- New accounts start on the free plan. Owners see **Settings → Billing** with their plan, live usage
+  and an upgrade button. Contacts count both subscribed and unconfirmed ones.
+- Limits apply to contacts, emails a month, newsletters and team members per newsletter (members plus
+  pending invitations). A limit error says how much is used, for example "1,000 of 1,000 contacts
+  used", and links to billing. At the contact limit the signup form tells new readers the newsletter
+  is not taking subscribers, and the owner gets one notification a month about it. A blocked account
+  stops sending within one batch.
+- The accounts list in **Admin** shows usage from an hourly snapshot and says how old it is. **Summary**
+  on an account counts live.
 
 Install admins are the addresses in `ADMIN_EMAILS`. They see `/admin`.
 
