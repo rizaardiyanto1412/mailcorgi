@@ -47,7 +47,7 @@ test('bundled CSV worker rejects malformed rows and duplicate headers without up
   }
 })
 
-test('100 MB CSV is read in bounded slices with backpressure', { skip: process.env.IMPORTS_SLOW !== '1', timeout: 120_000 }, () => {
+test('100 MB CSV is read in bounded slices with backpressure', { timeout: 120_000 }, () => {
   const row = 'reader@example.com,' + 'x'.repeat(1000) + '\n'
   const count = Math.floor((100 * 1024 * 1024 - 11) / row.length)
   const csv = 'email,name\n' + row.repeat(count)

@@ -23,7 +23,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "ci": "sh scripts/ci.sh",
     "deploy": "npm run build:web && wrangler deploy",
-    "docs:api": "tsx scripts/docs-api.ts"
+    "docs:api": "tsx scripts/docs-api.ts",
+    "test:slow": "tsx --test server/test/*.slow.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",

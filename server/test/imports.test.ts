@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import Papa from 'papaparse'
-import { createInstall, expectError, type Install, type Client } from './harness.ts'
+import { createInstall, expectError } from './harness.ts'
 import { runAction, type Actor } from '../core/actions.ts'
 import { AppError } from '../core/http.ts'
 import { Budget, runDueJobs } from '../core/jobs.ts'
@@ -10,23 +10,7 @@ import { hmac, toHex } from '../core/crypto.ts'
 import { classifyDomain } from '../account/imports/cleaning.ts'
 import { detectPreset, suggestMapping } from '../account/imports/presets.ts'
 import type { CsvRow } from '../account/imports/model.ts'
-import type { ActionInput } from '../registry.ts'
-
-async function finish(install: Install, owner: Client, newsletterId: string, importId: string) {
-  for (let i = 0; i < 300; i++) {
-    await install.runJobs()
-    const report = await owner.action('imports.get', { newsletterId, importId })
-    if (report.status === 'completed') return report
-    install.clock.advance(1000)
-  }
-  throw new Error('Import did not finish')
-}
-async function upload(owner: Client, newsletterId: string, rows: CsvRow[], extra: Partial<ActionInput<'imports.create'>> = {}) {
-  const imp = await owner.action('imports.create', { newsletterId, mapping: { email: 'email', status: 'status', signupDate: 'created_at' }, options: { consent: true }, ...extra })
-  for (let seq = 0; seq * 500 < rows.length; seq++) await owner.action('imports.addChunk', { newsletterId, importId: imp.id, seq, rows: rows.slice(seq * 500, (seq + 1) * 500) })
-  await owner.action('imports.start', { newsletterId, importId: imp.id, totalRows: rows.length })
-  return imp.id
-}
+import { finish, upload } from './imports-setup.ts'
 
 for (const fixture of fs.readdirSync(new URL('./fixtures/imports/', import.meta.url)).filter((f) => f.endsWith('.csv'))) {
   test(`preset fixture ${fixture} preserves consent, opt-outs and signup dates`, async () => {
@@ -128,13 +112,22 @@ test('members, mismatched newsletters, other accounts and read keys cannot mutat
     const imp = await owner.action('imports.create', { newsletterId: nl.id, mapping: { email: 'email' } })
     const ctx = install.app.account(owner.accountId!).ctx
     const member: Actor = { userId: 'member', email: 'member@example.com', owner: false, grants: { [nl.id]: 'member' }, access: 'full', via: 'web', installAdmin: false }
-    await assert.rejects(runAction(ctx, 'imports.get', { newsletterId: nl.id, importId: imp.id }, member), (e: unknown) => e instanceof AppError && e.status === 403)
+    await assert.doesNotReject(() => runAction(ctx, 'imports.get', { newsletterId: nl.id, importId: imp.id }, member))
+    await assert.doesNotReject(() => runAction(ctx, 'imports.list', { newsletterId: nl.id }, member))
+    await assert.doesNotReject(() => runAction(ctx, 'imports.skipped', { newsletterId: nl.id, importId: imp.id }, member))
+    for (const action of ['imports.create', 'imports.addChunk', 'imports.start', 'imports.cancel']) {
+      await assert.rejects(runAction(ctx, action, { newsletterId: nl.id, importId: imp.id, mapping: { email: 'email' }, seq: 0, rows: [{ email: 'reader@example.com' }], totalRows: 0 }, member), (e: unknown) => e instanceof AppError && e.status === 403)
+    }
     assert.equal((await expectError(() => owner.action('imports.get', { newsletterId: otherNl.id, importId: imp.id }))).status, 404)
     const other = await install.signUp({ email: 'other@example.com' })
     assert.equal((await other.actionRaw('imports.get', { newsletterId: nl.id, importId: imp.id })).status, 404)
     assert.equal((await install.fetch(`/api/actions/imports.skipped?newsletterId=${nl.id}&importId=${imp.id}`)).status, 401)
     member.owner = true; member.access = 'read'
-    await assert.rejects(runAction(ctx, 'imports.cancel', { newsletterId: nl.id, importId: imp.id }, member), (e: unknown) => e instanceof AppError && e.status === 403)
+    await assert.doesNotReject(() => runAction(ctx, 'imports.list', { newsletterId: nl.id }, member))
+    await assert.doesNotReject(() => runAction(ctx, 'imports.skipped', { newsletterId: nl.id, importId: imp.id }, member))
+    for (const action of ['imports.create', 'imports.addChunk', 'imports.start', 'imports.cancel']) {
+      await assert.rejects(runAction(ctx, action, { newsletterId: nl.id, importId: imp.id, mapping: { email: 'email' }, seq: 0, rows: [{ email: 'reader@example.com' }], totalRows: 0 }, member), (e: unknown) => e instanceof AppError && e.status === 403)
+    }
   } finally { install.close() }
 })
 
@@ -189,22 +182,6 @@ test('shared outbound budget yields and cancellation during DNS prevents writes'
     await install.runJobs()
     assert.equal((await owner.action('contacts.list', { newsletterId: nl.id })).contacts.length, 0)
     assert.equal((await owner.action('imports.get', { newsletterId: nl.id, importId: id })).status, 'canceled')
-  } finally { install.close() }
-})
-
-test('100,000 rows import on Node with bounded SQL parameters', { skip: process.env.IMPORTS_SLOW !== '1', timeout: 1_800_000 }, async () => {
-  const install = await createInstall()
-  try {
-    install.dns.set('example.com', 'MX', ['mx.example.com'])
-    const owner = await install.signUp({ email: 'owner@example.com' })
-    const nl = await owner.action('newsletters.create', { name: 'Large import' })
-    const id = await upload(owner, nl.id, Array.from({ length: 100_000 }, (_, i) => ({ email: `bulk${i}@example.com`, status: 'subscribed' })))
-    const report = await finish(install, owner, nl.id, id)
-    assert.equal(report.added, 100_000)
-    assert.equal(report.processedRows, 100_000)
-    assert.deepEqual(report.skipped, {})
-    const ctx = install.app.account(owner.accountId!).ctx
-    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM contacts WHERE newsletter_id = ?', nl.id)!.n, 100_000)
   } finally { install.close() }
 })
 
@@ -288,4 +265,15 @@ test('a source unsubscribe date overrides an active type and invalid signup date
     assert.equal(report.skipped.invalid_date, 2)
     assert.equal((await owner.action('contacts.list', { newsletterId })).contacts[0].status, 'unsubscribed')
   } finally { install.close() }
+})
+
+test('beehiiv detection tolerates partial, reordered and case-varied headers; unknown layouts keep editable mapping', () => {
+  for (const signal of ['Subscription Tier', 'UTM_CHANNEL', 'Referral Count', 'referral_code', 'Referring Site']) {
+    const headers = ['EXTRA COLUMN', signal, 'STATUS', 'Email', 'Created At']
+    assert.equal(detectPreset(headers), 'beehiiv')
+    assert.deepEqual(suggestMapping(headers), { email: 'Email', name: undefined, firstName: undefined, lastName: undefined, status: 'STATUS', signupDate: 'Created At', unsubscribeDate: undefined, tags: undefined, fields: {} })
+  }
+  assert.equal(detectPreset(['email', 'status', 'created_at']), 'generic')
+  assert.equal(detectPreset(['subscription_tier']), 'generic')
+  assert.equal(suggestMapping(['Unfamiliar address column']).email, '')
 })

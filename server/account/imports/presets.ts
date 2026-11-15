@@ -20,7 +20,7 @@ export function detectPreset(headers: string[]): Preset {
   const h = new Set(headers.map(normalizeHeader))
   if (h.has('optintime') || h.has('leid') || h.has('euid')) return 'Mailchimp'
   if (h.has('uuid') && (h.has('subscribedtoemails') || h.has('complimentaryplan'))) return 'Ghost'
-  if (h.has('subscriptiontier') || h.has('utmchannel') || h.has('referralcount')) return 'beehiiv'
+  if (h.has('email') && ['subscriptiontier', 'utmchannel', 'referralcount', 'referringsite', 'referralcode'].some((header) => h.has(header))) return 'beehiiv'
   if (h.has('subscriptiontype') || h.has('receivesemails') || h.has('subscriptionplan')) return 'Substack'
   if (h.has('unsubscribedat') || h.has('subscriberid') && h.has('emailaddress')) return 'Kit'
   if (h.has('sent') && h.has('opened') || h.has('datecreated')) return 'MailerLite'
