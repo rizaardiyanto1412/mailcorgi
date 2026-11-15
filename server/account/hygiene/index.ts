@@ -7,7 +7,7 @@ import { migrations } from './migrations.ts'
 import { DAY, readSettings, settingsShape } from './settings.ts'
 import { atRiskWhere, cleanNewsletter, queueHygiene, scanNewsletter } from './lifecycle.ts'
 import { protectionState, resumeProtection, rollingRates, type ProtectionEvidence } from './protection.ts'
-export { queueHygiene, recordHygieneSend, keepIssuedAt, keepDeliveryAllowed } from './lifecycle.ts'
+export { queueHygiene, recordHygieneSend, hygieneEpoch, keepIssuedAt, keepDeliveryAllowed } from './lifecycle.ts'
 export { assertSendingAllowed, checkProtection, globalSuppressions, protectionState, observeProtectionPolicy } from './protection.ts'
 export { readSettings } from './settings.ts'
 

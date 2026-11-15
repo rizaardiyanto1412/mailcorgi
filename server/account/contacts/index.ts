@@ -11,7 +11,7 @@ import { taxonomyActions } from './taxonomy.ts'
 import { contactLimitError } from '../usage/index.ts'
 import { emailHash } from './hash.ts'
 import { migrations } from './migrations.ts'
-export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider, validateFields } from './state.ts'
+export { subscribe, unsubscribe, suppress, isSuppressed, setContactStatus, inboxProvider, validateFields, withDailyTally } from './state.ts'
 export type { Contact, ContactStatus, SubscribeInput, SubscribeOutcome } from './state.ts'
 
 export function isDeleted(ctx: StoreCtx, email: string, newsletterId: string): boolean {
@@ -119,7 +119,10 @@ export const contactsModule = {
       defineAction({ name: 'contacts.get', description: 'Read a contact with their tags and recent timeline.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'contact', param: 'contactId' }, input: z.object({ newsletterId: newsletterIdSchema, contactId, beforeEventId: z.number().int().positive().optional().describe('Load events older than this event id') }), rest: { method: 'GET', path: '/newsletters/:newsletterId/contacts/:contactId' }, mcp: { title: 'Get a contact', destructive: false }, handler: (ctx, i) => {
         const row = contactRow(ctx, i.contactId, i.newsletterId)
         const events = ctx.db.all<{ id: number; type: string; data: string; at: number; campaign_id: string | null }>('SELECT id, type, data, at, campaign_id FROM events WHERE newsletter_id = ? AND contact_id = ? AND id < ? ORDER BY id DESC LIMIT 101', i.newsletterId, row.id, i.beforeEventId ?? Number.MAX_SAFE_INTEGER)
-        return { contact: serializeContact(row), tags: ctx.db.all<{ id: string; name: string }>('SELECT t.id, t.name FROM tags t JOIN contact_tags ct ON ct.tag_id = t.id WHERE ct.contact_id = ? AND t.newsletter_id = ? ORDER BY t.name', row.id, i.newsletterId), events: events.slice(0, 100).map((e) => ({ id: e.id, type: e.type, at: e.at, campaignId: e.campaign_id, data: JSON.parse(e.data) as unknown })), nextEventId: events.length > 100 ? events[99].id : null }
+        // Sends and first opens are read from the delivery rows (one per campaign), not from `events`.
+        // The campaign list keeps the lookup on the (campaign_id, contact_id) key.
+        const deliveries = ctx.db.all<{ campaign_id: string; subject: string; sent_at: number | null; opened_at: number | null; clicked_at: number | null }>('SELECT d.campaign_id, c.subject, d.sent_at, d.opened_at, d.clicked_at FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE d.campaign_id IN (SELECT id FROM campaigns WHERE newsletter_id = ?) AND d.contact_id = ? AND d.sent_at IS NOT NULL ORDER BY d.sent_at DESC LIMIT 500', i.newsletterId, row.id).map((d) => ({ campaignId: d.campaign_id, subject: d.subject, sentAt: d.sent_at!, openedAt: d.opened_at, clickedAt: d.clicked_at }))
+        return { contact: serializeContact(row), deliveries, tags: ctx.db.all<{ id: string; name: string }>('SELECT t.id, t.name FROM tags t JOIN contact_tags ct ON ct.tag_id = t.id WHERE ct.contact_id = ? AND t.newsletter_id = ? ORDER BY t.name', row.id, i.newsletterId), events: events.slice(0, 100).map((e) => ({ id: e.id, type: e.type, at: e.at, campaignId: e.campaign_id, data: JSON.parse(e.data) as unknown })), nextEventId: events.length > 100 ? events[99].id : null }
       } }),
       defineAction({ name: 'contacts.update', description: 'Edit a contact name and typed custom fields.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'contact', param: 'contactId' }, input: z.object({ newsletterId: newsletterIdSchema, contactId, name: z.string().trim().max(200).optional().describe('The new contact name'), fields: fieldValuesSchema.optional().describe('Custom field values to merge with existing values'), unsetFields: z.array(z.string()).max(100).optional().describe('Custom field keys to clear') }), rest: { method: 'PATCH', path: '/newsletters/:newsletterId/contacts/:contactId' }, mcp: { title: 'Edit a contact', destructive: false }, handler: (ctx, i) => {
         const c = serializeContact(contactRow(ctx, i.contactId, i.newsletterId))

@@ -138,4 +138,9 @@ export const controlMigrations: readonly Migration[] = [
     attempts INTEGER NOT NULL DEFAULT 0
   );
   ` },
+  // The job queue is a handful of rows; the alarm's MIN(COALESCE(locked_until, run_at)) never used
+  // the run_at index, and every reschedule paid a row for it.
+  { id: '0003-base', sql: `
+  DROP INDEX IF EXISTS jobs_due;
+  ` },
 ]

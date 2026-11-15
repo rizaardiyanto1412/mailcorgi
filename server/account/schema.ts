@@ -351,4 +351,26 @@ export const accountMigrations: readonly Migration[] = [
   CREATE INDEX deliveries_contact_campaign ON deliveries(contact_id, campaign_id);
   CREATE INDEX campaigns_recent_issues ON campaigns(newsletter_id, kind, status, sent_at, id);
   ` },
+  // Every index entry is a row written on Durable Objects (docs/performance.md). This keeps only
+  // the indexes a hot query needs: the paging index that serves the default contact list, the
+  // (email, status) index for cross-newsletter bounces and the warm-up "fresh" check, the
+  // (newsletter_id, status) index for counts and audiences; the timeline and daily-stats indexes
+  // on events; and partial delivery indexes that hold only queued or sending rows, rows with a
+  // provider message id, and soft bounces. Rare admin sorts (by name, by email) scan.
+  { id: '0004-base', sql: `
+  DROP INDEX IF EXISTS contacts_created;
+  DROP INDEX IF EXISTS contacts_name_page;
+  DROP INDEX IF EXISTS contacts_email_page;
+  DROP INDEX IF EXISTS contacts_active;
+  DROP INDEX IF EXISTS events_campaign;
+  DROP INDEX IF EXISTS events_contact;
+  DROP INDEX IF EXISTS deliveries_contact;
+  DROP INDEX IF EXISTS deliveries_contact_campaign;
+  DROP INDEX IF EXISTS deliveries_status;
+  DROP INDEX IF EXISTS deliveries_message;
+  DROP INDEX IF EXISTS jobs_due;
+  CREATE INDEX deliveries_open ON deliveries(campaign_id, status) WHERE status IN ('queued', 'sending');
+  CREATE INDEX deliveries_message ON deliveries(provider_message_id) WHERE provider_message_id IS NOT NULL;
+  CREATE INDEX events_soft_bounces ON events(campaign_id) WHERE type = 'soft_bounce';
+  ` },
 ]

@@ -2,7 +2,7 @@ import type { Budget, JobResult } from '../../core/jobs.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { randomToken } from '../../core/crypto.ts'
 import type { SendResult } from '../../email/index.ts'
-import { checkProtection, globalSuppressions, keepDeliveryAllowed, recordHygieneSend, protectionState, queueHygiene } from '../hygiene/index.ts'
+import { checkProtection, globalSuppressions, hygieneEpoch, keepDeliveryAllowed, recordHygieneSend, protectionState, queueHygiene } from '../hygiene/index.ts'
 import { isSuppressed } from '../contacts/index.ts'
 import { getCampaignRow, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { countEmails, getPolicy } from '../usage/index.ts'
@@ -11,6 +11,12 @@ import { sendProvider, sendSettings } from './provider.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats, stepGate } from './stats.ts'
 
 export const STUCK_AFTER_MS = 10 * 60_000
+/**
+ * Queued and sending rows live in the partial index `deliveries_open`; a sent row leaves it. SQLite
+ * uses a partial index only when the query repeats the index's own WHERE term, so every query on
+ * open rows carries this term next to the status it wants.
+ */
+export const OPEN_ROWS = "status IN ('queued', 'sending')"
 const MAX_TEMPORARY_ATTEMPTS = 3
 const jitter = (ms: number) => Math.round(ms * (0.8 + Math.random() * 0.4))
 const temporaryBackoff = (attempts: number) => jitter(Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, attempts - 1)))
@@ -40,12 +46,15 @@ export function flushTally(ctx: StoreCtx, campaignId: string, newsletterId: stri
   tally.sent = 0
 }
 
-/** A delivery that just went out: contact counters, the event row, and the daily, campaign and usage counters (or a tally of them). */
+/**
+ * A delivery that just went out: the contact's counters and score in one row, the hygiene reminder
+ * bookkeeping, and the daily, campaign and usage counters (or a tally of them). The delivery row
+ * itself is the record of the send (the timeline reads `deliveries.sent_at`); no `events` row is written.
+ */
 export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'campaign_id' | 'contact_id'>, newsletterId: string, at: number, tally?: SentTally) {
   const issue = getCampaignRow(ctx, d.campaign_id).kind === 'issue'
-  ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + ?, strict_ignored_streak = strict_ignored_streak + ?, last_sent_at = ?, updated_at = ? WHERE id = ?', issue ? 1 : 0, issue ? 1 : 0, at, at, d.contact_id)
-  recordHygieneSend(ctx, d.id, d.campaign_id, d.contact_id, at)
-  ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, at) VALUES (?, ?, ?, ?, ?, ?)', 'send', newsletterId, d.contact_id, d.campaign_id, d.id, at)
+  ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + ?, strict_ignored_streak = strict_ignored_streak + ?, last_sent_at = ?, updated_at = ?, engaged_score = ROUND((open_count + 3.0 * click_count) / (sent_count + 1), 3) WHERE id = ?', issue ? 1 : 0, issue ? 1 : 0, at, at, d.contact_id)
+  recordHygieneSend(ctx, d.campaign_id, d.contact_id, at)
   if (tally) {
     const day = String(at - (at % 86_400_000))
     tally.days.set(day, (tally.days.get(day) ?? 0) + 1)
@@ -60,7 +69,7 @@ export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'camp
 /** Rows left in `sending` for over ten minutes never had their result stored (architecture 11.5). */
 function reconcileStuck(ctx: StoreCtx, campaignId: string, idempotent: boolean, now: number) {
   const next = idempotent ? 'queued' : 'unknown'
-  const changes = ctx.db.run('UPDATE deliveries SET status = ?, queued_at = ?, error = COALESCE(error, ?) WHERE campaign_id = ? AND status = ? AND attempt_at <= ?', next, now, 'The result of the send attempt was never learned.', campaignId, 'sending', now - STUCK_AFTER_MS).changes
+  const changes = ctx.db.run(`UPDATE deliveries SET status = ?, queued_at = ?, error = COALESCE(error, ?) WHERE campaign_id = ? AND ${OPEN_ROWS} AND status = 'sending' AND attempt_at <= ?`, next, now, 'The result of the send attempt was never learned.', campaignId, now - STUCK_AFTER_MS).changes
   if (changes && !idempotent) bumpStat(ctx, campaignId, 'unknown', changes)
 }
 
@@ -82,7 +91,6 @@ export function finishCampaign(ctx: StoreCtx, row: CampaignRow) {
   ctx.db.tx(() => {
     const stats = recountStats(ctx, row.id)
     ctx.db.run("UPDATE campaign_sends SET state = 'done' WHERE campaign_id = ?", row.id)
-    ctx.db.run(`UPDATE contacts SET engaged_score = ROUND((open_count + 3.0 * click_count) / MAX(sent_count, 1), 3), updated_at = ? WHERE id IN (SELECT contact_id FROM deliveries WHERE campaign_id = ?)`, ctx.now(), row.id)
     transitionCampaign(ctx, row.id, 'sent')
     if (row.kind === 'issue') queueHygiene(ctx, row.newsletter_id)
     if (row.kind === 'issue') notify(ctx, { kind: 'campaign_sent', tone: 'ok', title: `“${row.subject || 'Untitled issue'}” was sent`, body: `${stats.sent} emails went out.`, href: `/campaigns/${row.id}/report` })
@@ -110,7 +118,7 @@ function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, resul
   return ctx.db.tx(() => {
     const own = (sql: string, ...params: (string | number | null)[]) => ctx.db.run(`${sql} WHERE id = ? AND status = 'sending' AND attempt_token = ?`, ...params, d.id, d.attempt_token).changes
     if (result.ok) {
-      if (own('UPDATE deliveries SET status = ?, provider_message_id = ?, sent_at = ?, error = NULL', 'sent', result.id, now)) markSentEffects(ctx, d, newsletterId, now, tally)
+      if (own('UPDATE deliveries SET status = ?, provider_message_id = ?, sent_at = ?, error = NULL, hygiene_epoch = ?', 'sent', result.id, now, hygieneEpoch(ctx))) markSentEffects(ctx, d, newsletterId, now, tally)
       else ctx.db.run('UPDATE deliveries SET provider_message_id = COALESCE(provider_message_id, ?) WHERE id = ?', result.id, d.id)
       return null
     }
@@ -174,12 +182,12 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
     pauseCampaign(ctx, row, breach)
     return 'done'
   }
-  const releasedWhere = "d.campaign_id = ? AND d.status = 'queued' AND d.send_id IN (SELECT id FROM campaign_sends WHERE campaign_id = ? AND state = 'released')"
+  const releasedWhere = `d.campaign_id = ? AND d.${OPEN_ROWS} AND d.status = 'queued' AND d.send_id IN (SELECT id FROM campaign_sends WHERE campaign_id = ? AND state = 'released')`
   const queued = ctx.db.get<{ n: number; next: number | null }>(`SELECT COUNT(*) AS n, MIN(queued_at) AS next FROM deliveries d WHERE ${releasedWhere}`, campaignId, campaignId)!
   const ready = ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM deliveries d WHERE ${releasedWhere} AND d.queued_at <= ?`, campaignId, campaignId, now)!.n
   if (!ready) {
     if (queued.n) return { again: queued.next ?? now + 1000 }
-    const inFlight = ctx.db.get<{ n: number; oldest: number | null }>("SELECT COUNT(*) AS n, MIN(attempt_at) AS oldest FROM deliveries WHERE campaign_id = ? AND status = 'sending'", campaignId)!
+    const inFlight = ctx.db.get<{ n: number; oldest: number | null }>(`SELECT COUNT(*) AS n, MIN(attempt_at) AS oldest FROM deliveries WHERE campaign_id = ? AND ${OPEN_ROWS} AND status = 'sending'`, campaignId)!
     if (inFlight.n) return { again: (inFlight.oldest ?? now) + STUCK_AFTER_MS }
     const pending = ctx.db.get<{ n: number; next: number | null }>("SELECT COUNT(*) AS n, MIN(release_at) AS next FROM campaign_sends WHERE campaign_id = ? AND state = 'pending'", campaignId)!
     if (pending.n) return pending.next === null ? 'done' : { again: pending.next }

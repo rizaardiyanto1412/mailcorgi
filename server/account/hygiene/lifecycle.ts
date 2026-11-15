@@ -74,7 +74,8 @@ export function keepDeliveryAllowed(ctx: StoreCtx, newsletterId: string, contact
   return settings.enabled && !!ctx.db.get(`SELECT c.id FROM contacts c WHERE c.id = ? AND c.newsletter_id = ? AND ${atRiskWhere(settings.strict)} AND c.keep_asked_at IS NULL`, contactId, newsletterId, ctx.now() - 90 * DAY, settings.afterIssues)
 }
 
-export function recordHygieneSend(ctx: StoreCtx, deliveryId: number, campaignId: string, contactId: string, at: number) {
-  ctx.db.run('UPDATE deliveries SET hygiene_epoch = ? WHERE id = ?', Number(getMeta(ctx, 'hygiene_epoch') ?? 0), deliveryId)
+/** The epoch a delivery sent now belongs to; the sender stores it on the row in the same update that marks it sent. */
+export const hygieneEpoch = (ctx: StoreCtx) => Number(getMeta(ctx, 'hygiene_epoch') ?? 0)
+export function recordHygieneSend(ctx: StoreCtx, campaignId: string, contactId: string, at: number) {
   markKeepSent(ctx, campaignId, contactId, at)
 }

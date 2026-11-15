@@ -8,9 +8,9 @@ Node 24. Re-run the test after a change that touches sending, contacts or stats 
 
 | Step | Wall time | Notes |
 |---|---|---|
-| Create 100,000 contacts (`subscribe`, confirmed) | 5.3 s | 0.05 ms per contact, linear; 82 s before the fix below |
+| Create 100,000 contacts (`subscribe`, confirmed) | 8.2 s | 0.08 ms per contact, linear; 82 s before the fix below (measured while CI ran alongside) |
 | Plan the send (audience → 100,000 delivery rows) | 0.8 s | one transaction, chunked inserts |
-| Send 100,000 emails through the test provider | 56 s | 1,784 emails a second, 1,000 per alarm run |
+| Send 100,000 emails through the test provider | 36 s | 2,750 emails a second, 1,000 per alarm run; 56 s before the index audit |
 | Stats rollup, full rebuild (`rebuild`) | 0.6 s | 100,000 deliveries, 200,000 events |
 | Stats rollup, second full rebuild | 0.6 s | |
 | Recurring `stats.rollup` job | 0.6 s | bounded to the last 3 days and recent campaigns |
@@ -35,52 +35,85 @@ provider writes none.
 `npm run budget` (`scripts/write-budget.ts`) drives `wrangler dev` through a fixed scenario and
 reads the dev-only write meter (`GET /api/dev/writes`), which sums `rowsWritten` and `rowsRead` of
 every statement plus one write per `setAlarm`, the way Cloudflare bills a Durable Object. Index
-entries are included. Measured on 2026-11-16, before and after the write-budget work:
+entries are included. The meter also counts per statement, and the script prints, under every
+operation, the statements that wrote rows grouped by table: that breakdown is the map for any
+further cut. The at-volume rows import 1,000 contacts and send one issue to 1,002 readers, and the
+"per item" column divides by that count so the fixed cost of a job or a campaign does not hide in it.
+Measured on 2026-11-16, before and after the index audit (`WORKERS_PLAN=free`, a send rate of 100
+a second, the `test` email provider):
 
 | Operation | Rows written, before | Rows written, after | Rows read, after |
 |---|---|---|---|
 | SPA index (`GET /`), `/healthz` | 0 | 0 | 0 |
-| `GET /api/auth/bootstrap` | 2 | 0 | 13 |
-| `contacts.list` | 3 | 0 | 13 |
-| `stats.overview` | 3 | 0 | 23 |
-| Website page view (`GET /n/<slug>/`) | 9 | 0 | 11 |
-| Website page view, second visitor | 6 | 0 | 8 |
-| Public subscribe (`POST /api/public/subscribe/…`) | 31 | 30 | 19 |
-| Import one contact (upload, start, process) | 91 | 66 | 175 |
-| Send one issue to two readers (plan, send, finish) | 133 | 114 | 214 |
-| First open (`GET /t/o/`) | 14 | 11 | 15 |
-| Repeat open of the same delivery | 6 | 0 | 8 |
-| First click (`GET /t/c/`) | 14 | 14 | 34 |
+| `GET /api/auth/bootstrap`, `contacts.list`, `stats.overview` | 0 | 0 | 13 to 23 |
+| Website page view (`GET /n/<slug>/`), either visitor | 0 | 0 | 8 to 11 |
+| Public subscribe (`POST /api/public/subscribe/…`) | 30 | 13 | 16 |
+| Import one contact (upload, start, process, including the job and the notification) | 66 | 49 | 187 |
+| **Import 1,000 contacts, per contact** | **28.0** | **11.1** | 7.4 |
+| Send one issue to two readers (plan, send, finish) | 128 | 94 | 293 |
+| **Send one issue to 1,002 readers, per email** | **24.2** (22.2 without the test outbox) | **11.4** (**9.4** without the test outbox) | 167 |
+| First open (`GET /t/o/`) | 11 | 4 | 13 |
+| First click (`GET /t/c/`) | 14 | 8 | 22 |
+| Repeat open of the same delivery | 0 | 0 | 8 |
 | Idle minute, nothing queued | 0 | 0 | 0 |
 | Idle minute with a campaign scheduled for tomorrow | 0 | 0 | 0 |
 
-The "before" column was measured on commit `b548698` with only the meter added. Every read used to
-cost two or three rows because each store invocation re-armed its alarm (one row) and the
-account-exists and session lookups at the edge re-armed the control store too. Now a store calls
-`setAlarm` only when the next wake time differs from the one it holds in memory.
+The "before" column is commit `5914ed0` with only the per-statement meter added. The `test` provider
+writes every email to `outbox` (two rows: the row and its key); a real provider writes none, so the
+number without the outbox is the one that counts on Cloudflare.
+
+Where the rows went before, and where they go now, per item at volume:
+
+| Table | Imported contact, before | after | Sent email, before | after | Why |
+|---|---|---|---|---|---|
+| `contacts` | 16 | 7 | 2 | 1 | The insert wrote 1 row + 2 unique keys + 7 indexes + the counter trigger, then a status update rewrote 3 index entries and a second update reset the streaks. Four indexes are gone, a new subscriber is inserted already subscribed, and the streak reset rides in the same statement. Per send, the engagement score is now computed in the counter update instead of a second pass over every recipient when the campaign finishes. |
+| `events` | 6 | 4 | 5 | 0 | The row had four indexes; two remain (newsletter + time, and the contact timeline), plus the growth-by-source trigger. The `send` event is gone: the delivery row is the record and the timeline reads it. |
+| `deliveries` | | | 14 | 8 | Insert 3 (row, unique key, the partial open-rows index), claim 2, sent 3 (the row, leaving the partial index, the message-id and hygiene partial entries). The contact indexes, the full status index and the full message-id index are gone, and the hygiene epoch is written in the same statement as `sent`. |
+| `import_seen` | 3 | 0 | | | Was a row and its key per contact plus a delete at the end. Addresses already met are rebuilt from the chunks stored anyway and kept in memory for the run. |
+| `imports`, `import_chunks` | 2 | 0.1 | | | One checkpoint per 50 rows instead of per row, committed with the rows it covers. |
+| `daily_stats` | 1 | 0.02 | | | Once per newsletter, day and column per batch of 50. |
+| per batch (`jobs`, alarm, `daily_stats`, `campaigns`, `usage`, control bucket) | | | 1.0 | 0.2 | The sender asked for permits every alarm run and got the handful of tokens that had trickled in, so a "batch" was 7 emails. The control store now grants a whole batch or says when it will fit, so a batch on Workers Free is 36 emails. The `jobs.run_at` index is gone too (the queue is a handful of rows and the alarm query never used it). |
+| `outbox` (test provider only) | | | 2 | 2 | |
+
+Signup went from 30 to 13 (contact 7, event 3 plus its trigger 2, daily counter 1), a first open from 11 to 4 (the delivery, the contact with its score in one statement,
+the campaign counter, the daily counter; no event row), a first click from 14 to 8 (the click
+event with two indexes stays: per-link uniqueness and the scanner-burst check need it).
+
+Where the remaining rows go, and what each one buys:
+
+- A sent email: 3 for the delivery row at planning, 2 to claim it (architecture 11.5 commits
+  `sending` before the provider call), 3 to record the result (the row, the partial open-rows index
+  it leaves, the message-id entry for webhooks and the hygiene window entry), 1 for the contact's
+  counters, 0.2 for the batch's counters and job. Dropping the hygiene window index would save one
+  more but would make the rolling bounce check scan the campaign's deliveries on every batch.
+- An imported contact: 7 for the contact (row, two unique keys, three indexes, the active-contact
+  trigger) and 4 for the signup event (row, two indexes, the growth-by-source trigger).
+  `rebuildDaily` and the growth-by-source report count signups from these events, so they stay.
+- Repeat opens, page views and rate limits are still batched in memory and land with the next
+  write or alarm (the previous unit's work).
 
 Deferred bookkeeping (page views, repeat opens, rate-limit counters) waits in memory and lands in
 one batch with the next alarm, within five minutes of one that is queued anyway. A flushed page
 view costs about 2 rows (the row and its index entry) plus one `daily_stats` upsert per newsletter
-and day per batch. The idle rows above are measured over one minute; over a day an idle account
-store now writes about 5 rows every 30 minutes for its stats check (about 250 a day), where it used
-to rebuild its daily stats every 5 minutes (about 25 rows each, 7,000 a day) whether anything had
-changed or not.
+and day per batch. Over a day an idle account store writes about 5 rows every 30 minutes for its
+stats check (about 250 a day). `docs/self-hosting.md` turns these numbers into a list size for
+Workers Free.
 
-Per email the marginal cost is about 20 rows (the delivery row and its indexes at planning, two
-status updates, the contact, the hygiene epoch, the `send` event with its four indexes); the daily,
-campaign and usage counters are now written once per batch instead of once per email. A first open
-is 11 rows, a click 14, a signup 30 (the contact has nine indexes, the event four, plus the
-confirmation mail and its job). `docs/self-hosting.md` turns these into a list size for Workers
-Free.
+Indexes dropped (base migration `0004-base`; `server/test/index-audit.test.ts` pins the plan of
+every hot query against 50,000 contacts and 100,000 deliveries):
 
-Where the remaining rows go, and what would cut them further (not done here):
-
-- `contacts` carries nine indexes, so every new contact writes ten rows; `events` carries four.
-  Dropping the paging indexes that the contacts page does not use would save three per signup and
-  per imported row.
-- A send event per email (five rows with indexes) exists for the contact timeline; a per-campaign
-  summary would do for the report.
+| Index | Why it was safe to drop |
+|---|---|
+| `contacts(newsletter_id, created_at)` | Covered by `contacts(newsletter_id, created_at, id)`, the paging index. |
+| `contacts(newsletter_id, name, id)` | Only the contact list sorted by name used it; a 50,000-row sort takes well under a second and is a rare admin action. |
+| `contacts(newsletter_id, email, id)` | The UNIQUE `(newsletter_id, email)` key already orders by email, and SQLite drops the trailing `id` sort term for a unique index (no temp B-tree). |
+| `contacts(status)` | Only the hourly active-contact recount used it; `(newsletter_id, status)` serves that count as a covering scan. |
+| `events(campaign_id, type)` | Only the soft-bounce count per campaign used it; replaced by a partial index that holds soft bounces only (near zero rows written). |
+| `events(contact_id, at)` | Every query by contact now carries `newsletter_id` and uses the timeline index `(newsletter_id, contact_id, id)`. |
+| `deliveries(contact_id)`, `deliveries(contact_id, campaign_id)` | The engagement segment filters and the timeline look up `(campaign_id IN (…), contact_id)` through the UNIQUE key; the unsubscribe page and hygiene use the key directly. |
+| `deliveries(campaign_id, status)` | Replaced by the same index restricted to `queued` and `sending` rows: a sent row leaves it instead of staying for ever. |
+| `deliveries(provider_message_id)` | Replaced by the same index restricted to rows that have a message id, so planning a delivery writes no NULL entry. |
+| `jobs(run_at)` (both stores) | The next-wake query is `MIN(COALESCE(locked_until, run_at))`, which cannot use it; claiming scans a queue of a few rows. |
 
 ## What the load pass changed
 

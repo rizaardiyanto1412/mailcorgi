@@ -34,7 +34,10 @@ test('an account store has every table from the contract', async () => {
   ])
     assert.ok(names.includes(t), `missing account table ${t}`)
   const indexes = install.app.account(owner.accountId!).ctx.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'").map((r) => r.name)
-  for (const i of ['contacts_status', 'deliveries_status', 'deliveries_message', 'events_newsletter', 'events_campaign', 'page_views_newsletter']) assert.ok(indexes.includes(i), `missing index ${i}`)
+  for (const i of ['contacts_status', 'contacts_created_page', 'contacts_email_status', 'deliveries_open', 'deliveries_message', 'events_newsletter', 'events_contact_page', 'events_soft_bounces', 'page_views_newsletter']) assert.ok(indexes.includes(i), `missing index ${i}`)
+  // Dropped by the index audit (docs/performance.md): each cost a row per insert and served no hot query.
+  for (const i of ['contacts_created', 'contacts_name_page', 'contacts_email_page', 'contacts_active', 'events_campaign', 'events_contact', 'deliveries_contact', 'deliveries_contact_campaign', 'deliveries_status', 'jobs_due']) assert.ok(!indexes.includes(i), `index ${i} should be dropped`)
+  assert.ok(!install.app.control.ctx.db.get("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'jobs_due'"), 'the control store drops jobs_due too')
 })
 
 test('migrations run once and a restart applies nothing new', async () => {

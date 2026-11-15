@@ -21,7 +21,7 @@ async function sentIssue(opts: Parameters<typeof sendableInstall>[0] = {}, links
 }
 
 test('the open pixel counts a person once per delivery and ignores scanners, early loads and bad tokens', async (t) => {
-  const { install, ctx, issue, html, ids, delivery, nl } = await sentIssue()
+  const { install, ctx, issue, html, ids, delivery, nl, owner } = await sentIssue()
   t.after(() => install.close())
   const [token] = tokensIn(html, '/t/o/')
   assert.ok(token)
@@ -50,7 +50,12 @@ test('the open pixel counts a person once per delivery and ignores scanners, ear
   assert.equal(contact.ignored_streak, 0)
   assert.equal(contact.last_opened_at, openedAt)
   assert.ok(contact.engaged_score > 0)
-  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'open' AND delivery_id = ?", delivery.id)!.n, 1)
+  // The delivery row is the record of the open: no events row is written for it, and the timeline reads it from there.
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type IN ('open', 'send') AND contact_id = ?", ids[0])!.n, 0)
+  assert.equal(row().opened_at, openedAt)
+  const timeline = await owner.action('contacts.get', { newsletterId: nl.id, contactId: ids[0] })
+  assert.deepEqual(timeline.deliveries.map((d) => ({ campaignId: d.campaignId, subject: d.subject, opened: d.openedAt, clicked: d.clickedAt })), [{ campaignId: issue.id, subject: 'Issue one', opened: openedAt, clicked: null }])
+  assert.equal(timeline.deliveries[0].sentAt, ctx.db.get<{ sent_at: number }>('SELECT sent_at FROM deliveries WHERE id = ?', delivery.id)!.sent_at)
   const tampered = token.slice(0, -2) + (token.endsWith('aa') ? 'bb' : 'aa')
   r = await hit(install, `/t/o/${tampered}`)
   assert.equal(r.status, 200, 'a tampered pixel still renders')

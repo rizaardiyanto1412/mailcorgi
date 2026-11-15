@@ -63,7 +63,7 @@ Workers Free costs nothing and fits a small newsletter. These limits apply per C
 | Requests | 100,000 a day | Every page view, open pixel, link click, signup and API call |
 | CPU time | 10 ms per request | Each request to the Worker |
 | Outbound requests | 50 per request | Each email sent is one; MailCorgi sends at most 40 per run with `WORKERS_PLAN=free` |
-| Durable Object rows written | 100,000 a day, shared by every Durable Object app on the account | About 20 per email sent, 11 per open, 14 per click, 30 per signup; reads write nothing |
+| Durable Object rows written | 100,000 a day, shared by every Durable Object app on the account | About 10 per email sent, 4 per first open, 8 per click, 13 per signup, 11 per imported contact; reads write nothing |
 | Durable Object rows read | 5 million a day | Lists, reports and sending |
 | Durable Object storage | 5 GB in total | Contacts, issues, events and, without R2, images |
 
@@ -72,23 +72,27 @@ When a daily limit runs out, requests fail until 00:00 UTC.
 **What list size fits.** The row-write limit is the one that binds, and it is shared by every
 Durable Object app on your Cloudflare account, not just MailCorgi. `npm run budget` measures rows
 written per operation on `wrangler dev` the way Cloudflare bills them, index entries included
-(`docs/performance.md`): about 20 per email sent, 11 per first open, 14 per click, 30 per signup,
-2 per website page view, and 0 for reading the dashboard, the public website or an already-counted
-open. A store that has nothing to do writes about 250 rows a day.
+(`docs/performance.md`): about 10 per email sent (9.4 at a send rate of 40 a second or more, a
+little over 10 at the default 10 a second because each batch is then smaller), 4 per first open,
+8 per click, 13 per signup, 11 per imported contact, 2 per website page view, and 0 for reading the
+dashboard, the public website or an already-counted open. A store that has nothing to do writes
+about 250 rows a day.
 
-- 100,000 ÷ 20 = 5,000 emails a day with nobody opening or clicking.
-- With a typical 40% open rate and 5% click rate, each email costs about 20 + 0.4 × 11 + 0.05 × 14 ≈
-  25 rows, so about 4,000 emails a day.
-- A day with 3,000 emails, 1,200 opens, 150 clicks, 50 signups and 2,000 page views uses about
-  60,000 + 13,200 + 2,100 + 1,500 + 4,000 ≈ 81,000 rows.
+- 100,000 ÷ 10 = 10,000 emails a day with nobody opening or clicking.
+- With a typical 40% open rate and 3% click rate, each email costs about 10 + 0.4 × 4 + 0.03 × 8 ≈
+  12 rows, so about 8,000 emails a day.
+- Importing a list: 100,000 ÷ 11 ≈ 9,000 contacts a day, on a day with nothing else going on. A
+  larger file keeps going the next day; the import resumes where it stopped.
+- A day with 5,000 emails, 2,000 opens, 150 clicks, 50 signups and 2,000 page views uses about
+  50,000 + 8,000 + 1,200 + 650 + 4,000 ≈ 64,000 rows.
 - Outbound requests do not bind: each send run makes at most 40 (one settings read, one suppression
-  check, one permit call and 37 emails), and runs repeat as often as the alarm fires.
+  check, one permit call and 36 emails), and runs repeat as often as the alarm fires.
 
-So a Free install sends to about 4,000 subscribers a day. A larger list still works but a single
-issue then takes several days to go out (a 10,000-subscriber issue takes three), and opens and
-clicks arriving on top can push a day over the limit. Move to Workers Paid ($5 a month) when your
-list passes about 3,000 subscribers, when you send more than once a day, or when the dashboard
-shows the daily-limit banner. After you upgrade, delete the `WORKERS_PLAN` line from
+So a Free install sends to about 8,000 subscribers a day, and imports about 9,000 contacts a day.
+A larger list still works but a single issue then takes more than a day to go out (a 20,000-subscriber
+issue takes about three days), and opens and clicks arriving on top can push a day over the limit.
+Move to Workers Paid ($5 a month) when your list passes about 6,000 subscribers, when you send more
+than once a day, or when the dashboard shows the daily-limit banner. After you upgrade, delete the `WORKERS_PLAN` line from
 `wrangler.jsonc` in your repository so each send run can make up to 900 requests.
 
 **When the writes run out.** Cloudflare refuses every database write until 00:00 UTC. MailCorgi

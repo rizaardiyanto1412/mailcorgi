@@ -99,7 +99,8 @@ interface Db {
 
 No global database. Every function that touches data takes a `StoreCtx` (or a `Db`). Migrations are
 `{ id: string, sql: string }` records tracked by id in `_migrations`. Each store's `schema.ts` retains
-the fixed base ids (`0001-base`, `0002-base`, …) in their original order. Legacy integer history is
+the fixed base ids (`0001-base`, `0002-base`, …) in their original order; a change to a base table's
+indexes is appended as the next base id, never edited in. Legacy integer history is
 converted transactionally to those ids on first startup, without replaying applied SQL.
 Modules export lists from `server/<store>/<module>/migrations.ts` and contribute them through
 `reg.migrations(list)` in `register(reg)`. Base migrations run first; pending module migrations run
@@ -152,7 +153,11 @@ nothing; a store calls `setAlarm` only when its next wake time differs from what
 lost (page views, repeat opens, rate-limit counters, the stats rollup's change marker) lives in
 `ctx.memory` and is written in one batch through `ctx.later` when the next alarm fires, within five
 minutes of an alarm that is queued anyway, else on an alarm armed for that purpose. Counters a send
-batch bumps (daily, campaign, usage) are written once per batch. The store's `Meter` counts rows as
+batch bumps (daily, campaign, usage) are written once per batch, and the control store grants send
+permits for a whole batch or tells the sender when the batch will fit, so a send never spins for a
+few tokens at a time. An import commits 50 rows per transaction with one checkpoint and one daily
+counter write per newsletter and day. Sends and first opens write no `events` row: the delivery row
+is their record and the timeline reads it. The store's `Meter` counts rows as
 Cloudflare bills them (`rowsWritten`, index entries included, plus one per alarm; `changes` on Node)
 and `GET /api/dev/writes?accounts=…` reads it when `MC_TEST_DNS` is on. `npm run budget` prints
 rows per operation on `wrangler dev` (`docs/performance.md`).
@@ -370,7 +375,8 @@ deliveries(id INTEGER PRIMARY KEY, campaign_id, send_id, contact_id, email, stat
 provider_events(id PRIMARY KEY, delivery_id, type, occurred_at, received_at)   -- dedupe of webhook events
 links(id, campaign_id, url, position, clicks, unique_clicks, UNIQUE(campaign_id, url))
 events(id INTEGER PRIMARY KEY, type, newsletter_id, contact_id NULL, campaign_id NULL, delivery_id NULL,
-       data JSON, at)       -- signup, confirm, unsubscribe, open, click, bounce, complaint, cleaned, import, send
+       data JSON, at)       -- signup, confirm, unsubscribe, click, soft_bounce, bounce, complaint, cleaned, keep, campaign.*
+                            -- sends and opens are not events: the delivery row (sent_at, opened_at) is their record
 daily_stats(newsletter_id, day, subscribed, unsubscribed, sent, delivered, opens, clicks, bounces, complaints,
             page_views, PRIMARY KEY(newsletter_id, day))
 page_views(id INTEGER PRIMARY KEY, newsletter_id, campaign_id NULL, path, referrer_host, country, at)
@@ -386,16 +392,29 @@ _blobs(key, seq, content_type, data BLOB)   -- images when no R2 bucket is bound
 rate_limits, jobs, jobs_dead, _migrations
 ```
 
-Indexes that matter: `contacts(newsletter_id, status)`, `deliveries(campaign_id, status)`,
-`deliveries(provider_message_id)`, `events(newsletter_id, at)`, `events(campaign_id, type)`,
-`page_views(newsletter_id, at)`.
+Every index entry is a row written (3.2), so the account store keeps only the indexes a hot query
+needs; `server/test/index-audit.test.ts` pins the query plans. Besides the UNIQUE constraints above:
+`contacts(newsletter_id, status)` (counts, audiences), `contacts(newsletter_id, created_at, id)` (the
+default contact page; sorting by name or email scans or uses the unique email index),
+`contacts(email, status)` (cross-newsletter bounces, the warm-up "fresh" check);
+`deliveries(campaign_id, status) WHERE status IN ('queued', 'sending')` (the send loop; a sent row
+leaves it; queries repeat that term so SQLite can use it), `deliveries(provider_message_id) WHERE
+provider_message_id IS NOT NULL` (webhooks), the hygiene module's rolling-window index on sent rows;
+`events(newsletter_id, at)` (daily rebuilds), `events(newsletter_id, contact_id, id)` (the timeline
+and click bookkeeping), `events(campaign_id) WHERE type = 'soft_bounce'`; `page_views(newsletter_id,
+at)`. Deliveries have no index on `contact_id`: per-contact lookups go through the UNIQUE
+`(campaign_id, contact_id)` key with the newsletter's campaign ids. The `jobs` table has no index.
+The base migration `0004-base` dropped the rest; a later audit appends another base migration rather
+than editing a shipped one.
 
 Module migrations add to the base tables above (each module owns its own):
 
 - **newsletters**: `newsletters.deleting_at`.
 - **contacts**: triggers that keep `account_meta.active_contacts` (subscribed + unconfirmed) exact.
 - **imports**: `imports.uploaded_at`, `headers`, `added_detail`; `import_chunks.position`;
-  `import_seen`, `import_skips`, `import_dns` (24-hour MX cache).
+  `import_seen` (no longer written: the addresses already met are rebuilt from the stored chunks and
+  kept in memory for the run), `import_skips`, `import_dns` (24-hour MX cache). Rows are committed
+  50 at a time with one checkpoint per batch.
 - **sending**: `deliveries.attempts` (a temporary refusal retries at most 3 times).
 - **signup**: `signup_settings`, `signup_mail` (confirmation and welcome attempts).
 - **website**: `website_posts` (web-only Markdown posts), `website_hosts`, `website_cache_versions`
