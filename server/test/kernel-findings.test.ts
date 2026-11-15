@@ -9,7 +9,11 @@ test('untrusted account prefixes never provision account databases', async () =>
   const install = await createInstall({ cloud: true })
   try {
     const id = 'acc_aaaaaaaaaaaaaaaa'
-    for (const path of [`/u/${id}.x`, `/f/nl_${id}_aaaaaaaaaaaaaaaa`, '/api/v1/newsletters', `/img/${id}/x`]) {
+    for (const path of [
+      ...['/t/o/', '/t/c/', '/u/', '/confirm/', '/keep/'].map((prefix) => `${prefix}${id}.x`),
+      `/f/nl_${id}_aaaaaaaaaaaaaaaa`, `/api/public/subscribe/nl_${id}_aaaaaaaaaaaaaaaa`,
+      `/embed.js?key=nl_${id}_aaaaaaaaaaaaaaaa`, '/api/v1/newsletters', '/mcp', `/img/${id}/x`,
+    ]) {
       assert.equal((await install.fetch(path, { headers: { authorization: `Bearer mc_${id}_abcdefghijklmnopqrst` } })).status, 404)
     }
     assert.deepEqual(install.app.accountIds(), [])
@@ -161,4 +165,21 @@ test('overlapping alarm registrations cannot replace an earlier wake with a late
     controlRegistry.jobs.delete('test.alarm-order')
     install.close()
   }
+})
+
+
+test('the learned app host admits provider and billing hooks and rejects new routes on unknown hosts', async () => {
+  const install = await createInstall({ cloud: true, env: { APP_URL: '' } })
+  try {
+    await install.fetch('/api/auth/bootstrap')
+    for (const path of ['/hooks/ses', '/hooks/resend', '/hooks/stripe', '/hooks/polar']) {
+      const request = { method: 'POST', body: '{}' }
+      assert.equal((await install.fetch(`http://unknown.example.com${path}`, request)).status, 404)
+      assert.equal((await install.fetch(path, request)).status, 400, 'the app host reaches webhook signature verification')
+    }
+    for (const path of ['/api/v1/newsletters', '/mcp', '/llms.txt']) {
+      assert.equal((await install.fetch(`http://unknown.example.com${path}`)).status, 404)
+    }
+    assert.equal((await install.fetch('/llms.txt')).status, 200)
+  } finally { install.close() }
 })

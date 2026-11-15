@@ -42,16 +42,18 @@ test('slugs are unique within the account and across accounts', async () => {
   assert.equal((await expectError(() => other.action('newsletters.create', { name: 'x', slug: 'corgi-mail' }))).code, 'slug_taken')
 })
 
-test('the newsletter limit applies to active newsletters and archiving frees a slot', async () => {
-  const second = await owner.action('newsletters.create', { name: 'Second' })
-  assert.equal((await expectError(() => owner.action('newsletters.create', { name: 'Third' }))).code, 'limit_reached')
-  const archived = await owner.action('newsletters.archive', { newsletterId: second.id })
-  assert.ok(archived.archivedAt)
-  assert.deepEqual((await owner.action('newsletters.list', {})).newsletters.map((n) => n.name), ['Corgi Mail'])
-  assert.equal((await owner.action('newsletters.list', { includeArchived: true })).newsletters.length, 2)
-  await install.runJobs()
-  assert.equal(await install.app.stores.control.lookupSite({ slug: 'second' }), null)
-  const third = await owner.action('newsletters.create', { name: 'Third' })
-  assert.equal(third.slug, 'third')
-  assert.equal((await expectError(() => owner.action('newsletters.unarchive', { newsletterId: second.id }))).code, 'limit_reached')
+test('cloud newsletter limits apply to active newsletters and archiving frees a slot', async (t) => {
+  const cloud = await createInstall({ cloud: true })
+  t.after(() => cloud.close())
+  const user = await cloud.signUp({ email: 'cloud@example.com' })
+  const first = await user.action('newsletters.create', { name: 'First' })
+  assert.equal((await expectError(() => user.action('newsletters.create', { name: 'Second' }))).code, 'limit_reached')
+  await user.action('newsletters.archive', { newsletterId: first.id })
+  await user.action('newsletters.create', { name: 'Second' })
+  assert.equal((await expectError(() => user.action('newsletters.unarchive', { newsletterId: first.id }))).code, 'limit_reached')
+})
+
+test('self-hosted newsletters have no plan limit', async () => {
+  for (let i = 0; i < 4; i++) await owner.action('newsletters.create', { name: `Unlimited ${i}` })
+  assert.equal((await owner.action('newsletters.list', {})).newsletters.length, 5)
 })

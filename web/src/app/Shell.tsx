@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Bell, Check, ChevronsUpDown, LogOut, Menu as MenuIcon, Monitor, Moon, Plus, Settings, ShieldCheck, Sun, X } from 'lucide-react'
 import { api } from '../lib/api.ts'
 import { useSession, useTheme, type Theme } from '../lib/session.tsx'
-import { Avatar, cx, IconButton, Logo, MenuDivider, MenuItem, MenuLabel, Popover } from '../ui/index.tsx'
+import { Avatar, Banner, cx, IconButton, Logo, MenuDivider, MenuItem, MenuLabel, Popover } from '../ui/index.tsx'
 import { mainNav } from './routes.tsx'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { NotificationsBell } from '../features/notifications/index.tsx'
@@ -181,6 +181,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function Shell() {
+  const [planLimit, setPlanLimit] = useState(false)
+  const { boot } = useSession()
+  useEffect(() => {
+    const show = () => setPlanLimit(true)
+    window.addEventListener('mc:plan-limit', show)
+    return () => window.removeEventListener('mc:plan-limit', show)
+  }, [])
   const [drawer, setDrawer] = useState(false)
   return (
     <div className="flex h-full">
@@ -203,6 +210,7 @@ export function Shell() {
           <span className="text-[14px] font-semibold">MailCorgi</span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">
+          {boot.cloud && planLimit && <div className="px-5 pt-4"><Banner kind="warn" action={<button type="button" onClick={() => setPlanLimit(false)} aria-label="Dismiss plan limit">×</button>}>Your account has reached a plan limit. <Link className="underline" to="/settings/billing">View plans and usage</Link></Banner></div>}
           <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8">
             <ErrorBoundary>
               <Outlet />

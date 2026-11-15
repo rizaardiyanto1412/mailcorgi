@@ -206,9 +206,11 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   }
   const control = open({ kind: 'control' })
   const accounts = new Map<string, Store>()
+  const accountExists = (id: string) => !!control.ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', id)
+  const accountIds = () => [...accounts.keys()].filter(accountExists)
   const account = (id: string, provision = false) => {
     if (!isAccountId(id)) throw new AppError('not_found', 'Not found.', 404)
-    if (!provision && (!control.ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', id) || !fs.existsSync(path.join(accountsDir, `${id}.db`)))) {
+    if (!provision && (!accountExists(id) || !fs.existsSync(path.join(accountsDir, `${id}.db`)))) {
       throw new AppError('not_found', 'Account store is not provisioned.', 404)
     }
     let store = accounts.get(id)
@@ -220,10 +222,11 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   }
   const storeFor = (ref: StoreRef) => (ref.kind === 'control' ? control : account(ref.accountId))
   // Every account store opens at start so a job that was due during the downtime runs now.
-  for (const entry of fs.readdirSync(accountsDir)) if (entry.endsWith('.db') && isAccountId(entry.slice(0, -3)) && control.ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', entry.slice(0, -3))) account(entry.slice(0, -3))
+  for (const entry of fs.readdirSync(accountsDir)) if (entry.endsWith('.db') && isAccountId(entry.slice(0, -3)) && accountExists(entry.slice(0, -3))) account(entry.slice(0, -3))
 
   const edge = createEdge({
     config,
+    fetch: (input, init) => platform.fetch(input, init),
     keys: async () => keys,
     stores,
     storeFetch: (ref, request) => storeFor(ref).fetch(request),
@@ -237,10 +240,11 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     if (ticking) return
     ticking = true
     try {
-      await Promise.all([control, ...accounts.values()].map((store) => store.rearm()))
+      await Promise.all([control, ...accountIds().map((id) => account(id))].map((store) => store.rearm()))
       const due = [...alarms.entries()].filter(([, at]) => at <= now()).map(([id]) => id)
       for (const id of due) {
         alarms.delete(id)
+        if (id !== 'control' && !accountExists(id)) continue
         try {
           await storeFor(id === 'control' ? { kind: 'control' } : { kind: 'account', accountId: id }).alarm()
         } catch (err) {
@@ -262,7 +266,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     edge,
     control,
     account,
-    accountIds: () => [...accounts.keys()],
+    accountIds,
     tick,
     startScheduler() {
       if (timer) return

@@ -312,6 +312,7 @@ domains(id, name UNIQUE, status 'pending'|'verified'|'failed'|'suspended', provi
         records JSON (name,type,value,purpose,found), last_checked_at, verified_at, created_at)
 uploads(key PRIMARY KEY, newsletter_id NULL, content_type, bytes, width, height, created_by, created_at)
 api_keys(id, name, hash UNIQUE, last4, access 'full'|'read', created_by, last_used_at, created_at, revoked_at)
+api_idempotency(key PRIMARY KEY, fingerprint, response NULL, status NULL, expires_at)
 notifications(id, user_id NULL, kind, tone, title, body, href, created_at, read_at)
 usage(period PRIMARY KEY, emails_sent, contacts_peak)
 outbox(id, to_email, subject, html, text, headers JSON, kind, created_at)    -- only the `test` provider writes here
@@ -349,8 +350,9 @@ actions, its jobs, its tests in `server/test/<module>.test.ts`, and its pages in
 functions in its `index.ts`.
 
 **newsletters** — create, edit, archive, switch. Settings: identity, sender, reply-to, postal address,
-logo, theme (colors, fonts, button style, header/footer), authors, website options. Up to 3 newsletters
-per account on self-hosted by default (`MAX_NEWSLETTERS`), per plan in cloud. Slug changes update the
+logo, theme (colors, fonts, button style, header/footer), authors, website options. Unlimited newsletters
+on self-hosted; per-plan limits in cloud. `MAX_NEWSLETTERS` is retained in config for older installs
+but does not impose a self-hosted plan limit. Slug changes update the
 control directory.
 
 **contacts** — list with search, status filter, tag filter, sort, paging (keyset). Create, edit,
@@ -466,15 +468,70 @@ Attempts are rate-limited per IP and per email.
 `maxTeamPerNewsletter`, monthly and yearly prices. One `BillingProvider` interface with `stripe.ts` and
 `polar.ts`: `createCheckout`, `createPortal`, `changePlan`, `cancel`, `pause`, `resume`,
 `verifyAndParseWebhook → BillingEvent[]`. Webhooks are idempotent through `billing_events`. Plan changes
-are pushed to the account store with `account.applyPlan`. Limits are enforced in `runAction` (contacts,
+are pushed to the account store with `account.applyPolicy`. Limits are enforced in `runAction` (contacts,
 newsletters, team) and at send time (monthly emails). A blocked account's billing is paused; unblocking
 resumes it; an account blocked for 30 days is canceled.
+
+Billing details:
+- Stripe uses API version `2026-09-30.endive`, checked against the published Stripe OpenAPI schema.
+  Price lookup keys are `mailcorgi_<plan>_<monthly|yearly>`; Stripe prices must carry those keys.
+- Polar products are configured by `polar_products` (or `POLAR_PRODUCTS`), a JSON object mapping
+  `<plan>_<monthly|yearly>` to product UUIDs. Both providers use `fetch` and WebCrypto only.
+- Polar's current API supports **pause at period end**, rather than immediate collection suspension.
+  Blocking stops sending immediately after the policy push; Polar collection pauses at period end.
+  Unblocking cancels a scheduled pause, or resumes an already paused subscription (which starts a
+  new charged period). Stripe pauses collection immediately with `pause_collection.behavior=void`.
+- Both webhook schemes enforce a 5-minute timestamp tolerance. Polar verification accepts Standard
+  Webhooks keys and legacy Polar UTF-8 keys, as documented for secrets created before September 8,
+  2026. Replay ids are namespaced by provider in `billing_events`; webhook application and policy
+  enqueue commit together. Older event timestamps cannot overwrite newer subscription state.
+- Payment failure keeps the current limits for 7 days; cancellation keeps them through the paid
+  period plus a 7-day grace period. Payment recovery clears expiry. A 30-day block returns to free
+  and cancels billing. Policy pushes requeue if the version changed while RPC was in flight.
+- Account stores push usage immediately after bootstrap and hourly afterward through `usage.push`.
+  Monthly limits at send time still use the reserved permits contract in 11.5; snapshots are for display.
+- Cloud plan-limit errors include `details.billingUrl = '/settings/billing'`; the shared web shell
+  displays a link to plans and usage. Billing settings navigation is absent in self-hosted mode.
+
+Provider documentation checked while implementing (November 15, 2026):
+[Stripe checkout](https://docs.stripe.com/api/checkout/sessions/create),
+[Stripe signatures](https://docs.stripe.com/webhooks/signature),
+[Stripe OpenAPI](https://github.com/stripe/openapi/blob/master/openapi/spec3.json),
+[Polar checkout](https://polar.sh/docs/api-reference/checkouts/create-session),
+[Polar webhook delivery](https://polar.sh/docs/integrate/webhooks/delivery), and
+[Polar live OpenAPI](https://api.polar.sh/openapi.json).
+
 
 **control/admin** — install settings (email provider and credentials, sender for system emails, sending
 on/off, billing provider keys, sign-up rules), accounts list with usage, block and unblock with a
 reason, impersonation-free read-only account summary, alerts, dead jobs with retry. Account deletion:
 the owner requests it, the control store marks `deleting`, the account store cancels sends and wipes
 itself and its images, then the control rows go.
+The control store first cancels the subscription, then calls `account.selfWipe({})` until it returns
+`{ done: true }`. The account store marks a deleting policy, cancels queued jobs, removes at most 20
+blobs per call, and clears feature tables. It retains migrations and a policy tombstone so an old RPC
+cannot bootstrap deleted data. Empty SQLite databases / Durable Objects remain allocated because the
+platform contract has no store-destroy method. Control users, sessions, memberships, invites, sites,
+usage and addressed test emails are removed only after the wipe succeeds. Every step may retry.
+
+Profile operations live in `control/accounts` and `web/src/features/account` (the existing `accounts`
+feature entry re-exports it). Email changes use the `account_email_changes` confirmation table, expire
+after 15 minutes and allow 5 wrong guesses; password and confirmed email changes revoke all sessions.
+The edge resolves sessions afresh to make revocation effective on the next request. Account and billing
+settings and install administration remain reachable before the first newsletter exists.
+
+Admin sign-up rules use `signup_mode` (`closed`, `allowlist`, or cloud `open`) and comma-separated
+`allowed_emails`. Environment values override stored settings. Billing secrets are encrypted and are
+returned to the console only as configured flags. The admin console includes email provider settings
+at `/admin/email`, alongside accounts, alerts, dead jobs, install settings and suppressions.
+
+Global suppression RPCs: `control.reportSuppression({ emailHash, reason, nonexistent? })` and
+`control.checkSuppressed({ emailHashes }) → { suppressed: string[] }` (up to 1000 hashes, SQL batches
+of 90). Hashes are HMAC-SHA256 of trimmed, lowercase email with `keys.suppression`.
+`reportSuppressions({ accountId, events })` also accepts verified provider bounce events for existing
+callers and only adds permanent nonexistent-mailbox reports. Those expire in 180 days; spam traps and
+other explicit permanent reports have no expiry.
+
 
 **email** — `EmailProvider`: `send(message) → { id }`, `createIdentity(domain)`, `getIdentity(domain)`,
 `deleteIdentity(domain)`, `parseWebhook(request) → ProviderEvent[]`, `capabilities`. Providers: `ses`
@@ -551,6 +608,13 @@ These are the seams between modules. Build to them exactly. Change one only toge
 - API keys: the edge only reads the account id from `mc_<accountId>_<secret>` to pick the store. The
   account store hashes the secret, finds the key, and builds the actor itself
   (`owner: true, access: key.access`). A wrong secret is a 401 from the store.
+- API transports discover both registries. Account actions run locally; control actions use
+  `control.runApiAction({ name, input, actor: { userId, access, via, keyId? } })`. The control store
+  rebuilds the actor with `installAdmin: false`, empty grants and `owner: false`, checks that the action
+  is exposed on that transport, then calls `runAction`. An account API key never gains install-admin access.
+- REST write/send idempotency records are scoped to the authenticated key and retained for 24 hours.
+  A synchronous reservation precedes execution; overlapping requests and uncertain failures return 409
+  instead of risking a duplicate send. Completed results and application errors are replayed.
 
 ### 11.2 Authorization
 
