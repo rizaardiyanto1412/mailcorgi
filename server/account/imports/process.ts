@@ -21,7 +21,8 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
       if (!ctx.db.run("UPDATE imports SET status = 'completed', finished_at = ? WHERE id = ? AND newsletter_id = ? AND status IN ('queued', 'processing')", ctx.now(), imp.id, imp.newsletter_id).changes) return
       const split = addedBreakdown(imp)
       const added = split && split.unconfirmed ? `${split.subscribed} contacts added and subscribed. ${split.note}` : `${imp.added} contacts added.`
-      notify(ctx, { userId: imp.created_by, kind: 'import_finished', title: 'Import finished', body: `${added} ${imp.processed_rows - imp.added - imp.updated} rows skipped.`, href: '/imports?import=' + imp.id })
+      const updated = imp.updated ? ` ${imp.updated} existing ${imp.updated === 1 ? 'contact' : 'contacts'} updated to subscribed.` : ''
+      notify(ctx, { userId: imp.created_by, kind: 'import_finished', title: 'Import finished', body: `${added}${updated} ${imp.processed_rows - imp.added - imp.updated} rows skipped.`, href: '/imports?import=' + imp.id })
       ctx.db.run('DELETE FROM import_seen WHERE import_id = ?', imp.id)
     })
     return 'done'
@@ -64,6 +65,7 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
       if (!current || !['queued', 'processing'].includes(current.status)) return false
       if (position !== pos) return true
       let added = 0
+      let updated = 0
       let addedKind: AddedKind | null = null
       let finalReason = reason
       const existing = ctx.db.get<{ id: string; status: string }>('SELECT id, status FROM contacts WHERE newsletter_id = ? AND email = ?', imp.newsletter_id, cleaned.email)
@@ -82,7 +84,8 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
         if (ctx.db.get('SELECT 1 FROM import_seen WHERE import_id = ? AND email = ?', imp.id, cleaned.email)) finalReason = 'duplicate_file'
         else if (isDeleted(ctx, cleaned.email, imp.newsletter_id)) finalReason = 'deleted'
         else if (isSuppressed(ctx, cleaned.email, imp.newsletter_id)) finalReason = 'suppressed'
-        else if (existing) finalReason = 'duplicate_existing'
+        // The owner asserts consent, so an unconfirmed contact becomes subscribed; inactive ones were handled above.
+        else if (existing && !(existing.status === 'unconfirmed' && options.consent && status === 'subscribed')) finalReason = 'duplicate_existing'
         else {
           try {
             const insertActive = (): Pick<ReturnType<typeof subscribe>, 'created' | 'outcome'> => {
@@ -104,9 +107,9 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
               const name = (mapping.name ? row[mapping.name] ?? '' : [mapping.firstName ? row[mapping.firstName] : '', mapping.lastName ? row[mapping.lastName] : ''].filter(Boolean).join(' ')).trim()
               if (name.length > 200) throw new Error('Invalid name')
               const names = (mapping.tags ? row[mapping.tags] ?? '' : '').split(/[,;]/).map((t) => t.trim()).filter(Boolean)
-              if (!reserveContacts(ctx, 1)) return { created: false, outcome: 'limit' }
+              if (!existing && !reserveContacts(ctx, 1)) return { created: false, outcome: 'limit' }
               const tagIds = [...options.tagIds, ...ensureTags(ctx, imp.newsletter_id, names)]
-              return subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, name, fields, tags: tagIds, source: 'import:' + imp.source_preset, consent: options.consent && status === 'subscribed' ? 'asserted' : 'pending', at: at ?? undefined })
+              return subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, name: existing && !name ? undefined : name, fields, tags: tagIds, source: 'import:' + imp.source_preset, consent: options.consent && status === 'subscribed' ? 'asserted' : 'pending', at: at ?? undefined })
             }
             const result = insertActive()
             if (result.outcome === 'limit') finalReason = 'contact_limit'
@@ -115,6 +118,7 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
               added = 1
               addedKind = result.outcome === 'subscribed' ? 'subscribed' : status === 'subscribed' ? 'no_consent' : mapping.status ? 'pending_in_file' : 'no_status_column'
             }
+            else if (existing && result.outcome === 'subscribed') updated = 1
             else finalReason = 'duplicate_existing'
           } catch (error) {
             if (error instanceof ZodError || error instanceof Error && ('status' in error ? error.status === 400 : error.message.startsWith('Invalid'))) finalReason = 'invalid_field'
@@ -130,7 +134,7 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
       }
       const detail = JSON.parse(current.added_detail || '{}') as Record<string, number>
       if (addedKind) detail[addedKind] = (detail[addedKind] ?? 0) + 1
-      ctx.db.run('UPDATE imports SET processed_rows = processed_rows + 1, added = added + ?, added_detail = ?, skipped = ? WHERE id = ? AND newsletter_id = ?', added, JSON.stringify(detail), JSON.stringify(counts), imp.id, imp.newsletter_id)
+      ctx.db.run('UPDATE imports SET processed_rows = processed_rows + 1, added = added + ?, updated = updated + ?, added_detail = ?, skipped = ? WHERE id = ? AND newsletter_id = ?', added, updated, JSON.stringify(detail), JSON.stringify(counts), imp.id, imp.newsletter_id)
       ctx.db.run('UPDATE import_chunks SET position = ?, done = ? WHERE import_id = ? AND seq = ?', pos + 1, pos + 1 === rows.length ? 1 : 0, imp.id, chunk.seq)
       return true
     })
