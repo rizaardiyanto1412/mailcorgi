@@ -12,9 +12,10 @@ export default defineConfig({
     port: Number(process.env.WEB_PORT || 5173),
     proxy: {
       '/api': { target: apiTarget, changeOrigin: false },
-      '/mcp': apiTarget,
+      '/mcp': { target: apiTarget, changeOrigin: false },
       '/img': apiTarget,
       '/healthz': apiTarget,
+      '/llms.txt': { target: apiTarget, changeOrigin: false },
     },
   },
 })
