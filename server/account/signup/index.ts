@@ -9,6 +9,7 @@ import { migrations } from './migrations.ts'
 import { getNewsletter, getSettings, settingsSchema, customFields, welcomeCampaign, welcomeEnabled } from './settings.ts'
 import { deliverMail } from './mail.ts'
 import { registerRoutes } from './routes.ts'
+export { formToken } from './tokens.ts'
 
 const newsletterId = z.string().min(1).describe('The newsletter id')
 const resource = { type: 'newsletter', param: 'newsletterId' } as const

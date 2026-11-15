@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { defineAction, type Actor } from '../../core/actions.ts'
 import { AppError, notFound } from '../../core/http.ts'
+import { websiteHost } from '../website/index.ts'
 import { authorActions } from './authors.ts'
 import { imageShape, decodeImage } from './images.ts'
 import { newId, newNewsletterKey } from '../../core/ids.ts'
@@ -133,7 +134,10 @@ export const newslettersModule = {
       const row = getNewsletterRow(ctx, newsletterId)
       const accountId = ctx.accountId!
       if (!row || row.archived_at !== null) await ctx.stores.control.removeSite({ newsletterId, accountId })
-      else await ctx.stores.control.upsertSite({ newsletterId, accountId, slug: row.slug })
+      else {
+        const host = websiteHost(ctx, newsletterId)
+        await ctx.stores.control.upsertSite({ newsletterId, accountId, slug: row.slug, customHost: host?.hostname ?? null, hostVerifiedAt: host?.verified_at ?? null })
+      }
       return 'done'
     })
 

@@ -18,3 +18,7 @@ export async function readToken(ctx: StoreCtx, purpose: 'cf' | 'form', value: st
 }
 export const confirmationSchema = z.object({ contactId: z.string(), issuedAt: z.number().int() })
 export const formTokenSchema = z.object({ newsletterId: z.string(), issuedAt: z.number().int() })
+
+export function formToken(ctx: StoreCtx, newsletterId: string) {
+  return token(ctx, 'form', { newsletterId, issuedAt: ctx.now() })
+}
