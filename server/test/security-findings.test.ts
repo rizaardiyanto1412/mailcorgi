@@ -39,3 +39,27 @@ test('unauthenticated webhook failures do not flood the admin alert list', async
     install.close()
   }
 })
+
+test('an unverified custom hostname in another account cannot block the domain owner', async () => {
+  const install = await createInstall({ env: { ALLOWED_EMAILS: 'squatter@example.com' } })
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const squatter = await install.signUp({ email: 'squatter@example.com' })
+    const squatNl = await squatter.action('newsletters.create', { name: 'Squatter' })
+    await squatter.action('website.setHost', { newsletterId: squatNl.id, hostname: 'news.example.com' })
+    await install.runJobs()
+    const nl = await owner.action('newsletters.create', { name: 'Real owner' })
+    await owner.action('website.update', { newsletterId: nl.id, settings: { enabled: true } as never })
+    const info = await owner.action('website.setHost', { newsletterId: nl.id, hostname: 'news.example.com' })
+    install.dns.set(info.cname.name, 'CNAME', [info.cname.value])
+    install.dns.set(info.txt.name, 'TXT', [info.txt.value])
+    assert.ok((await owner.action('website.checkHost', { newsletterId: nl.id })).verifiedAt)
+    for (let i = 0; i < 10; i++) { await install.runJobs(); install.clock.advance(3_600_000) }
+    const page = await install.fetch('http://news.example.com/')
+    assert.equal(page.status, 200)
+    assert.match(await page.text(), /Real owner/)
+    assert.equal((await install.fetch(`/api/public/tls-check?domain=news.example.com`)).status, 200)
+  } finally {
+    install.close()
+  }
+})
