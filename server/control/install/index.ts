@@ -10,6 +10,9 @@ import type { ControlRegistrar } from '../rpc.ts'
 /** Settings whose values are encrypted at rest and never returned to a browser. */
 export const isSecretSetting = (key: string) => /(secret|password|api_key|token|access_key_id|smtp_user)/.test(key)
 
+/** Where the last successful test email is recorded, for the setup checklist. */
+export const TEST_EMAIL_KEY = '_test_email'
+
 /** Which env var overrides a setting: `ses_access_key_id` → `SES_ACCESS_KEY_ID`. */
 const envName = (key: string) => key.toUpperCase()
 
@@ -162,6 +165,8 @@ export const installModule = {
         handler: async (ctx, { to }) => {
           const result = await sendSystemEmail(ctx, { to, subject: 'MailCorgi test email', ...simpleEmail({ title: 'Your email provider works', lines: ['MailCorgi sent this test email using your saved settings.'] }), kind: 'test' })
           if (!result.ok) throw new AppError('email_failed', result.message, 502)
+          const provider = (await getSetting(ctx, 'email_provider')) || 'test'
+          ctx.db.run('INSERT INTO install_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', TEST_EMAIL_KEY, JSON.stringify({ provider, at: ctx.now() }))
           return { ok: true }
         },
       }),
