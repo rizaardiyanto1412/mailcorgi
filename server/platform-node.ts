@@ -220,6 +220,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
 
   const edge = createEdge({
     config,
+    fetch: (input, init) => platform.fetch(input, init),
     keys: async () => keys,
     stores,
     storeFetch: (ref, request) => storeFor(ref).fetch(request),
