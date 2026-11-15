@@ -26,6 +26,13 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",
+    "@tiptap/extension-bubble-menu": "^3.34.0",
+    "@tiptap/extension-highlight": "^3.34.0",
+    "@tiptap/extension-image": "^3.34.0",
+    "@tiptap/extension-placeholder": "^3.34.0",
+    "@tiptap/pm": "^3.34.0",
+    "@tiptap/react": "^3.34.0",
+    "@tiptap/starter-kit": "^3.34.0",
     "aws4fetch": "^1.0.20",
     "hono": "^4.13.18",
     "marked": "^18.2.0",
