@@ -25,6 +25,7 @@ export interface AccountRpc {
   ingestProviderEvents(args: { events: ProviderEvent[] }): Promise<{ applied: number }>
   summary(args: Record<string, never>): Promise<{ newsletters: number; contacts: number }>
   blobGet(args: { key: string }): Promise<{ bytes: number[]; contentType: string } | null>
+  ping(args: Record<string, never>): Promise<{ ok: true }>
   [name: string]: (args: any) => Promise<any>
 }
 

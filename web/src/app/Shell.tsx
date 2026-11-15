@@ -189,11 +189,17 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Shell() {
   const [planLimit, setPlanLimit] = useState(false)
+  const [writeLimit, setWriteLimit] = useState(false)
   const { boot, current } = useSession()
   useEffect(() => {
     const show = () => setPlanLimit(true)
+    const showWrites = () => setWriteLimit(true)
     window.addEventListener('mc:plan-limit', show)
-    return () => window.removeEventListener('mc:plan-limit', show)
+    window.addEventListener('mc:storage-write-limit', showWrites)
+    return () => {
+      window.removeEventListener('mc:plan-limit', show)
+      window.removeEventListener('mc:storage-write-limit', showWrites)
+    }
   }, [])
   const [drawer, setDrawer] = useState(false)
   useEffect(() => {
@@ -224,6 +230,7 @@ export function Shell() {
           <NotificationsBell />
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">
+          {writeLimit && <div className="px-5 pt-4"><Banner kind="danger">Cloudflare's free plan allows 100,000 database writes a day and this account has used them. You can still read everything. Saving, sending and signups resume at 00:00 UTC, or now if you upgrade to Workers Paid.</Banner></div>}
           {boot.cloud && planLimit && <div className="px-5 pt-4"><Banner kind="warn" action={<button type="button" onClick={() => setPlanLimit(false)} aria-label="Dismiss plan limit">×</button>}>Your account has reached a plan limit. <Link className="underline" to="/settings/billing">View plans and usage</Link></Banner></div>}
           <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-8">
             <ErrorBoundary>

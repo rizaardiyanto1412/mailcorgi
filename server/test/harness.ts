@@ -54,6 +54,10 @@ export interface Install {
   dataDir: string
   /** `fail(true)` makes every lookup throw, as a resolver outage does. */
   dns: { set(name: string, type: DnsType, values: string[]): void; fail(on: boolean): void }
+  /** `refuseWrites(true)` makes every row write and alarm fail as Cloudflare's daily quota does. */
+  refuseWrites(on: boolean): void
+  /** Rows written by every open store since the install opened (alarms included). */
+  writes(): number
   fetch(path: string, init?: RequestInit): Promise<Response>
   /** Emails the test provider wrote: in the control store, or in one account store. */
   outbox(scope?: 'control' | string): OutboxRow[]
@@ -89,9 +93,11 @@ export async function createInstall(opts: InstallOptions = {}): Promise<Install>
   const config = parseConfig({ DATA_DIR: dataDir, APP_URL: APP_URL, CLOUD: opts.cloud ? 'true' : '', ...opts.env })
   const dns = new Map<string, string[]>()
   let dnsDown = false
+  let writesRefused = false
   const app = await createNodeApp({
     config,
     now: clock.now,
+    refuseWrites: () => writesRefused,
     fetch: async () => {
       throw new Error('Tests must not reach the network.')
     },
@@ -182,6 +188,8 @@ export async function createInstall(opts: InstallOptions = {}): Promise<Install>
     clock,
     dataDir,
     dns: { set: (name, type, values) => void dns.set(`${type}:${name.toLowerCase()}`, values), fail: (on) => void (dnsDown = on) },
+    refuseWrites: (on) => void (writesRefused = on),
+    writes: () => [app.control, ...app.accountIds().map((id) => app.account(id))].reduce((n, store) => n + store.meter.writes, 0),
     fetch: fetchEdge,
     outbox(scope = 'control') {
       const store = scope === 'control' ? app.control : app.account(scope)

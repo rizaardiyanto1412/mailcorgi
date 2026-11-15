@@ -10,6 +10,13 @@ declare module 'cloudflare:workers' {
 interface SqlCursor {
   toArray(): Record<string, unknown>[]
   one(): Record<string, unknown>
+  /** Rows the statement wrote, index entries included. Cloudflare bills this number. */
+  rowsWritten: number
+  rowsRead: number
+}
+interface ScheduledEvent {
+  cron: string
+  scheduledTime: number
 }
 interface DurableObjectState {
   id: { toString(): string }

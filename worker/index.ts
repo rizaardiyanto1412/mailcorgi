@@ -6,7 +6,7 @@ import { isAccountId } from '../server/core/ids.ts'
 import { AppError } from '../server/core/http.ts'
 import { DurableObject } from 'cloudflare:workers'
 import { parseConfig, type Config } from '../server/core/config.ts'
-import { createDb, type Driver } from '../server/core/db.ts'
+import { createDb, createMeter, isWriteRefused, type Driver, type Meter } from '../server/core/db.ts'
 import { deriveKeys, randomHex, type Keys } from '../server/core/crypto.ts'
 import { dnsResolver, memoryBlobs, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from '../server/core/platform.ts'
 import { storeId } from '../server/core/platform.ts'
@@ -39,16 +39,32 @@ const workerConfig = (env: Env): Config => {
 }
 const toBuffer = (value: unknown) => (value instanceof Uint8Array ? value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) : value)
 
-function sqlDriver(ctx: DurableObjectState): Driver {
+/** Counts rows as Cloudflare bills them: `rowsWritten` includes index entries. */
+function sqlDriver(ctx: DurableObjectState, meter: Meter): Driver {
   const { sql } = ctx.storage
+  const count = (cursor: SqlCursor) => {
+    meter.writes += cursor.rowsWritten
+    meter.reads += cursor.rowsRead
+  }
   return {
-    all: (query, params) => sql.exec(query, ...params.map(toBuffer)).toArray(),
+    all: (query, params) => {
+      const cursor = sql.exec(query, ...params.map(toBuffer))
+      const rows = cursor.toArray()
+      count(cursor)
+      return rows
+    },
     run: (query, params) => {
-      sql.exec(query, ...params.map(toBuffer)).toArray()
+      const cursor = sql.exec(query, ...params.map(toBuffer))
+      cursor.toArray()
+      count(cursor)
       const row = sql.exec('SELECT last_insert_rowid() AS id, changes() AS changes').one()
       return { id: Number(row.id), changes: Number(row.changes) }
     },
-    exec: (query) => void sql.exec(query).toArray(),
+    exec: (query) => {
+      const cursor = sql.exec(query)
+      cursor.toArray()
+      count(cursor)
+    },
     transaction: (fn) => ctx.storage.transactionSync(fn),
   }
 }
@@ -128,6 +144,7 @@ async function keysFor(env: Env, config: Config, own?: () => string): Promise<Ke
 abstract class BaseStore extends DurableObject<Env> {
   protected store: Promise<Store> | null = null
   protected config: Config
+  protected storeMeter: Meter = createMeter()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -144,9 +161,11 @@ abstract class BaseStore extends DurableObject<Env> {
       blobs,
       fetch: (input, init) => fetch(input, init),
       setAlarm: async (_ref, at) => {
+        this.storeMeter.writes++
         if (at === null) await this.ctx.storage.deleteAlarm()
         else await this.ctx.storage.setAlarm(Math.max(at, Date.now() + 50))
       },
+      getAlarm: () => this.ctx.storage.getAlarm(),
       resolveDns: dnsResolver(this.config.testDns, (name, type) => resolveDnsOverHttps(fetch, name, type)),
       waitUntil: (p) => this.ctx.waitUntil(p),
       limits: limitsFor(this.env),
@@ -157,7 +176,7 @@ abstract class BaseStore extends DurableObject<Env> {
     }
     const registry = ref.kind === 'control' ? controlRegistry : accountRegistry
     const migrations = ref.kind === 'control' ? controlMigrations : accountMigrations
-    return createStore(registry, migrations, { ref, db: createDb(sqlDriver(this.ctx)), platform, stores: envStores(this.env), config: this.config, keys, now: Date.now })
+    return createStore(registry, migrations, { ref, db: createDb(sqlDriver(this.ctx, this.storeMeter)), platform, stores: envStores(this.env), config: this.config, keys, now: Date.now, meter: this.storeMeter })
   }
 
   private ownMaster(): string {
@@ -201,8 +220,15 @@ abstract class BaseStore extends DurableObject<Env> {
       const store = await this.ready()
       await store.alarm()
     } catch (err) {
+      // A refused write leaves the alarm to the platform's own retries; anything else is logged once.
+      if (isWriteRefused(err)) throw err
       console.error('[alarm]', err)
     }
+  }
+
+  /** Rows this object wrote and read since it started. Dev mode only; reads nothing from storage. */
+  async meter(): Promise<Meter> {
+    return { ...this.storeMeter }
   }
 }
 
@@ -305,14 +331,31 @@ function edgeFor(env: Env): Edge {
     blobs: env.IMAGES ? r2Blobs(env.IMAGES) : null,
     assets: withSpaFallback((request) => env.ASSETS.fetch(request)),
     now: Date.now,
+    meter: (ref) => stub(ref).meter(),
     clientIp: (request) => request.headers.get('cf-connecting-ip') || '',
   })
   void storeId
   return edge
 }
 
+/** Up to this many account stores are woken by one cron run (Workers Free allows 50 subrequests). */
+const WAKE_BATCH = 40
+
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return edgeFor(env).fetch(request)
+  },
+  // Once a day, after the row-write quota resets at 00:00 UTC, wake every store that could not
+  // arm its alarm the day before, so queued jobs and paused sends resume without a visitor.
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    const stores = envStores(env)
+    const ids = await stores.control.listAccountIds({ limit: WAKE_BATCH })
+    for (const accountId of ids) {
+      try {
+        await stores.account(accountId).ping({})
+      } catch (err) {
+        console.error('[scheduled]', accountId, err)
+      }
+    }
   },
 }

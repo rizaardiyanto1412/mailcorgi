@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { Config } from './core/config.ts'
-import { createDb, type Driver, type SqlValue } from './core/db.ts'
+import { createDb, createMeter, isWriteRefused, type Driver, type Meter, type SqlValue } from './core/db.ts'
 import { deriveKeys, randomHex, type Keys } from './core/crypto.ts'
 import { dnsResolver, resolveDnsOverHttps, type BlobStore, type Platform, type StoreRef } from './core/platform.ts'
 import { storeId } from './core/platform.ts'
@@ -27,6 +27,8 @@ export interface NodeOptions {
   resolveDns?: Platform['resolveDns']
   assets?: (request: Request) => Promise<Response>
   log?: (line: string) => void
+  /** Tests: when this returns true, every row write and alarm fails as Cloudflare's quota does. */
+  refuseWrites?: () => boolean
 }
 
 export interface NodeApp {
@@ -45,9 +47,14 @@ export interface NodeApp {
   close(): void
 }
 
-export function openDriver(file: string): { driver: Driver; close(): void } {
+/** What Cloudflare answers once the day's row writes are used up; the test switch throws the same text. */
+export const WRITE_REFUSED_MESSAGE = 'Exceeded allowed rows written in Durable Objects free tier.'
+const WRITES = /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i
+
+export function openDriver(file: string, opts: { meter?: Meter; refuseWrites?: () => boolean } = {}): { driver: Driver; close(): void; meter: Meter } {
   const db = new DatabaseSync(file)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;')
+  const meter = opts.meter ?? createMeter()
   const cache = new Map<string, StatementSync>()
   const stmt = (sql: string) => {
     let s = cache.get(sql)
@@ -57,14 +64,27 @@ export function openDriver(file: string): { driver: Driver; close(): void } {
     }
     return s
   }
+  const refuse = (sql: string) => {
+    if (opts.refuseWrites?.() && WRITES.test(sql)) throw new Error(WRITE_REFUSED_MESSAGE)
+  }
   type Bind = Exclude<SqlValue, never>[]
   const driver: Driver = {
-    all: (sql, params) => stmt(sql).all(...(params as Bind)) as any[],
+    all: (sql, params) => {
+      refuse(sql)
+      const rows = stmt(sql).all(...(params as Bind)) as any[]
+      meter.reads += rows.length
+      return rows
+    },
     run: (sql, params) => {
+      refuse(sql)
       const r = stmt(sql).run(...(params as Bind))
+      meter.writes += Number(r.changes)
       return { id: Number(r.lastInsertRowid), changes: Number(r.changes) }
     },
-    exec: (sql) => db.exec(sql),
+    exec: (sql) => {
+      refuse(sql)
+      db.exec(sql)
+    },
     transaction: (fn) => {
       db.exec('BEGIN IMMEDIATE')
       try {
@@ -77,7 +97,7 @@ export function openDriver(file: string): { driver: Driver; close(): void } {
       }
     },
   }
-  return { driver, close: () => db.close() }
+  return { driver, close: () => db.close(), meter }
 }
 
 const isPrivatePeer = (ip: string) => /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(ip)
@@ -201,12 +221,18 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
 
   const keys = await deriveKeys(masterKey(config, dataDir))
   const alarms = new Map<string, number>()
+  const meters = new Map<string, Meter>()
   const platform: Platform = {
     blobs: diskBlobs(imagesDir),
     fetch: fetchFn,
     async setAlarm(ref, at) {
+      if (opts.refuseWrites?.()) throw new Error(WRITE_REFUSED_MESSAGE)
+      meters.get(storeId(ref))!.writes++
       if (at === null) alarms.delete(storeId(ref))
       else alarms.set(storeId(ref), at)
+    },
+    async getAlarm(ref) {
+      return alarms.get(storeId(ref)) ?? null
     },
     resolveDns: opts.resolveDns ?? dnsResolver(config.testDns, (name, type) => resolveDnsOverHttps(fetchFn, name, type)),
     waitUntil: (p) => void p.catch((err) => console.error('[waitUntil]', err)),
@@ -229,10 +255,12 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   const stores = createStores((ref, name, args) => (ref.kind === 'account' && name === 'bootstrap' ? account(ref.accountId, true) : storeFor(ref)).rpc(name, args))
   const open = (ref: StoreRef): Store => {
     const file = ref.kind === 'control' ? path.join(dataDir, 'control.db') : path.join(accountsDir, `${ref.accountId}.db`)
-    const { driver, close } = openDriver(file)
+    const meter = createMeter()
+    meters.set(storeId(ref), meter)
+    const { driver, close } = openDriver(file, { meter, refuseWrites: opts.refuseWrites })
     const registry = ref.kind === 'control' ? controlRegistry : accountRegistry
     const migrations = ref.kind === 'control' ? controlMigrations : accountMigrations
-    const store = createStore(registry, migrations, { ref, db: createDb(driver), platform, stores, config, keys, now })
+    const store = createStore(registry, migrations, { ref, db: createDb(driver), platform, stores, config, keys, now, meter })
     closers.set(store, close)
     return store
   }
@@ -265,6 +293,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     blobs: platform.blobs,
     assets: opts.assets ?? (async () => new Response('Not found', { status: 404 })),
     now,
+    meter: async (ref) => storeFor(ref).meter,
     clientIp: (request, peer) => nodeClientIp(request, peer, config.trustProxy),
     trustsProxy: (peer) => trustsProxy(config.trustProxy, peer),
   })
@@ -274,7 +303,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     if (ticking) return
     ticking = true
     try {
-      await Promise.all([control, ...accountIds().map((id) => account(id))].map((store) => store.rearm()))
+      await Promise.all([control, ...accountIds().map((id) => account(id))].map((store) => store.rearm().catch(() => {})))
       const due = [...alarms.entries()].filter(([, at]) => at <= now()).map(([id]) => id)
       for (const id of due) {
         alarms.delete(id)
@@ -282,7 +311,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
         try {
           await storeFor(id === 'control' ? { kind: 'control' } : { kind: 'account', accountId: id }).alarm()
         } catch (err) {
-          console.error('[alarm]', id, err)
+          if (!isWriteRefused(err)) console.error('[alarm]', id, err)
         }
       }
     } finally {

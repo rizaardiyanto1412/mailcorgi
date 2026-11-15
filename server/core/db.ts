@@ -12,6 +12,22 @@ export interface Driver {
   transaction<T>(fn: () => T): T
 }
 
+/**
+ * Rows a store has written and read since it was opened, as Cloudflare bills them: index entries
+ * count on Durable Objects, and every `setAlarm` is one row written. Node counts `changes`.
+ */
+export interface Meter {
+  writes: number
+  reads: number
+}
+export const createMeter = (): Meter => ({ writes: 0, reads: 0 })
+
+/** The message Cloudflare returns once the day's row writes are used up, and the other ways a write can be refused. */
+export const isWriteRefused = (err: unknown): boolean => {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  return /rows written|write limit|writes? (?:limit|quota)|SQLITE_FULL|database or disk is full|readonly database|storage limit/i.test(message)
+}
+
 export interface Db {
   all<T = any>(sql: string, ...params: Param[]): T[]
   get<T = any>(sql: string, ...params: Param[]): T | undefined

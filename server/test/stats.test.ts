@@ -116,6 +116,8 @@ test('rollup counts confirmed subscriptions once, website views and real import 
   ctx.db.run("INSERT INTO imports (id, newsletter_id, status, created_by, created_at) VALUES ('imp_done', ?, 'done', ?, ?)", nl.id, owner.session.user.id, ctx.now())
   await install.runJobs()
   await install.fetch(`/n/${nl.slug}`, { headers: { 'user-agent': UA, referer: 'https://example.com/article' } })
+  // Views wait in memory for the next alarm.
+  install.clock.advance(301_000)
   await install.runJobs()
   rebuild(ctx, nl.id)
   const overview = await owner.action('stats.overview', { newsletterId: nl.id, range: '30' })

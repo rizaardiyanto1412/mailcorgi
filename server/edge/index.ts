@@ -8,6 +8,7 @@ import { appHost } from '../core/config.ts'
 import type { Keys } from '../core/crypto.ts'
 import { sha256Hex, signEnvelope } from '../core/crypto.ts'
 import type { BlobStore, StoreRef } from '../core/platform.ts'
+import type { Meter } from '../core/db.ts'
 import { storeId } from '../core/platform.ts'
 import { ACTOR_HEADER, ACTOR_TTL_MS, type ActorEnvelope, type Stores } from '../core/store.ts'
 import type { Actor } from '../core/actions.ts'
@@ -35,6 +36,8 @@ export interface EdgeDeps {
   assets(request: Request): Promise<Response>
   now(): number
   fetch?: typeof fetch
+  /** Dev mode: a store's write meter, without going through its request path. */
+  meter?(ref: StoreRef): Promise<Meter>
   /** The client address the platform can vouch for, given the socket peer when it has one. */
   clientIp?(request: Request, peer: string | null): string
   /** Node: whether the socket peer is a trusted proxy. When it is not, forwarding headers are dropped. */
@@ -163,6 +166,15 @@ export function createEdge(deps: EdgeDeps): Edge {
     if (ip) headers.set(CLIENT_IP_HEADER, ip)
     const method = request.method.toUpperCase()
     if (path === '/healthz') return json({ ok: true })
+    // Dev mode: rows written and read by the control store and the named account stores.
+    if (path === '/api/dev/writes' && deps.config.testDns && deps.meter) {
+      const refs: StoreRef[] = [{ kind: 'control' }, ...(url.searchParams.get('accounts') || '').split(',').filter(isAccountId).map((accountId) => ({ kind: 'account' as const, accountId }))]
+      const stores: Record<string, Meter> = {}
+      for (const ref of refs) stores[storeId(ref)] = await deps.meter(ref)
+      const writes = Object.values(stores).reduce((n, m) => n + m.writes, 0)
+      const reads = Object.values(stores).reduce((n, m) => n + m.reads, 0)
+      return json({ writes, reads, stores })
+    }
 
     if (!appHost(deps.config) && !learnedHost) {
       const setupEntry = method === 'GET' && ['/', '/setup', '/signin', '/signup', '/api/auth/bootstrap'].includes(path)

@@ -6,7 +6,8 @@ import { allowRate } from '../../core/ratelimit.ts'
 import { safeUrl } from '../render/index.ts'
 import { unsubscribe } from '../contacts/index.ts'
 import { bumpStat } from '../sending/index.ts'
-import { deliveryById, recordClick, recordOpen } from './events.ts'
+import { deliveryById, recordClick, recordOpen, recordRepeatOpen } from './events.ts'
+import { isWriteRefused } from '../../core/db.ts'
 import { themedPage } from './pages.ts'
 import { verifyToken } from './tokens.ts'
 
@@ -59,7 +60,15 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const now = ctx.now()
     if (!d || !['sent', 'delivered', 'complained'].includes(d.status) || isScanner(c.req.header('user-agent') ?? '') || (d.sent_at !== null && now - d.sent_at < OPEN_GRACE_MS)) return pixel()
     const privacyProxy = /apple-mail|mailprivacy|icloud|googleimageproxy/i.test(c.req.header('user-agent') ?? '')
-    recordOpen(ctx, d, now, privacyProxy)
+    // The pixel is answered even when the open cannot be stored.
+    try {
+      // A repeat open only bumps counters, unless it is the first human open after proxy ones.
+      const strict = d.opened_at && !privacyProxy ? ctx.db.get<{ n: number }>('SELECT strict_ignored_streak AS n FROM contacts WHERE id = ?', d.contact_id)?.n ?? 0 : 0
+      if (d.opened_at && !strict) recordRepeatOpen(ctx, d, now, privacyProxy)
+      else recordOpen(ctx, d, now, privacyProxy)
+    } catch (err) {
+      if (!isWriteRefused(err)) throw err
+    }
     return pixel()
   })
 
@@ -73,7 +82,12 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const url = link && safeUrl(link.url)
     if (!link || !url) return jsonNotFound(c)
     const now = ctx.now()
-    if (['sent', 'delivered', 'complained'].includes(d.status) && !isScanner(c.req.header('user-agent') ?? '') && !(d.sent_at !== null && now - d.sent_at < CLICK_GRACE_MS)) recordClick(ctx, d, link, now)
+    // The reader is sent on even when the click cannot be stored.
+    try {
+      if (['sent', 'delivered', 'complained'].includes(d.status) && !isScanner(c.req.header('user-agent') ?? '') && !(d.sent_at !== null && now - d.sent_at < CLICK_GRACE_MS)) recordClick(ctx, d, link, now)
+    } catch (err) {
+      if (!isWriteRefused(err)) throw err
+    }
     return c.redirect(url, 302)
   })
 
@@ -95,7 +109,14 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const token = await pageToken(ctx, c.req.param('token'))
     const contact = token && contactForPage(ctx, token.contactId)
     if (!token || !contact) return jsonNotFound(c)
-    doUnsubscribe(ctx, contact, token.campaignId)
+    try {
+      doUnsubscribe(ctx, contact, token.campaignId)
+    } catch (err) {
+      if (!isWriteRefused(err)) throw err
+      // Never pretend: the reader must know the request did not land.
+      const retry = `We could not record this right now. Try again later, or reply to the email and ask to be removed.`
+      return c.html(themedPage({ newsletter: contact, title: 'Please try again later', lines: [retry] }), 503, { ...noStore, 'Retry-After': '3600' })
+    }
     const oneClick = (c.req.header('content-type') ?? '').includes('application/x-www-form-urlencoded') && /(^|&)List-Unsubscribe=One-Click(&|$)/.test(await c.req.text())
     if (oneClick) return c.text('Unsubscribed.', 200, noStore)
     return c.html(themedPage({ newsletter: contact, title: 'You are unsubscribed', lines: [`${contact.email} no longer receives ${contact.name}.`] }), 200, noStore)

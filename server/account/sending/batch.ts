@@ -25,12 +25,33 @@ interface DeliveryRow {
   attempts: number
 }
 
-/** A delivery that just went out: contact counters, daily stats, usage, the event row. */
-export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'campaign_id' | 'contact_id'>, newsletterId: string, at: number) {
+/** Counters a send batch updates once at the end instead of once per email. */
+export interface SentTally {
+  days: Map<string, number>
+  sent: number
+}
+export const newTally = (): SentTally => ({ days: new Map(), sent: 0 })
+export function flushTally(ctx: StoreCtx, campaignId: string, newsletterId: string, tally: SentTally) {
+  if (!tally.sent) return
+  for (const [at, n] of tally.days) daily(ctx, newsletterId, 'sent', Number(at), n)
+  bumpStat(ctx, campaignId, 'sent', tally.sent)
+  countEmails(ctx, tally.sent)
+  tally.days.clear()
+  tally.sent = 0
+}
+
+/** A delivery that just went out: contact counters, the event row, and the daily, campaign and usage counters (or a tally of them). */
+export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'campaign_id' | 'contact_id'>, newsletterId: string, at: number, tally?: SentTally) {
   const issue = getCampaignRow(ctx, d.campaign_id).kind === 'issue'
   ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + ?, strict_ignored_streak = strict_ignored_streak + ?, last_sent_at = ?, updated_at = ? WHERE id = ?', issue ? 1 : 0, issue ? 1 : 0, at, at, d.contact_id)
   recordHygieneSend(ctx, d.id, d.campaign_id, d.contact_id, at)
   ctx.db.run('INSERT INTO events (type, newsletter_id, contact_id, campaign_id, delivery_id, at) VALUES (?, ?, ?, ?, ?, ?)', 'send', newsletterId, d.contact_id, d.campaign_id, d.id, at)
+  if (tally) {
+    const day = String(at - (at % 86_400_000))
+    tally.days.set(day, (tally.days.get(day) ?? 0) + 1)
+    tally.sent++
+    return
+  }
   daily(ctx, newsletterId, 'sent', at)
   bumpStat(ctx, d.campaign_id, 'sent')
   countEmails(ctx, 1)
@@ -85,11 +106,11 @@ function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: num
 }
 
 /** Store a send result against the attempt that made it. Returns when the batch must stop and resume. */
-function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, result: SendResult, idempotent: boolean, now: number): number | null {
+function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, result: SendResult, idempotent: boolean, now: number, tally: SentTally): number | null {
   return ctx.db.tx(() => {
     const own = (sql: string, ...params: (string | number | null)[]) => ctx.db.run(`${sql} WHERE id = ? AND status = 'sending' AND attempt_token = ?`, ...params, d.id, d.attempt_token).changes
     if (result.ok) {
-      if (own('UPDATE deliveries SET status = ?, provider_message_id = ?, sent_at = ?, error = NULL', 'sent', result.id, now)) markSentEffects(ctx, d, newsletterId, now)
+      if (own('UPDATE deliveries SET status = ?, provider_message_id = ?, sent_at = ?, error = NULL', 'sent', result.id, now)) markSentEffects(ctx, d, newsletterId, now, tally)
       else ctx.db.run('UPDATE deliveries SET provider_message_id = COALESCE(provider_message_id, ?) WHERE id = ?', result.id, d.id)
       return null
     }
@@ -181,18 +202,25 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
   const permits = await ctx.stores.control.takeSendPermits({ accountId: ctx.accountId!, want })
   if (permits.granted < 1) return { again: permits.retryAt ?? now + 1000 }
   const ids = allowed.slice(0, Math.min(permits.granted, budget.take(permits.granted))).map((d) => d.id)
-  for (const id of ids) {
-    if (budget.expired() || protectionState(ctx) || getPolicy(ctx).status !== 'active') break
-    const d = claimDelivery(ctx, id, row.newsletter_id, ctx.now())
-    if (!d) continue
-    let result: SendResult
-    try {
-      result = await provider.send(await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } }))
-    } catch (err) {
-      result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) }
+  // Daily, campaign and usage counters are written once per batch; the rollup repairs them if a
+  // crash loses the last batch's tally.
+  const tally = newTally()
+  try {
+    for (const id of ids) {
+      if (budget.expired() || protectionState(ctx) || getPolicy(ctx).status !== 'active') break
+      const d = claimDelivery(ctx, id, row.newsletter_id, ctx.now())
+      if (!d) continue
+      let result: SendResult
+      try {
+        result = await provider.send(await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } }))
+      } catch (err) {
+        result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) }
+      }
+      const resumeAt = recordResult(ctx, d, row.newsletter_id, result, idempotent, ctx.now(), tally)
+      if (resumeAt !== null) return { again: resumeAt }
     }
-    const resumeAt = recordResult(ctx, d, row.newsletter_id, result, idempotent, ctx.now())
-    if (resumeAt !== null) return { again: resumeAt }
+  } finally {
+    flushTally(ctx, campaignId, row.newsletter_id, tally)
   }
   return { again: permits.retryAt ?? ctx.now() }
 }

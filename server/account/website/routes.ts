@@ -11,7 +11,13 @@ import { escapeHtml as e, safeUrl } from '../render/index.ts'
 import { baseUrl, countPublicIssues, ensureAppUrl, hasPublicIssue, issueDate, issueSlug, publicIssues, settings, websiteHost } from './model.ts'
 import { csp, feed, imageUrl, issueCard, issueUrl, layout, rendered, signup, xml, type Author, type Site } from './templates.ts'
 import { readPage, writePage, type CachedPage } from './cache.ts'
+import { insertMany } from '../../core/db.ts'
 
+type View = [newsletterId: string, campaignId: string | null, path: string, referrer: string, country: string, at: number]
+const VIEWS = 'website.views'
+const MAX_PENDING_VIEWS = 5_000
+
+/** Views wait in memory and land in one batch (architecture 3.2 `later`), so a page view writes no row of its own. */
 function countView(c: Context<StoreEnv>, newsletterId: string, campaignId: string | null) {
   const ctx = c.get('ctx')
   const req = c.req.raw
@@ -19,9 +25,31 @@ function countView(c: Context<StoreEnv>, newsletterId: string, campaignId: strin
   let referrer = ''
   try { referrer = new URL(req.headers.get('referer') || '').hostname } catch { /* Missing referrers are direct visits. */ }
   const country = req.headers.get('cf-ipcountry') || ''
+  let pending = ctx.memory.get(VIEWS) as View[] | undefined
+  if (!pending) {
+    pending = []
+    ctx.memory.set(VIEWS, pending)
+  }
+  if (pending.length >= MAX_PENDING_VIEWS) return
+  pending.push([newsletterId, campaignId, new URL(req.url).pathname.slice(0, 2048), referrer, /^[A-Z]{2}$/.test(country) ? country : '', ctx.now()])
+  ctx.later.add(VIEWS, flushViews)
+}
+
+export function flushViews(ctx: StoreCtx) {
+  const views = (ctx.memory.get(VIEWS) as View[] | undefined) ?? []
+  if (!views.length) return
+  ctx.memory.set(VIEWS, [])
+  const days = new Map<string, [newsletterId: string, day: string, n: number]>()
+  for (const [newsletterId, , , , , at] of views) {
+    const day = new Date(at).toISOString().slice(0, 10)
+    const key = `${newsletterId}\n${day}`
+    const row = days.get(key) ?? [newsletterId, day, 0]
+    row[2]++
+    days.set(key, row)
+  }
   ctx.db.tx(() => {
-    ctx.db.run('INSERT INTO page_views (newsletter_id, campaign_id, path, referrer_host, country, at) VALUES (?, ?, ?, ?, ?, ?)', newsletterId, campaignId, new URL(req.url).pathname.slice(0, 2048), referrer, /^[A-Z]{2}$/.test(country) ? country : '', ctx.now())
-    ctx.db.run('INSERT INTO daily_stats (newsletter_id, day, page_views) VALUES (?, ?, 1) ON CONFLICT(newsletter_id, day) DO UPDATE SET page_views = page_views + 1', newsletterId, new Date(ctx.now()).toISOString().slice(0, 10))
+    insertMany(ctx.db, 'page_views', ['newsletter_id', 'campaign_id', 'path', 'referrer_host', 'country', 'at'], views)
+    for (const [newsletterId, day, n] of days.values()) ctx.db.run('INSERT INTO daily_stats (newsletter_id, day, page_views) VALUES (?, ?, ?) ON CONFLICT(newsletter_id, day) DO UPDATE SET page_views = page_views + excluded.page_views', newsletterId, day, n)
   })
 }
 export function registerRoutes(reg: AccountRegistrar) {

@@ -22,8 +22,10 @@ export type DnsType = 'TXT' | 'CNAME' | 'MX' | 'A'
 export interface Platform {
   blobs: BlobStore
   fetch: typeof fetch
-  /** Wake the store at `at` (ms). The earliest requested time wins. */
+  /** Wake the store at `at` (ms); null clears. Costs one row write on Cloudflare, so the store calls it only when the time changes. */
   setAlarm(store: StoreRef, at: number | null): Promise<void>
+  /** The time the platform will wake the store, or null. A read; the store asks once after a restart. */
+  getAlarm(store: StoreRef): Promise<number | null>
   resolveDns(name: string, type: DnsType): Promise<string[]>
   waitUntil(p: Promise<unknown>): void
   limits: { subrequestsPerRun: number }

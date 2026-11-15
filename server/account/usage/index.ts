@@ -128,6 +128,8 @@ export const usageModule = {
       })
     })
     reg.rpc('applyPolicy', (ctx, policy) => ({ applied: applyPolicy(ctx, policySchema.parse(policy)) }))
+    // Any call re-arms the alarm on the way out, which is all the daily wake-up needs.
+    reg.rpc('ping', () => ({ ok: true as const }))
     reg.rpc('liveUsage', (ctx) => ({
       contacts: activeContacts(ctx),
       emailsSent: ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0,
