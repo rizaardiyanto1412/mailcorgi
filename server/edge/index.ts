@@ -56,6 +56,7 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export function createEdge(deps: EdgeDeps): Edge {
+  let learnedHost = ''
   const accountCache = new Map<string, { at: number; exists: boolean }>()
   const sessionCache = new Map<string, { at: number; info: SessionInfo | null }>()
   const siteCache = new Map<string, { at: number; site: SiteRow | null }>()
@@ -145,9 +146,13 @@ export function createEdge(deps: EdgeDeps): Edge {
     const path = url.pathname
     const headers = stripHeaders(request)
     const method = request.method.toUpperCase()
-    const host = appHost(deps.config)
-
     if (path === '/healthz') return json({ ok: true })
+
+    if (!appHost(deps.config) && !learnedHost) {
+      const setupEntry = method === 'GET' && ['/', '/setup', '/signin', '/signup', '/api/auth/bootstrap'].includes(path)
+      learnedHost = await deps.stores.control.resolveAppHost({ setupOrigin: setupEntry ? url.origin : undefined })
+    }
+    const host = appHost(deps.config) || learnedHost
 
     // Caddy's on-demand TLS asks here before it issues a certificate for a custom website host.
     if (path === '/api/public/tls-check') {
@@ -156,15 +161,15 @@ export function createEdge(deps: EdgeDeps): Edge {
       return known ? json({ ok: true }) : notFound()
     }
 
-    if (path.startsWith('/img/')) {
-      const [accountId, ...rest] = path.slice(5).split('/')
-      return serveImage(accountId, rest.join('/'))
-    }
-
-    if (host && url.host !== host) {
+    if (!host || url.host !== host) {
       const site = await lookupSite({ host: url.host.toLowerCase() })
       if (!site) return notFound()
       return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id, 'x-mc-host': url.host })
+    }
+
+    if (path.startsWith('/img/')) {
+      const [accountId, ...rest] = path.slice(5).split('/')
+      return serveImage(accountId, rest.join('/'))
     }
 
     if (path === '/hooks/stripe' || path === '/hooks/polar') return forward({ kind: 'control' }, request, headers)

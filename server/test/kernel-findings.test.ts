@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { createInstall } from './harness.ts'
+import { createEdge } from '../edge/index.ts'
 import { controlRegistry } from '../control/modules.ts'
 
 test('untrusted account prefixes never provision account databases', async () => {
@@ -52,6 +53,51 @@ test('an HTTP invocation retries a failed alarm registration and queued work run
     controlRegistry.jobs.delete('test.alarm-recovery')
     install.close()
   }
+})
+
+test('control dead jobs raise an admin alert and dead alerts do not recurse', async () => {
+  const install = await createInstall()
+  try {
+    const { ctx } = install.app.control
+    const { id } = ctx.jobs.enqueue('test.missing')
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', id)
+    await install.runJobs()
+    const alert = ctx.db.get<{ account_id: string | null; title: string }>("SELECT * FROM admin_alerts WHERE kind = 'job_dead'")
+    assert.equal(alert?.account_id, null)
+    assert.match(alert?.title ?? '', /test.missing failed 8 times/)
+    const dead = ctx.jobs.enqueue('alerts.raise', {})
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', dead.id)
+    await install.runJobs()
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs')?.n, 0)
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM admin_alerts')?.n, 1)
+  } finally { install.close() }
+})
+
+test('separate edge configs enforce the authoritative learned host and constrain first run', async () => {
+  const install = await createInstall({ env: { APP_URL: '' } })
+  try {
+    const edge = createEdge({
+      config: { ...install.config }, keys: async () => install.app.keys, stores: install.app.stores,
+      storeFetch: (ref, request) => (ref.kind === 'control' ? install.app.control : install.app.account(ref.accountId)).fetch(request),
+      blobs: install.app.platform.blobs, assets: async () => new Response('app'), now: install.clock.now,
+    })
+    const fetch = (host: string, path: string) => edge.fetch(new Request(`http://${host}${path}`))
+    assert.equal((await fetch('unknown.example.com', '/api/control/settings')).status, 404)
+    assert.equal((await fetch('app.example.com', '/api/auth/bootstrap')).status, 200)
+    assert.equal((await fetch('unknown.example.com', '/api/auth/bootstrap')).status, 404)
+    await install.signUp({ email: 'owner@example.com' })
+    assert.equal((await fetch('unknown.example.com', '/')).status, 404)
+    assert.equal((await fetch('unknown.example.com', '/api/auth/bootstrap')).status, 404)
+    assert.equal((await fetch('app.example.com', '/api/auth/bootstrap')).status, 200)
+    install.app.control.ctx.db.run("DELETE FROM install_settings WHERE key = 'setup_origin'")
+    const freshEdge = createEdge({
+      config: { ...install.config, appUrl: '' }, keys: async () => install.app.keys, stores: install.app.stores,
+      storeFetch: (ref, request) => (ref.kind === 'control' ? install.app.control : install.app.account(ref.accountId)).fetch(request),
+      blobs: install.app.platform.blobs, assets: async () => new Response('app'), now: install.clock.now,
+    })
+    assert.equal((await freshEdge.fetch(new Request('http://unknown.example.com/api/auth/bootstrap'))).status, 404)
+    assert.equal((await freshEdge.fetch(new Request('http://app.example.com/api/auth/bootstrap'))).status, 200)
+  } finally { install.close() }
 })
 
 test('an invocation restores an alarm that disappeared after successful registration', async () => {
@@ -115,22 +161,4 @@ test('overlapping alarm registrations cannot replace an earlier wake with a late
     controlRegistry.jobs.delete('test.alarm-order')
     install.close()
   }
-})
-
-test('control dead jobs raise an admin alert and dead alerts do not recurse', async () => {
-  const install = await createInstall()
-  try {
-    const { ctx } = install.app.control
-    const { id } = ctx.jobs.enqueue('test.missing')
-    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', id)
-    await install.runJobs()
-    const alert = ctx.db.get<{ account_id: string | null; title: string }>("SELECT * FROM admin_alerts WHERE kind = 'job_dead'")
-    assert.equal(alert?.account_id, null)
-    assert.match(alert?.title ?? '', /test.missing failed 8 times/)
-    const dead = ctx.jobs.enqueue('alerts.raise', {})
-    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', dead.id)
-    await install.runJobs()
-    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs')?.n, 0)
-    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM admin_alerts')?.n, 1)
-  } finally { install.close() }
 })
