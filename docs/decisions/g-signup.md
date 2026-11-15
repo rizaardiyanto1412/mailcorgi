@@ -35,17 +35,17 @@ expectation from the old stub 404 to a rendered form; invalid newsletter keys st
 
 Integration follow-ups:
 
-- Tracking is still a stub in this checkout. Signup produces the pinned HMAC token envelopes for
-  unsubscribe (`u`, contactId and campaignId 0) and preferences (`p`, contactId). The preferences link
-  currently uses `/u/:token` because the edge has no separate preferences route. Tracking should serve
-  purpose `p` there or expose its final route and update this link.
+- Signup uses tracking's shared `signToken`/`verifyToken` through its public index for
+  confirmation (`cf`), unsubscribe (`u`), preferences (`p`) and signed form timestamps
+  (`form`). Preferences resolve under `/u/:token`. Signup owns payload schemas and
+  confirmation expiry; it has no separate signing implementation.
 - The contacts pending-consent API refuses to recreate a deleted contact. Signup respects that result
   and does not send a dead confirmation token. Explicitly rejoining a previously deleted address with
   double opt-in needs a contacts-owned way to create a pending row while preserving the tombstone
   until confirmation. Existing newsletter-suppressed contact rows can rejoin normally; account and
   global suppression continue to prevent email.
-- Welcome content remains a draft campaign. The sending unit must exclude `kind: 'welcome'` and `keep`
-  from ordinary issue scheduling/publishing, and the website should list issues only. Signup never
+- Welcome content remains a draft campaign. Campaign lists include issues only, and sending
+  rejects `kind: 'welcome'` and `keep` for both immediate sends and scheduling. Signup never
   schedules welcome campaigns or creates campaign deliveries.
 
 Verification is recorded in the unit report. The embed behavior test executes the shipped script

@@ -4,7 +4,7 @@ import { createInstall, expectError, type Install } from './harness.ts'
 import { runAction, type Actor } from '../core/actions.ts'
 import { AppError } from '../core/http.ts'
 import { suppress } from '../account/contacts/index.ts'
-import { token } from '../account/signup/tokens.ts'
+import { signToken } from '../account/tracking/index.ts'
 
 async function form(install: Install, key: string) {
   const response = await install.fetch(`/api/public/subscribe/${key}`)
@@ -164,7 +164,7 @@ test('redirect tricks and cross-newsletter settings are rejected through actions
     assert.equal(preflight.status, 204)
     assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
     const ctx = install.app.account(owner.accountId!).ctx
-    assert.equal((await install.fetch(`/confirm/${await token(ctx, 'form', { newsletterId: nl.id, issuedAt: ctx.now() })}`)).status, 400)
+    assert.equal((await install.fetch(`/confirm/${await signToken(ctx, 'form', [nl.id, ctx.now()])}`)).status, 400)
   } finally { install.close() }
 })
 
