@@ -116,3 +116,21 @@ test('overlapping alarm registrations cannot replace an earlier wake with a late
     install.close()
   }
 })
+
+test('control dead jobs raise an admin alert and dead alerts do not recurse', async () => {
+  const install = await createInstall()
+  try {
+    const { ctx } = install.app.control
+    const { id } = ctx.jobs.enqueue('test.missing')
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', id)
+    await install.runJobs()
+    const alert = ctx.db.get<{ account_id: string | null; title: string }>("SELECT * FROM admin_alerts WHERE kind = 'job_dead'")
+    assert.equal(alert?.account_id, null)
+    assert.match(alert?.title ?? '', /test.missing failed 8 times/)
+    const dead = ctx.jobs.enqueue('alerts.raise', {})
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', dead.id)
+    await install.runJobs()
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs')?.n, 0)
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM admin_alerts')?.n, 1)
+  } finally { install.close() }
+})

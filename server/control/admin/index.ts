@@ -19,5 +19,9 @@ export const adminModule = {
   register(reg: ControlRegistrar) {
     reg.rpc('accountExists', (ctx, { accountId }) => isAccountId(accountId) && !!ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', accountId))
     reg.rpc('raiseAlert', (ctx, args) => raiseAlert(ctx, args))
+    reg.job<Parameters<typeof raiseAlert>[1]>('alerts.raise', async (ctx, alert) => {
+      raiseAlert(ctx, alert)
+      return 'done'
+    })
   },
 }
