@@ -280,6 +280,7 @@ function edgeFor(env: Env): Edge {
     blobs: env.IMAGES ? r2Blobs(env.IMAGES) : null,
     assets: (request) => env.ASSETS.fetch(request),
     now: Date.now,
+    clientIp: (request) => request.headers.get('cf-connecting-ip') || '',
   })
   void storeId
   return edge
