@@ -15,6 +15,7 @@ import { controlRegistry } from './control/modules.ts'
 import { controlMigrations } from './control/schema.ts'
 import { accountRegistry } from './account/modules.ts'
 import { accountMigrations } from './account/schema.ts'
+import { AppError } from './core/http.ts'
 import { isAccountId } from './core/ids.ts'
 import { createEdge, type Edge } from './edge/index.ts'
 
@@ -194,7 +195,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   }
 
   const closers: (() => void)[] = []
-  const stores = createStores((ref, name, args) => storeFor(ref).rpc(name, args))
+  const stores = createStores((ref, name, args) => (ref.kind === 'account' && name === 'bootstrap' ? account(ref.accountId, true) : storeFor(ref)).rpc(name, args))
   const open = (ref: StoreRef): Store => {
     const file = ref.kind === 'control' ? path.join(dataDir, 'control.db') : path.join(accountsDir, `${ref.accountId}.db`)
     const { driver, close } = openDriver(file)
@@ -205,8 +206,11 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   }
   const control = open({ kind: 'control' })
   const accounts = new Map<string, Store>()
-  const account = (id: string) => {
-    if (!isAccountId(id)) throw new Error(`Bad account id ${id}.`)
+  const account = (id: string, provision = false) => {
+    if (!isAccountId(id)) throw new AppError('not_found', 'Not found.', 404)
+    if (!provision && (!control.ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', id) || !fs.existsSync(path.join(accountsDir, `${id}.db`)))) {
+      throw new AppError('not_found', 'Account store is not provisioned.', 404)
+    }
     let store = accounts.get(id)
     if (!store) {
       store = open({ kind: 'account', accountId: id })
@@ -216,7 +220,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
   }
   const storeFor = (ref: StoreRef) => (ref.kind === 'control' ? control : account(ref.accountId))
   // Every account store opens at start so a job that was due during the downtime runs now.
-  for (const entry of fs.readdirSync(accountsDir)) if (entry.endsWith('.db') && isAccountId(entry.slice(0, -3))) account(entry.slice(0, -3))
+  for (const entry of fs.readdirSync(accountsDir)) if (entry.endsWith('.db') && isAccountId(entry.slice(0, -3)) && control.ctx.db.get('SELECT id FROM accounts WHERE id = ? AND deleted_at IS NULL', entry.slice(0, -3))) account(entry.slice(0, -3))
 
   const edge = createEdge({
     config,

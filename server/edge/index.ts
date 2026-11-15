@@ -11,7 +11,7 @@ import { storeId } from '../core/platform.ts'
 import { ACTOR_HEADER, ACTOR_TTL_MS, type ActorEnvelope, type Stores } from '../core/store.ts'
 import type { Actor } from '../core/actions.ts'
 import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey } from '../core/ids.ts'
-import { withSecurityHeaders } from '../core/http.ts'
+import { errorResponse, withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
 import { controlRegistry } from '../control/modules.ts'
@@ -21,6 +21,7 @@ export const ACCOUNT_COOKIE = 'mc_account'
 export const CSRF_HEADER = 'x-mc-csrf'
 const SESSION_CACHE_MS = 30_000
 const SITE_CACHE_MS = 60_000
+const ACCOUNT_CACHE_MS = 5_000
 
 export interface EdgeDeps {
   config: Config
@@ -55,11 +56,22 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export function createEdge(deps: EdgeDeps): Edge {
+  const accountCache = new Map<string, { at: number; exists: boolean }>()
   const sessionCache = new Map<string, { at: number; info: SessionInfo | null }>()
   const siteCache = new Map<string, { at: number; site: SiteRow | null }>()
 
   const trim = (map: Map<string, unknown>) => {
     if (map.size > 5000) for (const key of [...map.keys()].slice(0, 1000)) map.delete(key)
+  }
+
+  async function accountExists(accountId: string): Promise<boolean> {
+    if (!isAccountId(accountId)) return false
+    const hit = accountCache.get(accountId)
+    if (hit && deps.now() - hit.at < ACCOUNT_CACHE_MS) return hit.exists
+    const exists = await deps.stores.control.accountExists({ accountId })
+    accountCache.set(accountId, { at: deps.now(), exists })
+    trim(accountCache)
+    return exists
   }
 
   async function resolveSession(sessionId: string, wantAccountId: string | null): Promise<SessionInfo | null> {
@@ -94,7 +106,8 @@ export function createEdge(deps: EdgeDeps): Edge {
     return signEnvelope(keys.session, envelope)
   }
 
-  const forward = (ref: StoreRef, request: Request, headers: Headers, extra: Record<string, string> = {}) => {
+  const forward = async (ref: StoreRef, request: Request, headers: Headers, extra: Record<string, string> = {}) => {
+    if (ref.kind === 'account' && !(await accountExists(ref.accountId))) return notFound()
     for (const [name, value] of Object.entries(extra)) headers.set(name, value)
     if (ref.kind === 'account') headers.set('x-mc-account', ref.accountId)
     return deps.storeFetch(ref, new Request(request, { headers }))
@@ -106,7 +119,7 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   async function serveImage(accountId: string, key: string): Promise<Response> {
-    if (!isAccountId(accountId) || !key || key.includes('..')) return notFound()
+    if (!key || key.includes('..') || !(await accountExists(accountId))) return notFound()
     const fullKey = `${accountId}/${key}`
     let bytes: Uint8Array | null = null
     let contentType = 'application/octet-stream'
@@ -214,6 +227,12 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   return {
-    fetch: async (request) => withSecurityHeaders(await handle(request)),
+    async fetch(request) {
+      try {
+        return withSecurityHeaders(await handle(request))
+      } catch (err) {
+        return withSecurityHeaders(errorResponse(err))
+      }
+    },
   }
 }
