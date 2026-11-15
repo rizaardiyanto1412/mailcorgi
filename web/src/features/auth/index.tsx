@@ -136,6 +136,7 @@ export function SignUpPage() {
   const [form, setForm] = useState({ name: '', email: '', password: '' })
   const [code, setCode] = useState('')
   const [pending, setPending] = useState(false)
+  const [resent, setResent] = useState(false)
   const { error, busy, submit } = useSubmit(async () => {
     if (!pending) {
       const result = await api.post<{ pending: boolean }>('/auth/signup', form)
@@ -175,6 +176,17 @@ export function SignUpPage() {
         <Button type="submit" variant="primary" size="lg" loading={busy}>
           {pending ? 'Confirm' : 'Create account'}
         </Button>
+        {pending && (
+          <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm">
+            <button type="button" className="font-medium text-accent-fg" disabled={busy} onClick={() => void api.post('/auth/signup', form).then(() => setResent(true), () => setResent(false))}>
+              Send a new code
+            </button>
+            <button type="button" className="font-medium text-accent-fg" onClick={() => { setPending(false); setCode(''); setResent(false) }}>
+              Use a different email
+            </button>
+          </div>
+        )}
+        {resent && <p role="status" className="text-center text-xs text-fg-3">A new code is on its way.</p>}
       </form>
     </AuthCard>
   )

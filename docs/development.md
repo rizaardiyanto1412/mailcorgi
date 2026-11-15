@@ -28,7 +28,12 @@ and the `test` email provider. It seeds a demo install through the HTTP API: an 
 in every status, a sent campaign with opens, clicks and unsubscribes, an admin and a member of the
 first newsletter, API keys and published website posts. Two things cannot happen offline, so the
 script writes them straight into the account database: the sending domain is marked verified, and a
-few deliveries are marked bounced.
+few deliveries are marked bounced. Every server it starts gets canned DNS (`MC_TEST_DNS`), so the
+run never reaches a real resolver.
+
+Before seeding, it visits `/setup` on the fresh install. After the main run it starts a second, short
+`CLOUD=true` server (test billing provider), signs up through the emailed code, and visits
+`/settings/billing` and the sign-up code step (`cloud-settings-billing`, `cloud-signup-code`).
 
 It then visits every route at 1440×900 and 390×844, in light and dark, and signs in as the member and
 the admin to check the role-limited pages. Last, it clicks through the main jobs: add a contact,

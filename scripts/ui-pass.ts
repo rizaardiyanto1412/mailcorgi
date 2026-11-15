@@ -53,8 +53,11 @@ const freePort = () =>
 // Server and HTTP client
 // ---------------------------------------------------------------------------------------------
 
-function startServer(port: number, dataDir: string, base: string): ChildProcess {
-  const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base, EMAIL_PROVIDER: 'test', SEND_RATE_PER_SECOND: '500', SEND_BATCH_SIZE: '200', ALLOWED_EMAILS: '' }
+/** Canned DNS (`MC_TEST_DNS`), so the run never reaches a real resolver. */
+const UI_PASS_DNS = { 'MX:example.com': ['mx.example.com'] }
+
+function startServer(port: number, dataDir: string, base: string, extra: Record<string, string> = {}): ChildProcess {
+  const env = { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dataDir, APP_URL: base, EMAIL_PROVIDER: 'test', SEND_RATE_PER_SECOND: '500', SEND_BATCH_SIZE: '200', ALLOWED_EMAILS: '', MC_TEST_DNS: JSON.stringify(UI_PASS_DNS), ...extra }
   // A private copy of the build: parallel checkouts that clean up their own servers by command
   // line (`pkill -f dist/index.js`) must not stop this one.
   const entry = path.join(dataDir, '..', `ui-pass-server-${port}.mjs`)
@@ -72,16 +75,16 @@ function startServer(port: number, dataDir: string, base: string): ChildProcess 
   child.stdout?.on('data', log)
   child.stderr?.on('data', log)
   child.on('exit', (code, signal) => {
-    if (!stopping) serverErrors.push(`the server exited early (code ${code}, signal ${signal})`)
+    if (!stopping.has(child)) serverErrors.push(`the server exited early (code ${code}, signal ${signal})`)
   })
   return child
 }
-let stopping = false
+const stopping = new Set<ChildProcess>()
 const serverErrors: string[] = []
 const serverLog = path.join(root, '.audit', 'ui-pass-server.log')
 
 function stopServer(child: ChildProcess) {
-  stopping = true
+  stopping.add(child)
   if (child.exitCode !== null || !child.pid) return
   try {
     process.kill(-child.pid, 'SIGTERM')
@@ -769,6 +772,75 @@ async function flows(browser: Browser, s: Seed) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Before first-run setup, and a short cloud-mode run (billing and the sign-up code step).
+// ---------------------------------------------------------------------------------------------
+
+/** A seed with only what `visit` and `newContext` read, for runs without the demo data. */
+const bare = (base: string, accountId = 'none'): Seed => ({ base, accountId, newsletter: { id: 'none', key: '', slug: '' } }) as unknown as Seed
+
+async function everyLook(browser: Browser, s: Seed, client: Client | null, pages: Visit[]) {
+  for (const theme of THEMES) {
+    for (const viewport of Object.keys(VIEWPORTS) as Viewport[]) {
+      const context = await newContext(browser, s, client, theme, viewport)
+      for (const v of pages.filter((v) => !only || only.test(v.name))) await visit(context, s, v, `${theme}/${viewport}/${v.name}`, path.join(shots, theme, viewport, `${v.name}.png`))
+      await context.close()
+    }
+  }
+}
+
+/** The first visitor's page, on an install nobody has set up yet. */
+async function preSetup(browser: Browser, base: string) {
+  const boot = await (await fetch(`${base}/api/auth/bootstrap`)).json()
+  if (!boot.setupRequired) throw new Error('ui-pass: the fresh install does not ask for setup')
+  await everyLook(browser, bare(base), null, [{
+    name: 'setup',
+    path: '/setup',
+    then: async (page) => {
+      await page.getByRole('button', { name: /create|set up|continue/i }).first().waitFor({ timeout: 10_000 })
+    },
+  }])
+  const after = await (await fetch(`${base}/api/auth/bootstrap`)).json()
+  if (!after.setupRequired) throw new Error('ui-pass: visiting /setup changed the install')
+}
+
+async function cloudRun(browser: Browser) {
+  const dataDir = fs.mkdtempSync(path.join(root, '.audit', 'mailcorgi-ui-pass-cloud-'))
+  const port = await freePort()
+  const base = `http://127.0.0.1:${port}`
+  const server = startServer(port, dataDir, base, { CLOUD: 'true', BILLING_PROVIDER: 'test', ADMIN_EMAILS: 'cloud.owner@example.com' })
+  try {
+    await until('the cloud server', async () => (await fetch(`${base}/healthz`).catch(() => null))?.ok, 20_000)
+    const owner = new Client(base)
+    const pending = await owner.json('POST', '/api/auth/signup', { name: 'Cleo Cloud', email: 'cloud.owner@example.com', password: PASSWORD })
+    if (!pending.pending) throw new Error('ui-pass: cloud sign-up did not ask for a code')
+    const { code } = await (await fetch(`${base}/api/dev/code?email=cloud.owner%40example.com`)).json()
+    await owner.json('POST', '/api/auth/signup/verify', { email: 'cloud.owner@example.com', code })
+    const boot = await owner.refreshCsrf()
+    const nl = await owner.action('newsletters.create', { name: 'Cloud Corgis' })
+    const s = { ...bare(base, boot.session.current), newsletter: { id: nl.id, key: nl.key, slug: nl.slug } } as Seed
+    console.log('ui-pass: seeded the cloud install')
+    await everyLook(browser, s, owner, [{ name: 'cloud-settings-billing', path: '/settings/billing', then: async (page) => { await page.getByRole('heading', { name: /billing|plan/i }).first().waitFor({ timeout: 10_000 }) } }])
+    let n = 0
+    await everyLook(browser, s, null, [{
+      name: 'cloud-signup-code',
+      path: '/signup',
+      then: async (page) => {
+        n += 1
+        await page.getByLabel('Your name').fill('New Reader')
+        await page.getByLabel('Email').fill(`cloud.reader.${n}@example.com`)
+        await page.getByLabel('Password').fill(PASSWORD)
+        await page.getByRole('button', { name: /create|sign up/i }).click()
+        await page.getByLabel('Code').waitFor({ timeout: 10_000 })
+      },
+    }])
+  } finally {
+    stopServer(server)
+    if (process.env.UI_PASS_KEEP) console.log(`ui-pass: cloud data kept in ${dataDir}`)
+    else fs.rmSync(dataDir, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 
 async function main() {
   if (!fs.existsSync(path.join(root, 'dist/index.js')) || !fs.existsSync(path.join(root, 'web/dist/index.html'))) throw new Error('ui-pass: run "npm run build" first')
@@ -777,19 +849,24 @@ async function main() {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}`
   const server = startServer(port, dataDir, base)
-  let browser: Browser | null = null
+  let browser: Browser | undefined
   try {
     await until('the server', async () => (await fetch(`${base}/healthz`).catch(() => null))?.ok, 20_000)
+    browser = await chromium.launch()
+    await preSetup(browser, base)
     const s = await seed(base, dataDir)
     console.log('ui-pass: seeded the demo install')
-    browser = await chromium.launch()
     await pass(browser, s)
     await flows(browser, s)
   } finally {
-    await browser?.close()
     stopServer(server)
     if (process.env.UI_PASS_KEEP) console.log(`ui-pass: data kept in ${dataDir}`)
     else fs.rmSync(dataDir, { recursive: true, force: true })
+  }
+  try {
+    if (browser && !serverErrors.length) await cloudRun(browser)
+  } finally {
+    await browser?.close()
   }
   console.log(`ui-pass: visited ${visited.length} pages`)
   for (const v of visited) console.log(`  ${v}`)
