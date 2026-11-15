@@ -16,6 +16,7 @@ import { billingFeature } from '../features/billing/index.tsx'
 import { adminFeature } from '../features/admin/index.tsx'
 import { docsFeature } from '../features/docs/index.tsx'
 import { notificationsFeature } from '../features/notifications/index.tsx'
+import { designFeature } from '../features/design/index.tsx'
 import { renderFeature } from '../features/render/index.tsx'
 import { sendingFeature } from '../features/sending/index.tsx'
 import { trackingFeature } from '../features/tracking/index.tsx'
@@ -45,6 +46,7 @@ export const features: Feature[] = [
   docsFeature,
   notificationsFeature,
   renderFeature,
+  designFeature,
   sendingFeature,
   trackingFeature,
   hygieneFeature,

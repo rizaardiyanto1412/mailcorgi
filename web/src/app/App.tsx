@@ -75,9 +75,10 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
     [boot, session, account, list, current, storageKey, refresh, newsletters],
   )
 
+  const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/')
   const tree: RouteObject[] = [
     { path: '/welcome', element: <Welcome /> },
-    list.length === 0 && account && !['/admin', '/settings/account', '/settings/billing'].some((path) => location.pathname === path || location.pathname.startsWith(path + '/'))
+    list.length === 0 && account && !inSettings && !(location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
       ? { path: '*', element: <Navigate to="/welcome" replace /> }
       : {
           element: <Shell />,

@@ -1,0 +1,6 @@
+import type { ActionOutput } from '../../../../server/registry.ts'
+import type { Contact } from '../../../../server/account/contacts/index.ts'
+import { Field, Input, Select } from '../../ui/index.tsx'
+export function FieldsForm({ definitions, values, onChange }: { definitions: ActionOutput<'contactFields.list'>['fields']; values: Contact['fields']; onChange: (v: Contact['fields']) => void }) {
+  return <>{definitions.map((field) => <Field key={field.id} label={field.label}>{(id) => field.type === 'boolean' ? <Select id={id} value={values[field.key] === undefined ? '' : String(values[field.key])} onChange={(e) => { const next = { ...values }; if (e.target.value === '') delete next[field.key]; else next[field.key] = e.target.value === 'true'; onChange(next) }}><option value="">Not set</option><option value="true">Yes</option><option value="false">No</option></Select> : <Input id={id} type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={String(values[field.key] ?? '')} onChange={(e) => { const next = { ...values }; if (e.target.value === '') delete next[field.key]; else next[field.key] = field.type === 'number' ? Number(e.target.value) : e.target.value; onChange(next) }} />}</Field>)}</>
+}
