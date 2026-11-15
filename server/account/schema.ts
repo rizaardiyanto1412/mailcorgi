@@ -330,4 +330,14 @@ export const accountMigrations: readonly string[] = [
   ) WITHOUT ROWID;
   ${JOBS_SQL}
   `,
+  `
+  CREATE INDEX contacts_created_page ON contacts(newsletter_id, created_at, id);
+  CREATE INDEX contacts_name_page ON contacts(newsletter_id, name, id);
+  CREATE INDEX contacts_email_page ON contacts(newsletter_id, email, id);
+  CREATE INDEX contacts_email_status ON contacts(email, status);
+  CREATE INDEX contacts_active ON contacts(status);
+  CREATE INDEX events_contact_page ON events(newsletter_id, contact_id, id);
+  CREATE INDEX deliveries_contact_campaign ON deliveries(contact_id, campaign_id);
+  CREATE INDEX campaigns_recent_issues ON campaigns(newsletter_id, kind, status, sent_at, id);
+  `,
 ]

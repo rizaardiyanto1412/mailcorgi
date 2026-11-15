@@ -2,6 +2,8 @@ import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { defineAction, type Actor } from '../../core/actions.ts'
 import { AppError, notFound } from '../../core/http.ts'
+import { authorActions } from './authors.ts'
+import { fromBase64 } from '../../core/crypto.ts'
 import { newId, newNewsletterKey } from '../../core/ids.ts'
 import { limits } from '../usage/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
@@ -47,6 +49,7 @@ export interface Newsletter {
   postalAddress: string
   logoKey: string | null
   iconKey: string | null
+  tracking: { opens: boolean; clicks: boolean }
   doubleOptIn: boolean
   archivedAt: number | null
   createdAt: number
@@ -68,6 +71,7 @@ export const serializeNewsletter = (r: NewsletterRow): Newsletter => ({
   postalAddress: r.postal_address,
   logoKey: r.logo_key,
   iconKey: r.icon_key,
+  tracking: z.object({ opens: z.boolean().default(true), clicks: z.boolean().default(true) }).parse(JSON.parse(r.tracking)),
   doubleOptIn: !!r.double_opt_in,
   archivedAt: r.archived_at,
   createdAt: r.created_at,
@@ -127,6 +131,29 @@ export const newslettersModule = {
     })
 
     return reg.actions(
+      ...authorActions,
+      defineAction({
+        name: 'newsletters.uploadImage', description: 'Upload a newsletter logo or icon as PNG, JPEG, GIF or WebP, up to 2 MB.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' },
+        input: z.object({ newsletterId, kind: z.enum(['logo', 'icon']).describe('Which newsletter image to replace'), contentType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).describe('The image MIME type'), data: z.string().min(1).max(2796204).describe('Base64-encoded image bytes') }),
+        rest: { method: 'POST', path: '/newsletters/:newsletterId/images' }, mcp: { title: 'Upload a newsletter image', destructive: false },
+        handler: async (ctx, i, actor) => {
+          let bytes: Uint8Array
+          try { bytes = fromBase64(i.data) } catch { throw new AppError('invalid_input', 'The image data is invalid.', 400) }
+          const hex = Array.from(bytes.slice(0, 12), (b) => b.toString(16).padStart(2, '0')).join('')
+          const valid = i.contentType === 'image/png' ? hex.startsWith('89504e470d0a1a0a') : i.contentType === 'image/jpeg' ? hex.startsWith('ffd8ff') : i.contentType === 'image/gif' ? hex.startsWith('474946383761') || hex.startsWith('474946383961') : hex.startsWith('52494646') && hex.slice(16) === '57454250'
+          if (!valid || bytes.length > 2097152) throw new AppError('invalid_input', 'Use a PNG, JPEG, GIF or WebP image under 2 MB.', 400)
+          const key = newId('img')
+          const fullKey = `${ctx.accountId}/${key}`
+          await ctx.platform.blobs.put(fullKey, bytes, i.contentType)
+          try {
+            ctx.db.tx(() => {
+              ctx.db.run('INSERT INTO uploads (key, newsletter_id, content_type, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', fullKey, i.newsletterId, i.contentType, bytes.length, actor.userId, ctx.now())
+              ctx.db.run(`UPDATE newsletters SET ${i.kind === 'logo' ? 'logo_key' : 'icon_key'} = ?, updated_at = ? WHERE id = ?`, key, ctx.now(), i.newsletterId)
+            })
+          } catch (err) { await ctx.platform.blobs.delete(fullKey); throw err }
+          return getNewsletter(ctx, i.newsletterId)
+        },
+      }),
       defineAction({
         name: 'newsletters.create',
         description: 'Create a newsletter. The slug becomes its public address under /n/.',
@@ -179,7 +206,7 @@ export const newslettersModule = {
       }),
       defineAction({
         name: 'newsletters.update',
-        description: 'Rename a newsletter or change its description.',
+        description: 'Update newsletter identity, sender, postal address, language and subscription settings.',
         scope: 'account',
         role: 'admin',
         effect: 'write',
@@ -188,6 +215,14 @@ export const newslettersModule = {
           newsletterId,
           name: z.string().trim().min(1).max(120).optional().describe('New name'),
           description: z.string().trim().max(500).optional().describe('New description'),
+          fromName: z.string().trim().max(200).regex(/^[^\r\n]*$/).optional().describe('Sender display name'),
+          fromLocal: z.string().max(64).regex(/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]*$/).optional().describe('Sender email local part, before the domain'),
+          replyTo: z.union([z.literal(''), z.email()]).optional().describe('Reply-to email address, or empty to use the sender'),
+          postalAddress: z.string().trim().max(2000).optional().describe('Postal address included in every email'),
+          language: z.string().min(2).max(35).refine((v) => { try { return Intl.getCanonicalLocales(v).length === 1 } catch { return false } }, 'Use a valid language code.').optional().describe('Newsletter language code'),
+          timezone: z.string().max(100).refine((v) => { try { new Intl.DateTimeFormat('en', { timeZone: v }); return true } catch { return false } }, 'Use a valid timezone.').optional().describe('IANA timezone for scheduling'),
+          doubleOptIn: z.boolean().optional().describe('Require email confirmation for public signups'),
+          tracking: z.object({ opens: z.boolean(), clicks: z.boolean() }).optional().describe('Enable tracking for opens and clicks'),
         }),
         rest: { method: 'PATCH', path: '/newsletters/:newsletterId' },
         mcp: { title: 'Update a newsletter', destructive: false },
@@ -201,6 +236,14 @@ export const newslettersModule = {
           if (input.description !== undefined) {
             sets.push('description = ?')
             values.push(input.description)
+          }
+          const extra = { fromName: 'from_name', fromLocal: 'from_local', replyTo: 'reply_to', postalAddress: 'postal_address', language: 'language', timezone: 'timezone', doubleOptIn: 'double_opt_in', tracking: 'tracking' } as const
+          for (const key of Object.keys(extra) as (keyof typeof extra)[]) {
+            const value = input[key]
+            if (value !== undefined) {
+              sets.push(extra[key] + ' = ?')
+              values.push(typeof value === 'object' ? JSON.stringify(value) : typeof value === 'boolean' ? Number(value) : value)
+            }
           }
           if (sets.length) ctx.db.run(`UPDATE newsletters SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`, ...values, ctx.now(), input.newsletterId)
           return getNewsletter(ctx, input.newsletterId)
