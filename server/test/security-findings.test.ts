@@ -79,3 +79,22 @@ test('test emails count against the monthly email limit', async () => {
     install.close()
   }
 })
+
+test('rotating addresses inside one IPv6 /64 shares one rate limit', async () => {
+  const install = await createInstall()
+  try {
+    await install.signUp({ email: 'owner@example.com' })
+    const statuses: number[] = []
+    for (let i = 0; i < 40; i++) {
+      const response = await install.app.edge.fetch(new Request(`${APP_URL}/api/auth/signin`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: `guess${i}@example.com`, password: 'wrong password here' }),
+      }), `2001:db8:abcd:12::${(i + 1).toString(16)}`)
+      statuses.push(response.status)
+    }
+    assert.ok(statuses.includes(429), `got ${[...new Set(statuses)].join(', ')}`)
+  } finally {
+    install.close()
+  }
+})

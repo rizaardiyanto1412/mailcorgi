@@ -61,7 +61,18 @@ export async function readJson<T = Record<string, unknown>>(c: Context<any>): Pr
 
 /** Set only by the edge, from what the platform can vouch for. Client-sent forwarding headers are never read. */
 export const CLIENT_IP_HEADER = 'x-mc-ip'
-export const clientIp = (c: Context<any>) => c.req.header(CLIENT_IP_HEADER) || ''
+export const clientAddress = (c: Context<any>) => c.req.header(CLIENT_IP_HEADER) || ''
+
+/** The client as rate limits see it: an IPv6 address counts as its /64, which one host usually controls. */
+export function clientIp(c: Context<any>): string {
+  const ip = clientAddress(c).replace(/%.*$/, '')
+  if (!ip.includes(':')) return ip
+  const [head, tail] = ip.split('::')
+  const left = head ? head.split(':') : []
+  const right = tail ? tail.split(':') : []
+  const groups = tail === undefined ? left : [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right]
+  return `${groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/64`
+}
 
 export const jsonNotFound = (c: Context<any>) => c.json({ error: 'Not found.', code: 'not_found' }, 404)
 

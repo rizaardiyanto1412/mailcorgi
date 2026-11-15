@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createInstall, expectError, type Install } from './harness.ts'
+import { APP_URL, createInstall, expectError, type Install } from './harness.ts'
 import { runAction, type Actor } from '../core/actions.ts'
 import { AppError } from '../core/http.ts'
 import { suppress } from '../account/contacts/index.ts'
@@ -14,7 +14,8 @@ async function form(install: Install, key: string) {
   return config.formToken
 }
 async function signup(install: Install, key: string, email = 'reader@example.com', extra: Record<string, unknown> = {}, ip = '192.0.2.1') {
-  return install.fetch(`/api/public/subscribe/${key}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': ip }, body: JSON.stringify({ email, name: 'Reader', formToken: await form(install, key), ...extra }) })
+  const body = JSON.stringify({ email, name: 'Reader', formToken: await form(install, key), ...extra })
+  return install.app.edge.fetch(new Request(`${APP_URL}/api/public/subscribe/${key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body }), ip)
 }
 function confirmLink(install: Install, account: string, email = 'reader@example.com') {
   const mail = install.outbox(account).filter((m) => m.to_email === email && m.subject.startsWith('Confirm')).at(-1)
