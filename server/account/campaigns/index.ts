@@ -52,7 +52,7 @@ export const campaignsModule = {
         input: z.object({ newsletterId, status: statusSchema.optional().describe('Filter by campaign status'), search: z.string().max(200).optional().describe('Search the subject'), limit: z.number().int().min(1).max(100).default(30).describe('Maximum rows'), offset: z.number().int().min(0).default(0).describe('Number of rows to skip') }),
         rest: { method: 'GET', path: '/newsletters/:newsletterId/campaigns' }, mcp: { title: 'List campaigns', destructive: false },
         handler: (ctx, input) => {
-          const where = 'newsletter_id = ? AND (? IS NULL OR status = ?) AND instr(lower(subject), lower(?)) > 0'
+          const where = "newsletter_id = ? AND kind = 'issue' AND (? IS NULL OR status = ?) AND instr(lower(subject), lower(?)) > 0"
           const params = [input.newsletterId, input.status ?? null, input.status ?? null, input.search ?? '']
           const rows = ctx.db.all<CampaignRow>(`SELECT * FROM campaigns WHERE ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, ...params, input.limit, input.offset)
           return { campaigns: rows.map((r) => ({ id: r.id, newsletterId: r.newsletter_id, subject: r.subject, status: r.status, format: r.format, updatedAt: r.updated_at, revision: r.revision })), total: ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM campaigns WHERE ${where}`, ...params)!.n }

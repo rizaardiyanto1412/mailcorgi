@@ -1,0 +1,19 @@
+# Unit J: newsletter teams
+
+The session and authorization contracts are unchanged. The existing edge resolves sessions on every request, so role changes, leaving and removal take effect on the next request, within the permitted 30-second bound.
+
+Team actions run in the control store because it owns memberships and invitations. Their registry role is `user`, as required for control actions. Management handlers verify ownership of the explicit account with `ownedAccount`; they never trust the actor's account hint or owner flag. Team listing is owner-only. Members see their own role and a leave control, without other members' email addresses.
+
+The team module adds an internal account RPC, `teamNewsletters({ newsletterIds: string[] | null })`, to read active newsletter ids and names. Only control-store code calls it, after determining ownership or explicit grants from memberships. It lets the control actions validate newsletter ownership without reading another store's database or depending on the asynchronous site directory. `team.newsletters` groups own and shared newsletters for the switcher. No pinned RPC signature changes.
+
+Invitations reserve seats until accepted, revoked or expired. The owner is not a team seat. Cloud installs use `maxTeamPerNewsletter` from the authoritative control plan (including a downgrade check on acceptance); self-hosted installs retain the contract's unlimited plan. A cloud limit with no value falls back to five. No schema change or migration is needed.
+
+Tokens are random, hashed in the invites table, valid for seven days and consumed transactionally. Resend replaces the digest and invalidates the earlier link, and waits at least a minute. System invitation emails are limited to five per recipient per day across accounts and fifty per owner per hour. Sending uses the system email provider; failure leaves a pending invite the owner can resend. As with other system emails, the test provider's outbox contains the invitation email so tests can follow it. Tokens never appear in action output.
+
+The existing auth signup route now accepts an optional invite token. A valid token must match the signup email and bypasses closed signup. Cloud still requires its email code. Signup and acceptance remain separate operations, so expired, revoked or consumed links never grant a membership. The invite page supports signin, signup and acceptance without leaving the link, and sets the standard account cookie after acceptance.
+
+The permission table in `server/test/team-permissions.test.ts` is explicit, with one line per action. Every case uses the real schema, resolver and handler through `runAction`, checking a member, an admin and an outsider. Missing entries fail with instructions for extending the table. Resource-scoped account actions also reject a grant for another newsletter. Control account ownership is exercised inside the actual handlers. The audit found no existing role declarations that needed correction.
+
+Shared wiring edits: accounts/index.ts registers team actions and re-exports the invite signup validator; auth/index.ts validates invite signup; auth feature index adds the public invite route; app/App.tsx keeps it reachable for signed-in users; app/Shell.tsx groups the newsletter switcher by account and selects through the existing account-cookie endpoint. No kernel, base migration or architecture document edits.
+
+Follow-up: the sending, signup, import and website units must add each new action to the permission table, with a valid input fixture where necessary. Sending controls should be visible to admins and owners; imports and newsletter settings require admin; billing, domains, API keys and team management require owner. Invite-accepted notifications should be connected when the notifications module exposes its writer; it is currently a stub and this unit does not write another module's tables.

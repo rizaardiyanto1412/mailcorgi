@@ -17,13 +17,16 @@ export const directoryModule = {
       if (taken) throw new AppError('slug_taken', 'That address is already in use.', 409)
       const existing = ctx.db.get<SiteRow>('SELECT * FROM sites WHERE newsletter_id = ?', newsletterId)
       if (existing && existing.account_id !== accountId) throw new AppError('forbidden', 'That newsletter belongs to another account.', 403)
+      const nextHost = customHost === undefined ? existing?.custom_host ?? null : customHost
+      const nextVerified = hostVerifiedAt === undefined ? (nextHost === existing?.custom_host ? existing?.host_verified_at ?? null : null) : hostVerifiedAt
+      if (nextHost && ctx.db.get('SELECT newsletter_id FROM sites WHERE custom_host = ? AND newsletter_id != ?', nextHost, newsletterId)) throw new AppError('host_taken', 'That hostname is already in use.', 409)
       ctx.db.run(
         'INSERT INTO sites (newsletter_id, account_id, slug, custom_host, host_verified_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(newsletter_id) DO UPDATE SET slug = excluded.slug, custom_host = excluded.custom_host, host_verified_at = excluded.host_verified_at',
         newsletterId,
         accountId,
         slug,
-        customHost ?? null,
-        hostVerifiedAt ?? null,
+        nextHost,
+        nextVerified,
       )
     })
     reg.rpc('removeSite', (ctx, { newsletterId, accountId }) => {

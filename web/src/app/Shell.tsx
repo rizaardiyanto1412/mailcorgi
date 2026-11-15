@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Bell, Check, ChevronsUpDown, LogOut, Menu as MenuIcon, Monitor, Moon, Plus, Settings, ShieldCheck, Sun, X } from 'lucide-react'
-import { api } from '../lib/api.ts'
+import { writeLocal } from '../lib/session.tsx'
+import { api, useActionQuery } from '../lib/api.ts'
 import { useSession, useTheme, type Theme } from '../lib/session.tsx'
 import { Avatar, Banner, cx, IconButton, Logo, MenuDivider, MenuItem, MenuLabel, Popover } from '../ui/index.tsx'
 import { mainNav } from './routes.tsx'
@@ -12,7 +13,19 @@ const navItem = (active: boolean) =>
   cx('flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors [&>svg]:size-4 [&>svg]:shrink-0', active ? 'bg-surface text-accent-fg shadow-card' : 'text-fg-2 hover:bg-hover hover:text-fg [&>svg]:text-fg-3')
 
 function NewsletterSwitcher({ onNavigate }: { onNavigate?: () => void }) {
-  const { newsletters, current, setCurrent } = useSession()
+  const { current, setCurrent, account } = useSession()
+  const groups = useActionQuery('team.newsletters', {}, { staleTime: 30_000 })
+  const [switchError, setSwitchError] = useState('')
+  const select = async (accountId: string, newsletterId: string) => {
+    try {
+      if (accountId === account?.id) setCurrent(newsletterId)
+      else {
+        await api.post('/auth/account', { accountId })
+        writeLocal(`mc-current:${accountId}`, newsletterId)
+        window.location.assign('/')
+      }
+    } catch (err) { setSwitchError(err instanceof Error ? err.message : 'Could not switch newsletters.') }
+  }
   const navigate = useNavigate()
   return (
     <Popover
@@ -27,22 +40,15 @@ function NewsletterSwitcher({ onNavigate }: { onNavigate?: () => void }) {
     >
       {(close) => (
         <>
-          <MenuLabel>Newsletters</MenuLabel>
-          {newsletters.map((n) => (
-            <MenuItem
-              key={n.id}
-              checked={n.id === current?.id}
-              onSelect={() => {
-                setCurrent(n.id)
-                close()
-                onNavigate?.()
-              }}
-            >
-              {n.name}
-            </MenuItem>
-          ))}
+          {(switchError || groups.error) && <p role="alert" className="px-2 text-xs text-danger">{switchError || groups.error?.message}</p>}
+          {groups.isPending && <MenuLabel>Loading newsletters…</MenuLabel>}
+          {groups.data?.accounts.map((a) => <div key={a.id}>
+            <MenuLabel>{a.name}{!a.owner && ' · Shared with you'}</MenuLabel>
+            {!a.newsletters.length && <MenuLabel>No newsletters yet</MenuLabel>}
+            {a.newsletters.map((n) => <MenuItem key={n.id} checked={a.id === account?.id && n.id === current?.id} onSelect={() => { void select(a.id, n.id); close(); onNavigate?.() }}>{n.name}</MenuItem>)}
+          </div>)}
           <MenuDivider />
-          <MenuItem
+          {account?.owner && <MenuItem
             icon={<Plus />}
             onSelect={() => {
               close()
@@ -51,7 +57,7 @@ function NewsletterSwitcher({ onNavigate }: { onNavigate?: () => void }) {
             }}
           >
             New newsletter
-          </MenuItem>
+          </MenuItem>}
           <MenuItem
             icon={<Settings />}
             onSelect={() => {

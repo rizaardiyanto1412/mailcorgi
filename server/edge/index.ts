@@ -85,7 +85,7 @@ export function createEdge(deps: EdgeDeps): Edge {
     const hit = siteCache.get(cacheKey)
     if (hit && deps.now() - hit.at < SITE_CACHE_MS) return hit.site
     const site = await deps.stores.control.lookupSite(where)
-    siteCache.set(cacheKey, { at: deps.now(), site })
+    if (site) siteCache.set(cacheKey, { at: deps.now(), site })
     trim(siteCache)
     return site
   }
@@ -112,6 +112,17 @@ export function createEdge(deps: EdgeDeps): Edge {
   const sessionActor = (info: SessionInfo, accountId: string | null): Actor => {
     const account = accountId ? info.accounts.find((a) => a.id === accountId) : null
     return { userId: info.user.id, email: info.user.email, owner: account?.owner ?? false, grants: account?.grants ?? {}, access: 'full', via: 'web', installAdmin: info.user.isInstallAdmin }
+  }
+
+  async function forwardSite(site: SiteRow, request: Request, headers: Headers, custom = false) {
+    const cookies = parseCookies(request.headers.get('cookie'))
+    if (cookies[SESSION_COOKIE]) {
+      const info = await resolveSession(await sha256Hex(cookies[SESSION_COOKIE]), site.account_id)
+      if (info?.accounts.some((a) => a.id === site.account_id && a.owner)) {
+        headers.set(ACTOR_HEADER, await signActor(sessionActor(info, site.account_id), site.account_id))
+      }
+    }
+    return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id, ...(custom ? { 'x-mc-host': new URL(request.url).host } : {}) })
   }
 
   async function serveImage(accountId: string, key: string): Promise<Response> {
@@ -152,14 +163,14 @@ export function createEdge(deps: EdgeDeps): Edge {
     // Caddy's on-demand TLS asks here before it issues a certificate for a custom website host.
     if (path === '/api/public/tls-check') {
       const domain = (url.searchParams.get('domain') || '').toLowerCase()
-      const known = domain === host || (domain !== '' && (await lookupSite({ host: domain })) !== null)
+      const known = domain === host || (domain !== '' && (await deps.stores.control.lookupSite({ host: domain })) !== null)
       return known ? json({ ok: true }) : notFound()
     }
 
     if (!host || url.host !== host) {
       const site = await lookupSite({ host: url.host.toLowerCase() })
       if (!site) return notFound()
-      return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id, 'x-mc-host': url.host })
+      return forwardSite(site, request, headers, true)
     }
 
     if (path.startsWith('/img/')) {
@@ -194,7 +205,7 @@ export function createEdge(deps: EdgeDeps): Edge {
       const slug = path.split('/')[2]?.toLowerCase() || ''
       const site = slug ? await lookupSite({ slug }) : null
       if (!site) return notFound()
-      return forward({ kind: 'account', accountId: site.account_id }, request, headers, { 'x-mc-site': site.newsletter_id })
+      return forwardSite(site, request, headers)
     }
 
     const isControl = CONTROL_PREFIXES.some((p) => path.startsWith(p))

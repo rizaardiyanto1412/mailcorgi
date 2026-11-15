@@ -64,8 +64,8 @@ test('public tokens route by their account prefix', async () => {
   assert.equal(bad.status, 404)
   const key = (await owner.action('newsletters.create', { name: 'Routed' })).key
   const form = await install.fetch(`/f/${key}`)
-  assert.equal(form.status, 404)
-  assert.equal((await form.json()).code, 'not_found')
+  assert.equal(form.status, 200)
+  assert.match(await form.text(), /name="email"/)
   assert.equal((await install.fetch('/f/nl_bad')).status, 404)
 })
 
@@ -77,7 +77,8 @@ test('a request on an unknown host is a 404, a known slug reaches the account', 
   const site = await install.app.stores.control.lookupSite({ slug: 'sited' })
   assert.equal(site?.newsletter_id, nl.id)
   const page = await install.fetch('/n/sited')
-  assert.equal(page.status, 404, 'the website module is not built yet')
+  assert.equal(page.status, 200)
+  assert.match(await page.text(), /<h1>Sited<\/h1>/)
   assert.equal((await install.fetch('/n/unknown-slug')).status, 404)
 })
 

@@ -1,3 +1,4 @@
+import { teamActions } from './team.ts'
 import { planLimits } from '../billing/index.ts'
 import { accountActions, registerAccountJobs } from './management.ts'
 import { AppError } from '../../core/http.ts'
@@ -118,8 +119,10 @@ export const accountsModule = {
       if (latest && latest.policy_version > account.policy_version) return { again: ctx.now() }
       return 'done'
     })
-    return reg.actions(...accountActions)
+    return reg.actions(...accountActions, ...teamActions)
   },
 }
 
 export { requestDeletion } from './management.ts'
+
+export { validateInviteSignup } from './team.ts'

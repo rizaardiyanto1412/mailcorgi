@@ -142,6 +142,10 @@ await expectError(() => owner.action('contacts.get', { contactId: 'x' }))   // â
 Assert what a user sees: action output, HTTP status, rows in `outbox`. Reach no network: the
 harness's `fetch` throws. Use `example.com` addresses only.
 
+Add `server/test/permissions/<module>.ts` exporting `entries` with `satisfies PermissionEntries` from `../permission-types.ts`.
+Map every action name to `{ role, input? }`; `input` overrides the shared valid fixture when needed, and roles must be reviewed independently of action metadata.
+The matrix test discovers these files automatically and rejects missing, stale or duplicate actions; adding a module needs no shared table edit.
+
 ## Rules that bite
 
 No Node APIs outside `server/platform-node.ts`, `server/email/smtp.ts` and `scripts/`: `npm run build` includes
