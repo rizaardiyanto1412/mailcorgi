@@ -12,7 +12,7 @@ import { ownedAccount, pushPolicy, type AccountRow } from './index.ts'
 const accountId = z.string().min(1).describe('The account you own.')
 const password = z.string().min(8).max(200)
 async function reauthenticate(ctx: StoreCtx, userId: string, value: string) {
-  if (!allowRate(ctx.db, `account:password:${userId}`, 10, 15 * 60_000, ctx.now())) throw new AppError('rate_limited', 'Too many attempts. Try again later.', 429)
+  if (!allowRate(ctx.db, `account:password:${userId}`, 10, 15 * 60_000, ctx.now(), { durable: true })) throw new AppError('rate_limited', 'Too many attempts. Try again later.', 429)
   const user = ctx.db.get<{ password_hash: string }>('SELECT password_hash FROM users WHERE id = ?', userId)
   if (!user || !await verifyPassword(value, user.password_hash)) throw new AppError('bad_password', 'Your current password is incorrect.', 400)
 }
@@ -95,7 +95,7 @@ export const accountActions = [
   } }),
   defineAction({ name: 'account.requestEmailChange', description: 'Email a confirmation code to your new address.', scope: 'control', role: 'user', effect: 'write', input: z.object({ email: z.string().trim().toLowerCase().email().max(254).describe('Your new email address.'), currentPassword: password.describe('Your current password.') }), handler: async (ctx, input, actor) => {
     await reauthenticate(ctx, actor.userId, input.currentPassword)
-    if (!allowRate(ctx.db, `account:email:${actor.userId}`, 3, 60 * 60_000, ctx.now())) throw new AppError('rate_limited', 'Ask for another code in an hour.', 429)
+    if (!allowRate(ctx.db, `account:email:${actor.userId}`, 3, 60 * 60_000, ctx.now(), { durable: true })) throw new AppError('rate_limited', 'Ask for another code in an hour.', 429)
     if (ctx.db.get('SELECT id FROM users WHERE email = ?', input.email)) throw new AppError('email_taken', 'That address is already in use.', 409)
     const code = randomCode()
     ctx.db.run('INSERT INTO account_email_changes (user_id, email, code_hash, expires_at, attempts) VALUES (?, ?, ?, ?, 0) ON CONFLICT(user_id) DO UPDATE SET email = excluded.email, code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0', actor.userId, input.email, await sha256Hex(`${actor.userId}:${code}`), ctx.now() + 15 * 60_000)

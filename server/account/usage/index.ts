@@ -7,6 +7,7 @@ import { AppError } from '../../core/http.ts'
 import { retryDead } from '../../core/jobs.ts'
 import { toHex } from '../../core/crypto.ts'
 import type { AccountRegistrar, Limits, Policy } from '../rpc.ts'
+import { replayPending } from '../tracking/pending.ts'
 
 export const getMeta = (ctx: StoreCtx, key: string): string | null => ctx.db.get<{ value: string }>('SELECT value FROM account_meta WHERE key = ?', key)?.value ?? null
 export const setMeta = (ctx: StoreCtx, key: string, value: string) => ctx.db.run('INSERT INTO account_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value)
@@ -71,6 +72,14 @@ export function reserveContacts(ctx: StoreCtx, n: number): boolean {
   return count + n <= max
 }
 
+/** Campaign emails sent in a `YYYY-MM` period, from the delivery rows of the campaigns that sent in it. */
+export function countSentInPeriod(ctx: StoreCtx, period: string): number {
+  const [year, month] = period.split('-').map(Number)
+  const start = Date.UTC(year, month - 1, 1)
+  const end = Date.UTC(year, month, 1)
+  return ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM deliveries d WHERE d.sent_at >= ? AND d.sent_at < ? AND d.campaign_id IN (SELECT id FROM campaigns WHERE status IN ('sending', 'paused') OR sent_at >= ? OR send_started_at >= ?)`, start, end, start, start)!.n
+}
+
 export function countEmails(ctx: StoreCtx, n: number): void {
   ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, ?, 0) ON CONFLICT(period) DO UPDATE SET emails_sent = emails_sent + excluded.emails_sent', currentPeriod(ctx.now()), n)
   if ((ctx.db.get<{ n: number }>('SELECT emails_sent n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0) >= limits(ctx).maxEmailsPerMonth * 0.9) notifyLimitNear(ctx, 'emails')
@@ -111,7 +120,9 @@ export const usageModule = {
       const period = currentPeriod(ctx.now())
       const contacts = repairActiveContacts(ctx)
       // One count an hour records the month's peak; counting on every subscribe made imports quadratic.
-      ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, 0, ?) ON CONFLICT(period) DO UPDATE SET contacts_peak = MAX(contacts_peak, excluded.contacts_peak)', period, contacts)
+      // The month's emails are recounted from the delivery rows, which a crashed batch cannot lose;
+      // the counter only ever rises, so test emails (no delivery row) stay counted.
+      ctx.db.run('INSERT INTO usage (period, emails_sent, contacts_peak) VALUES (?, ?, ?) ON CONFLICT(period) DO UPDATE SET contacts_peak = MAX(contacts_peak, excluded.contacts_peak), emails_sent = MAX(emails_sent, excluded.emails_sent)', period, countSentInPeriod(ctx, period), contacts)
       const emailsSent = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', period)?.n ?? 0
       if (emailsSent >= limits(ctx).maxEmailsPerMonth * 0.9) notifyLimitNear(ctx, 'emails')
       await ctx.stores.control.pushUsage({ accountId: ctx.accountId!, period, contacts, emailsSent })
@@ -128,8 +139,12 @@ export const usageModule = {
       })
     })
     reg.rpc('applyPolicy', (ctx, policy) => ({ applied: applyPolicy(ctx, policySchema.parse(policy)) }))
-    // Any call re-arms the alarm on the way out, which is all the daily wake-up needs.
-    reg.rpc('ping', () => ({ ok: true as const }))
+    // The daily wake-up after the quota resets: apply what was parked while writes were refused;
+    // the call re-arms the alarm on the way out, which resumes queued work.
+    reg.rpc('ping', async (ctx) => {
+      await replayPending(ctx).catch(() => {})
+      return { ok: true as const }
+    })
     reg.rpc('liveUsage', (ctx) => ({
       contacts: activeContacts(ctx),
       emailsSent: ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0,

@@ -16,6 +16,8 @@ export const ACCOUNT_COOKIE = 'mc_account'
 const SESSION_DAYS = 30
 const CODE_TTL_MS = 15 * 60_000
 const CODE_MAX_ATTEMPTS = 5
+// Sign-in limits survive a restart: a guessed password is worth more than the row it costs.
+const DURABLE = { durable: true }
 
 interface UserRow {
   id: string
@@ -80,7 +82,7 @@ async function currentSession(ctx: StoreCtx, c: Context<StoreEnv>) {
 }
 
 function limit(ctx: StoreCtx, c: Context<StoreEnv>, address: string) {
-  const ok = allowRate(ctx.db, `auth:ip:${clientIp(c) || 'none'}`, 30, 15 * 60_000, ctx.now()) && allowRate(ctx.db, `auth:email:${address}`, 10, 15 * 60_000, ctx.now())
+  const ok = allowRate(ctx.db, `auth:ip:${clientIp(c) || 'none'}`, 30, 15 * 60_000, ctx.now(), DURABLE) && allowRate(ctx.db, `auth:email:${address}`, 10, 15 * 60_000, ctx.now(), DURABLE)
   if (!ok) throw new AppError('rate_limited', 'Too many attempts. Try again in a few minutes.', 429)
 }
 

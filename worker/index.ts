@@ -68,6 +68,7 @@ function sqlDriver(ctx: DurableObjectState, meter: Meter): Driver {
 
 function r2Blobs(bucket: R2Bucket): BlobStore {
   return {
+    separate: true,
     put: async (key, bytes, contentType) => void (await bucket.put(key, bytes, { httpMetadata: { contentType } })),
     get: async (key) => {
       const object = await bucket.get(key)

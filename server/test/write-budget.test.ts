@@ -106,7 +106,7 @@ test('opening a store again needs no write, and a refused write leaves every rea
   assert.ok(created)
 })
 
-test('an unsubscribe that cannot be stored says so instead of failing silently', async (t) => {
+test('an unsubscribe that cannot be stored is parked in the blob store and answered as landed', async (t) => {
   const { install, nl, accountId, issue, click } = await sentIssue()
   t.after(() => install.close())
   const ctx = install.app.account(accountId).ctx
@@ -115,9 +115,9 @@ test('an unsubscribe that cannot be stored says so instead of failing silently',
   const token = await signToken(ctx, 'u', [contactId, issue.id])
   install.refuseWrites(true)
   const page = await install.fetch(`/u/${token}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' })
-  assert.equal(page.status, 503)
-  assert.match(await page.text(), /try again later/i)
-  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', contactId)!.status, 'subscribed')
+  assert.equal(page.status, 200, 'the disk blob store takes the parked unsubscribe')
+  assert.equal(await page.text(), 'Unsubscribed.')
+  assert.equal(ctx.db.get<{ status: string }>('SELECT status FROM contacts WHERE id = ?', contactId)!.status, 'subscribed', 'no row could be written yet')
   void click
   void nl
   install.refuseWrites(false)

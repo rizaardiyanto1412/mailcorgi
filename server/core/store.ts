@@ -7,6 +7,7 @@ import type { Config } from './config.ts'
 import type { Keys } from './crypto.ts'
 import { openEnvelope } from './crypto.ts'
 import { Budget, createJobs, nextWakeAt, runDueJobs, type Jobs } from './jobs.ts'
+import { pruneRates } from './ratelimit.ts'
 import { runAction, type Actor, type Registry } from './actions.ts'
 import { AppError, asAppError, errorResponse, jsonNotFound, readJson, withSecurityHeaders, type StoreEnv } from './http.ts'
 import type { ControlRpc } from '../control/rpc.ts'
@@ -266,7 +267,7 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
             ctx.jobs.enqueue('alerts.raise', { kind: 'job_dead', title: `Job ${job.kind} failed ${job.attempts} times`, body: error, jobId: job.id })
           },
         })
-        for (const fn of registry.maintenance) {
+        for (const fn of [...registry.maintenance, (ctx: StoreCtx) => pruneRates(ctx.db, deps.now())]) {
           try {
             fn(ctx)
           } catch (err) {

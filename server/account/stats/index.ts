@@ -27,7 +27,7 @@ export const statsModule = {
     reg.job('stats.rollup', async (ctx, _input, budget) => {
       // Nothing to repair when nothing changed since the last run: the store stays idle and the
       // next check waits longer. The marker lives in memory, so a restart costs one extra run.
-      const mark = ctx.db.get<{ m: string }>(`SELECT (SELECT COALESCE(MAX(id), 0) FROM events) || ':' || (SELECT COALESCE(MAX(id), 0) FROM page_views) || ':' || (SELECT COALESCE(MAX(id), 0) FROM deliveries) || ':' || (SELECT COUNT(*) FROM campaigns WHERE status IN ('sending', 'paused', 'scheduled')) || ':' || (SELECT COUNT(*) FROM provider_events) || ':' || (SELECT COALESCE(SUM(COALESCE(json_extract(stats, '$.opens'), 0) + COALESCE(json_extract(stats, '$.clicks'), 0)), 0) FROM campaigns) AS m`)!.m
+      const mark = ctx.db.get<{ m: string }>(`SELECT (SELECT COALESCE(MAX(id), 0) FROM events) || ':' || (SELECT COALESCE(MAX(id), 0) FROM page_views) || ':' || (SELECT COALESCE(MAX(id), 0) FROM deliveries) || ':' || (SELECT COUNT(*) FROM deliveries WHERE status IN ('queued', 'sending')) || ':' || (SELECT COUNT(*) FROM campaigns WHERE status IN ('sending', 'paused', 'scheduled')) || ':' || (SELECT COUNT(*) FROM provider_events) || ':' || (SELECT COALESCE(SUM(COALESCE(json_extract(stats, '$.opens'), 0) + COALESCE(json_extract(stats, '$.clicks'), 0)), 0) FROM campaigns) AS m`)!.m
       if (ctx.memory.get('stats.rollup') === mark) return { again: ctx.now() + ROLLUP_IDLE_MS }
       const newsletters = ctx.db.all<{ id: string }>('SELECT id FROM newsletters WHERE archived_at IS NULL')
       for (const n of newsletters) ctx.jobs.enqueue('stats.newsletter', { newsletterId: n.id }, { dedupeKey: `stats.newsletter:${n.id}` })
