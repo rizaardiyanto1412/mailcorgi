@@ -7,6 +7,7 @@ import { controlRegistry } from '../control/modules.ts'
 import { runAction, type Actor } from '../core/actions.ts'
 import { AppError } from '../core/http.ts'
 import { sha256Hex } from '../core/crypto.ts'
+import { transitionCampaign } from '../account/campaigns/index.ts'
 import { createInstall } from './harness.ts'
 
 const matrix: PermissionEntries = {}
@@ -44,6 +45,13 @@ for (const action of actions) test(`permission matrix: ${action.name}`, async ()
       if (grant !== 'outsider') control.db.run('INSERT INTO memberships (user_id, account_id, newsletter_id, role, created_at) VALUES (?, ?, ?, ?, ?)', client.session.user.id, owner.accountId!, nl.id, grant, install.clock.now())
       const actor: Actor = { userId: client.session.user.id, email: client.email, owner: false, grants: grant === 'outsider' ? {} : { [nl.id]: grant }, access: 'full', via: 'web', installAdmin: false }
       const campaign = await owner.action('campaigns.create', { newsletterId: nl.id, subject: 'Draft' })
+      if (action.name === 'website.updateIssue') {
+        const ctx = install.app.account(owner.accountId!).ctx
+        transitionCampaign(ctx, campaign.id, 'scheduled', { scheduledAt: ctx.now() + 1000 })
+        transitionCampaign(ctx, campaign.id, 'sending')
+        transitionCampaign(ctx, campaign.id, 'sent')
+      }
+      if (action.name === 'website.checkHost') await owner.action('website.setHost', { newsletterId: nl.id, hostname: `${grant}.example.com` })
       const contact = await owner.action('contacts.create', { newsletterId: nl.id, email: `${grant}-contact@example.com` })
       const segment = await owner.action('segments.create', { newsletterId: nl.id, name: 'Segment', filter: { field: 'status', in: ['subscribed'] } })
       const author = await owner.action('authors.create', { newsletterId: nl.id, name: 'Writer', slug: `writer-${grant}` })
