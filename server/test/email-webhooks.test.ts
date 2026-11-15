@@ -115,6 +115,40 @@ test('the edge verifies, groups events by account, counts dropped events and ret
   assert.equal(batches.length, 1)
   const dropped = await install.app.edge.fetch(await resendRequest(install.clock.now(), { ...resendEvent, data: { ...resendEvent.data, tags: [] } }))
   assert.deepEqual(await dropped.json(), { ok: true, dropped: 1 })
+  for (const accountId of ['acc_aaaaaaaaaaaaaaaa', 'not-an-account']) {
+    const unknown = { ...event, data: { ...event.data, tags: [{ name: 'mc_account', value: accountId }, { name: 'mc_delivery', value: '42' }] } }
+    const response = await install.app.edge.fetch(await resendRequest(install.clock.now(), unknown))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { ok: true, dropped: 1 })
+    assert.deepEqual(install.app.accountIds(), [owner.accountId])
+    assert.equal(batches.length, 1)
+  }
   registry.rpc.set('ingestProviderEvents', () => { throw new Error('Store unavailable') })
   assert.equal((await install.app.edge.fetch(await resendRequest(install.clock.now(), event))).status, 503)
+})
+
+test('the SES edge drops unknown account tags before opening a store and still accepts known accounts', async (t) => {
+  const fixture = await snsFixture()
+  const install = await createInstall()
+  t.after(() => install.close())
+  await setSetting(install.app.control.ctx, 'ses_sns_topic_arn', topic)
+  install.app.platform.fetch = async () => new Response(fixture.cert)
+  const unknown = await install.app.edge.fetch(snsRequest(await fixture.sign(fixture.base)))
+  assert.equal(unknown.status, 200)
+  assert.deepEqual(await unknown.json(), { ok: true, dropped: 1 })
+  assert.deepEqual(install.app.accountIds(), [])
+  assert.deepEqual(fs.readdirSync(path.join(install.dataDir, 'accounts')), [])
+
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  assert.ok(owner.accountId)
+  const registry = install.app.account(owner.accountId).ctx.registry
+  const previous = registry.rpc.get('ingestProviderEvents')
+  const batches: ProviderEvent[][] = []
+  registry.rpc.set('ingestProviderEvents', (_ctx, { events }: { events: ProviderEvent[] }) => { batches.push(events); return { applied: events.length } })
+  t.after(() => { if (previous) registry.rpc.set('ingestProviderEvents', previous); else registry.rpc.delete('ingestProviderEvents') })
+  const message = fixture.base.Message.replace('acc_abcdefghijklmnop', owner.accountId)
+  const known = await install.app.edge.fetch(snsRequest(await fixture.sign({ ...fixture.base, Message: message })))
+  assert.equal(known.status, 200)
+  assert.deepEqual(await known.json(), { ok: true, dropped: 0 })
+  assert.equal(batches[0][0].accountId, owner.accountId)
 })

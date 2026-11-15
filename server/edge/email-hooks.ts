@@ -1,9 +1,8 @@
 import type { EdgeDeps } from './index.ts'
 import { parseResendWebhook, parseSesWebhook } from '../email/index.ts'
 import { AppError } from '../core/http.ts'
-import { isAccountId } from '../core/ids.ts'
 
-export async function handleEmailHook(deps: EdgeDeps, request: Request): Promise<Response> {
+export async function handleEmailHook(deps: EdgeDeps, request: Request, accountExists: (accountId: string) => Promise<boolean>): Promise<Response> {
   if (request.method !== 'POST') return Response.json({ error: 'Use POST.', code: 'method_not_allowed' }, { status: 405 })
   const size = Number(request.headers.get('content-length') || 0)
   if (size > 1_048_576) return Response.json({ error: 'Webhook too large.' }, { status: 413 })
@@ -26,12 +25,15 @@ export async function handleEmailHook(deps: EdgeDeps, request: Request): Promise
     const groups = new Map<string, typeof result.events>()
     let dropped = 0
     for (const event of result.events) {
-      if (!event.accountId || !isAccountId(event.accountId)) { dropped++; continue }
+      if (!event.accountId) { dropped++; continue }
       const group = groups.get(event.accountId) ?? []
       group.push(event)
       groups.set(event.accountId, group)
     }
-    for (const [accountId, events] of groups) await deps.stores.account(accountId).ingestProviderEvents({ events })
+    for (const [accountId, events] of groups) {
+      if (!(await accountExists(accountId))) { dropped += events.length; continue }
+      await deps.stores.account(accountId).ingestProviderEvents({ events })
+    }
     return Response.json({ ok: true, dropped })
   } catch (error) {
     return Response.json({ error: 'Webhook could not be processed.', code: 'webhook_failed' }, { status: error instanceof AppError ? error.status : 503 })

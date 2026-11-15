@@ -1,0 +1,185 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import { createInstall } from './harness.ts'
+import { createEdge } from '../edge/index.ts'
+import { controlRegistry } from '../control/modules.ts'
+
+test('untrusted account prefixes never provision account databases', async () => {
+  const install = await createInstall({ cloud: true })
+  try {
+    const id = 'acc_aaaaaaaaaaaaaaaa'
+    for (const path of [
+      ...['/t/o/', '/t/c/', '/u/', '/confirm/', '/keep/'].map((prefix) => `${prefix}${id}.x`),
+      `/f/nl_${id}_aaaaaaaaaaaaaaaa`, `/api/public/subscribe/nl_${id}_aaaaaaaaaaaaaaaa`,
+      `/embed.js?key=nl_${id}_aaaaaaaaaaaaaaaa`, '/api/v1/newsletters', '/mcp', `/img/${id}/x`,
+    ]) {
+      assert.equal((await install.fetch(path, { headers: { authorization: `Bearer mc_${id}_abcdefghijklmnopqrst` } })).status, 404)
+    }
+    assert.deepEqual(install.app.accountIds(), [])
+    assert.deepEqual(fs.readdirSync(`${install.dataDir}/accounts`), [])
+    assert.throws(() => install.app.account(id), /not provisioned/i)
+    await assert.rejects(async () => install.app.stores.account(id).summary({}), /not provisioned/i)
+    assert.deepEqual(fs.readdirSync(`${install.dataDir}/accounts`), [])
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    assert.equal((await install.fetch(`/u/${owner.accountId}.x`)).status, 404)
+    install.app.control.ctx.db.run('UPDATE accounts SET deleted_at = ? WHERE id = ?', install.clock.now(), owner.accountId)
+    assert.equal((await install.fetch(`/u/${owner.accountId}.x`)).status, 404)
+  } finally { install.close() }
+})
+
+test('an HTTP invocation retries a failed alarm registration and queued work runs', async () => {
+  const install = await createInstall()
+  const store = install.app.control
+  const platform = install.app.platform
+  const original = platform.setAlarm
+  let failed = false
+  let registeredAt: number | null = null
+  let ran = false
+  controlRegistry.jobs.set('test.alarm-recovery', async () => { ran = true; return 'done' })
+  try {
+    await store.rearm()
+    platform.setAlarm = async (ref, at) => {
+      if (at !== null && !failed) { failed = true; throw new Error('transient alarm failure') }
+      await original(ref, at)
+      registeredAt = at
+    }
+    store.ctx.jobs.enqueue('test.alarm-recovery', {}, { runAt: install.clock.now() + 1000 })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(failed, true)
+    await install.fetch('/api/auth/bootstrap')
+    assert.equal(registeredAt, install.clock.now() + 1000)
+    install.clock.advance(1000)
+    await install.tick()
+    assert.equal(ran, true)
+  } finally {
+    platform.setAlarm = original
+    controlRegistry.jobs.delete('test.alarm-recovery')
+    install.close()
+  }
+})
+
+test('control dead jobs raise an admin alert and dead alerts do not recurse', async () => {
+  const install = await createInstall()
+  try {
+    const { ctx } = install.app.control
+    const { id } = ctx.jobs.enqueue('test.missing')
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', id)
+    await install.runJobs()
+    const alert = ctx.db.get<{ account_id: string | null; title: string }>("SELECT * FROM admin_alerts WHERE kind = 'job_dead'")
+    assert.equal(alert?.account_id, null)
+    assert.match(alert?.title ?? '', /test.missing failed 8 times/)
+    const dead = ctx.jobs.enqueue('alerts.raise', {})
+    ctx.db.run('UPDATE jobs SET attempts = 7 WHERE id = ?', dead.id)
+    await install.runJobs()
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs')?.n, 0)
+    assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM admin_alerts')?.n, 1)
+  } finally { install.close() }
+})
+
+test('separate edge configs enforce the authoritative learned host and constrain first run', async () => {
+  const install = await createInstall({ env: { APP_URL: '' } })
+  try {
+    const edge = createEdge({
+      config: { ...install.config }, keys: async () => install.app.keys, stores: install.app.stores,
+      storeFetch: (ref, request) => (ref.kind === 'control' ? install.app.control : install.app.account(ref.accountId)).fetch(request),
+      blobs: install.app.platform.blobs, assets: async () => new Response('app'), now: install.clock.now,
+    })
+    const fetch = (host: string, path: string) => edge.fetch(new Request(`http://${host}${path}`))
+    assert.equal((await fetch('unknown.example.com', '/api/control/settings')).status, 404)
+    assert.equal((await fetch('app.example.com', '/api/auth/bootstrap')).status, 200)
+    assert.equal((await fetch('unknown.example.com', '/api/auth/bootstrap')).status, 404)
+    await install.signUp({ email: 'owner@example.com' })
+    assert.equal((await fetch('unknown.example.com', '/')).status, 404)
+    assert.equal((await fetch('unknown.example.com', '/api/auth/bootstrap')).status, 404)
+    assert.equal((await fetch('app.example.com', '/api/auth/bootstrap')).status, 200)
+    install.app.control.ctx.db.run("DELETE FROM install_settings WHERE key = 'setup_origin'")
+    const freshEdge = createEdge({
+      config: { ...install.config, appUrl: '' }, keys: async () => install.app.keys, stores: install.app.stores,
+      storeFetch: (ref, request) => (ref.kind === 'control' ? install.app.control : install.app.account(ref.accountId)).fetch(request),
+      blobs: install.app.platform.blobs, assets: async () => new Response('app'), now: install.clock.now,
+    })
+    assert.equal((await freshEdge.fetch(new Request('http://unknown.example.com/api/auth/bootstrap'))).status, 404)
+    assert.equal((await freshEdge.fetch(new Request('http://app.example.com/api/auth/bootstrap'))).status, 200)
+  } finally { install.close() }
+})
+
+test('an invocation restores an alarm that disappeared after successful registration', async () => {
+  const install = await createInstall()
+  let ran = false
+  controlRegistry.jobs.set('test.alarm-missing', async () => { ran = true; return 'done' })
+  try {
+    const store = install.app.control
+    store.ctx.jobs.enqueue('test.alarm-missing', {}, { runAt: install.clock.now() + 1000 })
+    await store.rearm()
+    const original = install.app.platform.setAlarm
+    let registeredAt: number | null = null
+    install.app.platform.setAlarm = async (ref, at) => { await original(ref, at); registeredAt = at }
+    await original({ kind: 'control' }, null)
+    await install.fetch('/api/auth/bootstrap')
+    assert.equal(registeredAt, install.clock.now() + 1000)
+    install.clock.advance(1000)
+    await install.tick()
+    assert.equal(ran, true)
+  } finally {
+    controlRegistry.jobs.delete('test.alarm-missing')
+    install.close()
+  }
+})
+
+test('overlapping alarm registrations cannot replace an earlier wake with a late one', async () => {
+  const install = await createInstall()
+  const store = install.app.control
+  const platform = install.app.platform
+  const original = platform.setAlarm
+  let release: () => void = () => {}
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  let entered: () => void = () => {}
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  let hold = true
+  let registeredAt: number | null = null
+  let ran = false
+  controlRegistry.jobs.set('test.alarm-order', async () => { ran = true; return 'done' })
+  try {
+    await store.rearm()
+    platform.setAlarm = async (ref, at) => {
+      if (at !== null && hold) { hold = false; entered(); await blocked }
+      await original(ref, at)
+      registeredAt = at
+    }
+    store.ctx.jobs.enqueue('test.alarm-order', {}, { runAt: install.clock.now() + 10_000 })
+    await started
+    store.ctx.jobs.enqueue('test.alarm-order', {}, { runAt: install.clock.now() + 1000 })
+    const request = install.fetch('/api/auth/bootstrap')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    release()
+    await request
+    await store.rearm()
+    assert.equal(registeredAt, install.clock.now() + 1000)
+    install.clock.advance(1000)
+    await install.tick()
+    assert.equal(ran, true)
+  } finally {
+    release()
+    platform.setAlarm = original
+    controlRegistry.jobs.delete('test.alarm-order')
+    install.close()
+  }
+})
+
+
+test('the learned app host admits provider and billing hooks and rejects new routes on unknown hosts', async () => {
+  const install = await createInstall({ cloud: true, env: { APP_URL: '' } })
+  try {
+    await install.fetch('/api/auth/bootstrap')
+    for (const path of ['/hooks/ses', '/hooks/resend', '/hooks/stripe', '/hooks/polar']) {
+      const request = { method: 'POST', body: '{}' }
+      assert.equal((await install.fetch(`http://unknown.example.com${path}`, request)).status, 404)
+      assert.equal((await install.fetch(path, request)).status, 400, 'the app host reaches webhook signature verification')
+    }
+    for (const path of ['/api/v1/newsletters', '/mcp', '/llms.txt']) {
+      assert.equal((await install.fetch(`http://unknown.example.com${path}`)).status, 404)
+    }
+    assert.equal((await install.fetch('/llms.txt')).status, 200)
+  } finally { install.close() }
+})

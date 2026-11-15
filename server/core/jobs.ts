@@ -159,12 +159,11 @@ function fail(ctx: StoreCtx, job: JobRow, error: string, opts: RunOptions) {
   const { db } = ctx
   const attempts = job.attempts + 1
   if (attempts >= MAX_ATTEMPTS) {
-    const moved = db.tx(() => {
+    db.tx(() => {
       const gone = db.run('DELETE FROM jobs WHERE id = ? AND claim_token = ?', job.id, job.claim_token).changes
       if (gone) db.run('INSERT OR REPLACE INTO jobs_dead (id, kind, payload, attempts, last_error, created_at, died_at) VALUES (?, ?, ?, ?, ?, ?, ?)', job.id, job.kind, job.payload, attempts, error, job.created_at, ctx.now())
-      return gone > 0
+      if (gone) opts.onDead?.(ctx, { ...job, attempts }, error)
     })
-    if (moved) opts.onDead?.(ctx, { ...job, attempts }, error)
     return
   }
   db.run('UPDATE jobs SET attempts = ?, run_at = ?, locked_until = NULL, claim_token = NULL, last_error = ? WHERE id = ? AND claim_token = ?', attempts, ctx.now() + backoffMs(attempts), error, job.id, job.claim_token)
