@@ -1,3 +1,4 @@
+import { imageShape, decodeImage } from './images.ts'
 import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import { newId } from '../../core/ids.ts'
@@ -13,6 +14,19 @@ const shape = {
 interface AuthorRow { id: string; name: string; slug: string; bio: string; links: string; avatar_key: string | null }
 const serialize = (r: AuthorRow) => ({ id: r.id, name: r.name, slug: r.slug, bio: r.bio, links: z.record(z.string(), z.string()).parse(JSON.parse(r.links)), avatarKey: r.avatar_key })
 export const authorActions = [
+  defineAction({ name: 'authors.uploadAvatar', description: 'Upload an author avatar as PNG, JPEG, GIF or WebP, up to 2 MB.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'author', param: 'authorId' }, input: z.object({ newsletterId, authorId, ...imageShape }), rest: { method: 'POST', path: '/newsletters/:newsletterId/authors/:authorId/avatar' }, mcp: { title: 'Upload an author avatar', destructive: false }, handler: async (ctx, i, actor) => {
+    const bytes = decodeImage(i)
+    const key = newId('img')
+    const fullKey = `${ctx.accountId}/${key}`
+    await ctx.platform.blobs.put(fullKey, bytes, i.contentType)
+    try {
+      ctx.db.tx(() => {
+        ctx.db.run('INSERT INTO uploads (key, newsletter_id, content_type, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', fullKey, i.newsletterId, i.contentType, bytes.length, actor.userId, ctx.now())
+        if (!ctx.db.run('UPDATE authors SET avatar_key = ? WHERE id = ? AND newsletter_id = ?', key, i.authorId, i.newsletterId).changes) throw notFound('That author')
+      })
+    } catch (error) { await ctx.platform.blobs.delete(fullKey); throw error }
+    return { avatarKey: key }
+  } }),
   defineAction({ name: 'authors.list', description: 'List newsletter authors.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId }), rest: { method: 'GET', path: '/newsletters/:newsletterId/authors' }, mcp: { title: 'List authors', destructive: false }, handler: (ctx, i) => ({ authors: ctx.db.all<AuthorRow>('SELECT * FROM authors WHERE newsletter_id = ? ORDER BY name, id', i.newsletterId).map(serialize) }) }),
   defineAction({ name: 'authors.create', description: 'Add a newsletter author.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId, ...shape }), rest: { method: 'POST', path: '/newsletters/:newsletterId/authors' }, mcp: { title: 'Add an author', destructive: false }, handler: (ctx, i) => {
     if (ctx.db.get('SELECT id FROM authors WHERE newsletter_id = ? AND slug = ?', i.newsletterId, i.slug)) throw new AppError('already_exists', 'That author address is already in use.', 409)

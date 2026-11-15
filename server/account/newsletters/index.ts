@@ -3,10 +3,21 @@ import type { StoreCtx } from '../../core/store.ts'
 import { defineAction, type Actor } from '../../core/actions.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { authorActions } from './authors.ts'
-import { fromBase64 } from '../../core/crypto.ts'
+import { imageShape, decodeImage } from './images.ts'
 import { newId, newNewsletterKey } from '../../core/ids.ts'
 import { limits } from '../usage/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
+
+export const newsletterThemeSchema = z.object({
+  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#c66140'),
+  backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#ffffff'),
+  textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#242320'),
+  fontFamily: z.enum(['sans-serif', 'serif', 'monospace']).default('sans-serif'),
+  buttonStyle: z.enum(['rounded', 'square', 'pill']).default('rounded'),
+  headerText: z.string().max(2000).default(''),
+  footerText: z.string().max(2000).default(''),
+})
+export type NewsletterTheme = z.infer<typeof newsletterThemeSchema>
 
 export interface NewsletterRow {
   id: string
@@ -49,6 +60,7 @@ export interface Newsletter {
   postalAddress: string
   logoKey: string | null
   iconKey: string | null
+  theme: NewsletterTheme
   tracking: { opens: boolean; clicks: boolean }
   doubleOptIn: boolean
   archivedAt: number | null
@@ -71,6 +83,7 @@ export const serializeNewsletter = (r: NewsletterRow): Newsletter => ({
   postalAddress: r.postal_address,
   logoKey: r.logo_key,
   iconKey: r.icon_key,
+  theme: newsletterThemeSchema.parse(JSON.parse(r.theme)),
   tracking: z.object({ opens: z.boolean().default(true), clicks: z.boolean().default(true) }).parse(JSON.parse(r.tracking)),
   doubleOptIn: !!r.double_opt_in,
   archivedAt: r.archived_at,
@@ -101,13 +114,17 @@ export const slugify = (value: string) =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
 
-const slug = z.string().trim().toLowerCase().regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, 'Use 3 to 60 letters, digits and dashes.')
+const slug = z.string().trim().toLowerCase().min(3).max(60).regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, 'Use 3 to 60 letters, digits and dashes.')
 const RESERVED_SLUGS = new Set(['api', 'admin', 'app', 'www', 'mail', 'n', 'f', 't', 'u', 'img', 'hooks', 'mcp', 'docs', 'static', 'assets', 'healthz', 'signin', 'signup', 'setup', 'welcome'])
+
+function assertLocalSlugFree(ctx: StoreCtx, value: string, newsletterId: string | null) {
+  const local = ctx.db.get<{ id: string }>('SELECT id FROM newsletters WHERE slug = ?', value)
+  if (local && local.id !== newsletterId) throw new AppError('slug_taken', 'That address is already in use.', 409)
+}
 
 async function assertSlugFree(ctx: StoreCtx, value: string, newsletterId: string | null) {
   if (RESERVED_SLUGS.has(value)) throw new AppError('slug_taken', 'That address is reserved.', 409)
-  const local = ctx.db.get<{ id: string }>('SELECT id FROM newsletters WHERE slug = ?', value)
-  if (local && local.id !== newsletterId) throw new AppError('slug_taken', 'That address is already in use.', 409)
+  assertLocalSlugFree(ctx, value, newsletterId)
   const site = await ctx.stores.control.lookupSite({ slug: value })
   if (site && site.newsletter_id !== newsletterId) throw new AppError('slug_taken', 'That address is already in use.', 409)
 }
@@ -125,7 +142,7 @@ export const newslettersModule = {
     reg.job<{ newsletterId: string }>('directory.sync', async (ctx, { newsletterId }) => {
       const row = getNewsletterRow(ctx, newsletterId)
       const accountId = ctx.accountId!
-      if (!row || row.archived_at) await ctx.stores.control.removeSite({ newsletterId, accountId })
+      if (!row || row.archived_at !== null) await ctx.stores.control.removeSite({ newsletterId, accountId })
       else await ctx.stores.control.upsertSite({ newsletterId, accountId, slug: row.slug })
       return 'done'
     })
@@ -134,14 +151,10 @@ export const newslettersModule = {
       ...authorActions,
       defineAction({
         name: 'newsletters.uploadImage', description: 'Upload a newsletter logo or icon as PNG, JPEG, GIF or WebP, up to 2 MB.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' },
-        input: z.object({ newsletterId, kind: z.enum(['logo', 'icon']).describe('Which newsletter image to replace'), contentType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']).describe('The image MIME type'), data: z.string().min(1).max(2796204).describe('Base64-encoded image bytes') }),
+        input: z.object({ newsletterId, kind: z.enum(['logo', 'icon']).describe('Which newsletter image to replace'), ...imageShape }),
         rest: { method: 'POST', path: '/newsletters/:newsletterId/images' }, mcp: { title: 'Upload a newsletter image', destructive: false },
         handler: async (ctx, i, actor) => {
-          let bytes: Uint8Array
-          try { bytes = fromBase64(i.data) } catch { throw new AppError('invalid_input', 'The image data is invalid.', 400) }
-          const hex = Array.from(bytes.slice(0, 12), (b) => b.toString(16).padStart(2, '0')).join('')
-          const valid = i.contentType === 'image/png' ? hex.startsWith('89504e470d0a1a0a') : i.contentType === 'image/jpeg' ? hex.startsWith('ffd8ff') : i.contentType === 'image/gif' ? hex.startsWith('474946383761') || hex.startsWith('474946383961') : hex.startsWith('52494646') && hex.slice(16) === '57454250'
-          if (!valid || bytes.length > 2097152) throw new AppError('invalid_input', 'Use a PNG, JPEG, GIF or WebP image under 2 MB.', 400)
+          const bytes = decodeImage(i)
           const key = newId('img')
           const fullKey = `${ctx.accountId}/${key}`
           await ctx.platform.blobs.put(fullKey, bytes, i.contentType)
@@ -175,6 +188,8 @@ export const newslettersModule = {
           const id = newId('nl')
           const now = ctx.now()
           ctx.db.tx(() => {
+            if (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+            assertLocalSlugFree(ctx, wanted, null)
             ctx.db.run('INSERT INTO newsletters (id, key, name, slug, from_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', id, newNewsletterKey(ctx.accountId!), input.name, wanted, input.name, now, now)
             syncDirectory(ctx, id)
           })
@@ -223,6 +238,7 @@ export const newslettersModule = {
           timezone: z.string().max(100).refine((v) => { try { new Intl.DateTimeFormat('en', { timeZone: v }); return true } catch { return false } }, 'Use a valid timezone.').optional().describe('IANA timezone for scheduling'),
           doubleOptIn: z.boolean().optional().describe('Require email confirmation for public signups'),
           tracking: z.object({ opens: z.boolean(), clicks: z.boolean() }).optional().describe('Enable tracking for opens and clicks'),
+          theme: newsletterThemeSchema.optional().describe('Email and website colors, font, button style and plain-text header and footer'),
         }),
         rest: { method: 'PATCH', path: '/newsletters/:newsletterId' },
         mcp: { title: 'Update a newsletter', destructive: false },
@@ -237,11 +253,14 @@ export const newslettersModule = {
             sets.push('description = ?')
             values.push(input.description)
           }
-          const extra = { fromName: 'from_name', fromLocal: 'from_local', replyTo: 'reply_to', postalAddress: 'postal_address', language: 'language', timezone: 'timezone', doubleOptIn: 'double_opt_in', tracking: 'tracking' } as const
-          for (const key of Object.keys(extra) as (keyof typeof extra)[]) {
-            const value = input[key]
+          const extra: [string, string | boolean | NewsletterTheme | { opens: boolean; clicks: boolean } | undefined][] = [
+            ['from_name', input.fromName], ['from_local', input.fromLocal], ['reply_to', input.replyTo],
+            ['postal_address', input.postalAddress], ['language', input.language], ['timezone', input.timezone],
+            ['double_opt_in', input.doubleOptIn], ['tracking', input.tracking], ['theme', input.theme],
+          ]
+          for (const [column, value] of extra) {
             if (value !== undefined) {
-              sets.push(extra[key] + ' = ?')
+              sets.push(column + ' = ?')
               values.push(typeof value === 'object' ? JSON.stringify(value) : typeof value === 'boolean' ? Number(value) : value)
             }
           }
@@ -262,6 +281,7 @@ export const newslettersModule = {
         handler: async (ctx, input) => {
           await assertSlugFree(ctx, input.slug, input.newsletterId)
           ctx.db.tx(() => {
+            assertLocalSlugFree(ctx, input.slug, input.newsletterId)
             ctx.db.run('UPDATE newsletters SET slug = ?, updated_at = ? WHERE id = ?', input.slug, ctx.now(), input.newsletterId)
             syncDirectory(ctx, input.newsletterId)
           })
@@ -299,11 +319,15 @@ export const newslettersModule = {
         handler: async (ctx, input) => {
           const row = getNewsletterRow(ctx, input.newsletterId)
           if (!row) throw notFound('That newsletter')
-          if (row.archived_at) {
+          if (row.archived_at !== null) {
             const active = ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n
             if (active >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
             await assertSlugFree(ctx, row.slug, row.id)
             ctx.db.tx(() => {
+              const current = getNewsletterRow(ctx, input.newsletterId)
+              if (!current || current.archived_at === null) return
+              if (ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM newsletters WHERE archived_at IS NULL')!.n >= limits(ctx).maxNewsletters) throw new AppError('limit_reached', 'This account has reached its newsletter limit.', 403)
+              assertLocalSlugFree(ctx, row.slug, row.id)
               ctx.db.run('UPDATE newsletters SET archived_at = NULL, updated_at = ? WHERE id = ?', ctx.now(), input.newsletterId)
               syncDirectory(ctx, input.newsletterId)
             })

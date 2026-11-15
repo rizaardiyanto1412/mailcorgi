@@ -31,7 +31,7 @@ export function validateFields(ctx: StoreCtx, newsletterId: string, raw: Record<
   const definitions = ctx.db.all<{ key: string; type: string }>('SELECT key, type FROM contact_fields WHERE newsletter_id = ?', newsletterId)
   for (const [key, value] of Object.entries(parsed.data)) {
     const def = definitions.find((d) => d.key === key)
-    const valid = def && (def.type === 'date' ? typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value : typeof value === (def.type === 'text' ? 'string' : def.type))
+    const valid = def && (def.type === 'date' ? typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value + 'T00:00:00Z')) && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value : typeof value === (def.type === 'text' ? 'string' : def.type))
     if (!valid) throw new AppError('invalid_input', `Invalid value for custom field ${key}.`, 400)
   }
   return parsed.data

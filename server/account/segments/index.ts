@@ -23,7 +23,7 @@ const conditionSchema = z.union([
   z.object({ field: z.literal('status'), in: z.array(statuses).max(6) }),
   z.object({ field: z.literal('tag'), id: z.string().min(1) }),
   z.object({ field: z.literal('custom'), key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/), op: z.enum(['eq', 'neq', 'contains', 'gt', 'lt', 'set', 'unset']), value: z.union([z.string().max(1000), z.number().finite(), z.boolean()]).optional() }),
-  z.object({ field: z.enum(['subscribedAt', 'lastOpenedAt', 'lastClickedAt', 'lastSentAt']), op: z.enum(['before', 'after', 'withinDays', 'never']), value: z.number().finite().nonnegative().optional() }),
+  z.object({ field: z.enum(['subscribedAt', 'lastOpenedAt', 'lastClickedAt', 'lastSentAt']), op: z.enum(['before', 'after', 'withinDays', 'never']), value: z.number().finite().nonnegative().max(8640000000000000).optional() }),
   z.object({ field: z.enum(['source', 'provider']), in: z.array(z.string().max(200)).max(20) }),
   z.object({ field: z.literal('email'), op: z.enum(['contains', 'endsWith']), value: z.string().max(320) }),
   z.object({ field: z.literal('engagement'), op: z.enum(['openedLast', 'clickedLast', 'ignoredLast']), issues: z.number().int().min(1).max(10000) }),
@@ -71,7 +71,7 @@ function compileAt(filter: Filter | null, newsletterId: string, now: number) {
       case 'subscribedAt': case 'lastOpenedAt': case 'lastClickedAt': case 'lastSentAt': {
         const col = { subscribedAt: 'subscribed_at', lastOpenedAt: 'last_opened_at', lastClickedAt: 'last_clicked_at', lastSentAt: 'last_sent_at' }[f.field]
         if (f.op === 'never') return `c.${col} IS NULL`
-        if (f.value === undefined) throw invalidFilter()
+        if (f.value === undefined || (f.op === 'withinDays' && f.value > 100000)) throw invalidFilter()
         return `COALESCE(c.${col} ${f.op === 'before' ? '<' : '>'} ${bind(f.op === 'withinDays' ? now - f.value * 86400000 : f.value)}, 0)`
       }
       case 'email':

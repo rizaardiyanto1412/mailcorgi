@@ -1,3 +1,7 @@
+const primes: number[] = []
+for (let n = 2; primes.length < 64; n++) if (!primes.some((p) => n % p === 0)) primes.push(n)
+const constants = primes.map((p) => (Math.cbrt(p) % 1 * 4294967296) >>> 0)
+
 // The subscription transaction is synchronous on both SQLite drivers.
 export function emailHash(email: string): string {
   const bytes = new TextEncoder().encode(email)
@@ -5,9 +9,6 @@ export function emailHash(email: string): string {
   data.set(bytes)
   data[bytes.length] = 128
   new DataView(data.buffer).setUint32(data.length - 4, bytes.length * 8)
-  const primes: number[] = []
-  for (let n = 2; primes.length < 64; n++) if (!primes.some((p) => n % p === 0)) primes.push(n)
-  const constants = primes.map((p) => (Math.cbrt(p) % 1 * 4294967296) >>> 0)
   const h = primes.slice(0, 8).map((p) => (Math.sqrt(p) % 1 * 4294967296) >>> 0)
   const rotate = (n: number, k: number) => (n >>> k) | (n << (32 - k))
   const view = new DataView(data.buffer)

@@ -49,7 +49,8 @@ function listContacts(ctx: StoreCtx, i: ListInput) {
 }
 export function csvCell(value: unknown): string {
   let text = value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)
-  if (/^\s*[=+\-@]/.test(text) || ['\t', '\r', '\n'].some((c) => text.startsWith(c))) text = "'" + text
+  const meaningful = Array.from(text).find((c) => c.charCodeAt(0) > 32 && c.trim() !== '') ?? ''
+  if (['=', '+', '-', '@'].includes(meaningful) || ['\t', '\r', '\n'].some((c) => text.startsWith(c))) text = "'" + text
   return '"' + text.replace(/"/g, '""') + '"'
 }
 const csvHeader = ['Email', 'Name', 'Status', 'Source', 'Subscribed at', 'Fields', 'Tags'].map(csvCell).join(',') + '\r\n'

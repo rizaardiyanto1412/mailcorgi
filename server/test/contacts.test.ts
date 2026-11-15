@@ -155,3 +155,41 @@ test('manual suppressions can only be removed manually and do not resubscribe co
     assert.equal((await owner.action('contacts.get', { newsletterId: nl.id, contactId: contact.id })).contact.status, 'unsubscribed')
   } finally { install.close() }
 })
+
+test('HTTP membership and other account access cannot leak contacts or streamed exports', async () => {
+  const install = await createInstall({ env: { ALLOWED_EMAILS: 'member@example.com,other@example.com' } })
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const a = await owner.action('newsletters.create', { name: 'Member list' })
+    const b = await owner.action('newsletters.create', { name: 'Private list' })
+    const contact = (await owner.action('contacts.create', { newsletterId: b.id, email: 'private@example.com' })).contact
+    const member = await install.signUp({ email: 'member@example.com' })
+    install.app.control.ctx.db.run('INSERT INTO memberships (user_id, account_id, newsletter_id, role, created_at) VALUES (?, ?, ?, ?, ?)', member.session.user.id, owner.accountId, a.id, 'member', install.clock.now())
+    await member.post('/api/auth/account', { accountId: owner.accountId })
+    await member.refresh()
+    assert.equal((await member.actionRaw('contacts.get', { newsletterId: a.id, contactId: contact.id })).status, 404)
+    assert.equal((await member.actionRaw('contacts.list', { newsletterId: b.id })).status, 403)
+    assert.equal((await member.fetch('/api/actions/contacts.export?newsletterId=' + b.id)).status, 403)
+    assert.equal((await install.fetch('/api/actions/contacts.export?newsletterId=' + b.id)).status, 401)
+    const other = await install.signUp({ email: 'other@example.com' })
+    assert.equal((await other.actionRaw('contacts.get', { newsletterId: b.id, contactId: contact.id })).status, 404)
+    const response = await owner.actionRaw('contacts.update', { newsletterId: b.id, contactId: contact.id, fields: { bad: 'x' } })
+    assert.equal(response.status, 400)
+  } finally { install.close() }
+})
+
+test('invalid dates fail without writes and every CSV formula prefix is neutralized', async () => {
+  const { csvCell } = await import('../account/contacts/index.ts')
+  for (const text of ['=1+1', '+1+1', '-1+1', '@SUM(1)', '  =1+1', '\tplain', '\rplain', '\nplain', '\u0000=1+1']) assert.ok(csvCell(text).startsWith('"\''), JSON.stringify(text))
+  assert.equal(csvCell('a"b'), '"a""b"')
+  const install = await createInstall()
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const nl = await owner.action('newsletters.create', { name: 'Date tests' })
+    await owner.action('contactFields.create', { newsletterId: nl.id, key: 'birthday', label: 'Birthday', type: 'date' })
+    for (const value of ['2021-02-29', '2020-13-99', 'invalid']) {
+      assert.equal((await owner.actionRaw('contacts.create', { newsletterId: nl.id, email: 'invalid@example.com', fields: { birthday: value } })).status, 400)
+    }
+    assert.equal((await owner.action('contacts.list', { newsletterId: nl.id })).contacts.length, 0)
+  } finally { install.close() }
+})

@@ -26,6 +26,13 @@ test('newsletter settings, images and author CRUD are scoped and validated', asy
     assert.equal((await owner.action('authors.list', { newsletterId: a.id })).authors[0].name, 'A writer')
     await owner.action('authors.update', { newsletterId: a.id, authorId: author.id, name: 'Editor', slug: 'writer', bio: 'More words.' })
     assert.equal((await owner.action('authors.list', { newsletterId: a.id })).authors[0].bio, 'More words.')
+    const design = await owner.action('newsletters.update', { newsletterId: a.id, theme: { accentColor: '#123456', fontFamily: 'serif', buttonStyle: 'pill', headerText: 'Header', footerText: 'Footer' } })
+    assert.equal(design.theme.accentColor, '#123456')
+    assert.equal(design.theme.buttonStyle, 'pill')
+    assert.equal((await owner.actionRaw('newsletters.update', { newsletterId: a.id, theme: { accentColor: 'url(javascript:alert(1))' } })).status, 400)
+    const avatar = await owner.action('authors.uploadAvatar', { newsletterId: a.id, authorId: author.id, contentType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP1sAAAAASUVORK5CYII=' })
+    assert.equal((await owner.action('authors.list', { newsletterId: a.id })).authors[0].avatarKey, avatar.avatarKey)
+    assert.equal((await install.fetch(`/img/${owner.accountId}/${avatar.avatarKey}`)).status, 200)
     const ctx = install.app.account(owner.accountId!).ctx
     const actor: Actor = { userId: 'member', email: 'member@example.com', owner: false, grants: { [b.id]: 'admin' }, access: 'full', via: 'web', installAdmin: false }
     await assert.rejects(runAction(ctx, 'authors.delete', { newsletterId: b.id, authorId: author.id }, actor), (e: unknown) => e instanceof AppError && e.status === 404)
@@ -38,5 +45,15 @@ test('newsletter settings, images and author CRUD are scoped and validated', asy
     await owner.action('newsletters.unarchive', { newsletterId: a.id })
     await install.runJobs()
     assert.equal((await install.app.stores.control.lookupSite({ slug: a.slug }))?.newsletter_id, a.id)
+  } finally { install.close() }
+})
+
+test('concurrent newsletter creation cannot race past the account limit', async () => {
+  const install = await createInstall({ env: { MAX_NEWSLETTERS: '1' } })
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const results = await Promise.allSettled([owner.action('newsletters.create', { name: 'First' }), owner.action('newsletters.create', { name: 'Second' })])
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1)
+    assert.equal((await owner.action('newsletters.list', {})).newsletters.length, 1)
   } finally { install.close() }
 })
