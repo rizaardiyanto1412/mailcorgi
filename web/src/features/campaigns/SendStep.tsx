@@ -76,7 +76,6 @@ export function SendStep({ campaign, checks, unsaved, onDone }: {
       <Field label="Date and time">{(id) => <Input id={id} type="datetime-local" value={local} onChange={(e) => setLocal(e.target.value)} />}</Field>
       <Field label="Time zone" hint={scheduledAt ? `Sends ${when(scheduledAt)} in your local time.` : 'Pick a date and time.'}>{(id) => <Select id={id} value={zone} onChange={(e) => setZone(e.target.value)}>{zones().map((z) => <option key={z} value={z}>{z}</option>)}</Select>}</Field>
     </div>}
-    {status === 'sending' && held && <Banner kind="warn">{held.message}</Banner>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap items-center gap-3">
       <Button variant="primary" disabled={blocked || (mode === 'later' && !scheduledAt)} loading={send.isPending || schedule.isPending} onClick={async () => {
