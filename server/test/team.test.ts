@@ -191,7 +191,7 @@ test('delivery failure leaves a retryable invite and rate limits survive revocat
     const scope = { accountId: owner.accountId!, newsletterId: nl.id }
     const db = install.app.control.ctx.db
     db.run('INSERT INTO install_settings (key, value) VALUES (?, ?)', 'sending_enabled', 'false')
-    assert.equal((await owner.actionRaw('team.invite', { ...scope, email: 'guest@example.com', role: 'member' })).status, 502)
+    assert.equal((await owner.action('team.invite', { ...scope, email: 'guest@example.com', role: 'member' })).emailed, false)
     const saved = (await owner.action('team.list', scope)).invites[0]
     assert.ok(saved)
     assert.equal(install.outbox().some((m) => m.to_email === 'guest@example.com'), false)
