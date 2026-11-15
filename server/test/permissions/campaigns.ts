@@ -13,4 +13,6 @@ export const entries = {
   'campaigns.updateTheme': { role: 'admin' },
   'campaigns.previewDesign': { role: 'member' },
   'campaigns.uploadImage': { role: 'member' },
+  'campaigns.listImages': { role: 'member' },
+  'campaigns.deleteImage': { role: 'admin', error: 'not_found', input: { imageId: 'abcdefgh12345678.png' } },
 } satisfies PermissionEntries
