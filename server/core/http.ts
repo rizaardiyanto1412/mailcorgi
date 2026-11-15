@@ -38,10 +38,12 @@ export const SECURITY_HEADERS: Record<string, string> = {
 export const CONTENT_SECURITY_POLICY =
   "default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
+/** Responses from a Durable Object stub or the assets binding have immutable headers, so copy first. */
 export function withSecurityHeaders(response: Response): Response {
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) if (!response.headers.has(name)) response.headers.set(name, value)
-  if (!response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', CONTENT_SECURITY_POLICY)
-  return response
+  const out = new Response(response.body, response)
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) if (!out.headers.has(name)) out.headers.set(name, value)
+  if (!out.headers.has('Content-Security-Policy')) out.headers.set('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+  return out
 }
 
 /** Hono variables available inside a store's HTTP app. */
