@@ -9,6 +9,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import process from 'node:process'
+import console from 'node:console'
 import { DatabaseSync, backup } from 'node:sqlite'
 
 const dataDir = path.resolve(process.env.DATA_DIR || './data')
