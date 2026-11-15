@@ -64,7 +64,7 @@ function checkCapacity(ctx: StoreCtx, input: { accountId: string; newsletterId: 
 }
 
 function limitInvites(ctx: StoreCtx, email: string, ownerId: string) {
-  if (!allowRate(ctx.db, `team:email:${email}`, 5, 86_400_000, ctx.now()) || !allowRate(ctx.db, `team:owner:${ownerId}`, 50, 3_600_000, ctx.now())) throw new AppError('rate_limited', 'Too many invitations. Try again later.', 429)
+  if (!allowRate(ctx.db, `team:email:${email}`, 5, 86_400_000, ctx.now(), { durable: true }) || !allowRate(ctx.db, `team:owner:${ownerId}`, 50, 3_600_000, ctx.now(), { durable: true })) throw new AppError('rate_limited', 'Too many invitations. Try again later.', 429)
 }
 
 const inviteLink = (ctx: StoreCtx, secret: string) => `${appUrl(ctx)}/invite?token=${encodeURIComponent(secret)}`

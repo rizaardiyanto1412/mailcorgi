@@ -135,7 +135,7 @@ interface Stores {
   account(id: string): AccountRpc
 }
 interface Platform {
-  blobs: BlobStore                  // put/get/delete/list by key, async, bytes + contentType
+  blobs: BlobStore                  // put/get/delete/list by key, async, bytes + contentType; `separate` when stored outside the store's rows (R2, a disk)
   fetch: typeof fetch
   setAlarm(store: StoreRef, at: number | null): Promise<void>   // the store re-arms to its next wake time; null clears
   getAlarm(store: StoreRef): Promise<number | null>             // what is armed; asked once after a restart
@@ -150,13 +150,24 @@ interface Platform {
 day for the whole Cloudflare account, and a `setAlarm` costs one. So: a read-only request writes
 nothing; a store calls `setAlarm` only when its next wake time differs from what it holds in memory
 (one `getAlarm` read after a restart); an idle store writes nothing. Bookkeeping that may lag or be
-lost (page views, repeat opens, rate-limit counters, the stats rollup's change marker) lives in
+lost (page views, repeat opens, load-only rate-limit counters, the stats rollup's change marker) lives in
 `ctx.memory` and is written in one batch through `ctx.later` when the next alarm fires, within five
 minutes of an alarm that is queued anyway, else on an alarm armed for that purpose. Counters a send
 batch bumps (daily, campaign, usage) are written once per batch, and the control store grants send
 permits for a whole batch or tells the sender when the batch will fit, so a send never spins for a
-few tokens at a time. An import commits 50 rows per transaction with one checkpoint and one daily
-counter write per newsletter and day. Sends and first opens write no `events` row: the delivery row
+few tokens at a time. That batch write is one transaction. If the batch dies before it, nothing is
+lost for good: the contact counters (`sent_count`, `last_sent_at`, the streaks) ride in the
+delivery's own transaction, the rollup recounts the day and the campaign from the delivery rows,
+and the hourly usage job recounts the month's emails from `deliveries.sent_at` (`usage.emails_sent`
+only rises, so test emails, which have no delivery row, stay counted). The control store's permit
+reservation is written before the sends, so it is never below what went out. An import commits 50
+rows per transaction with one checkpoint and one daily counter write per newsletter and day.
+A rate limit that guards authentication or email to strangers is durable
+(`allowRate(…, { durable: true })`): its count is checkpointed in `rate_limits` every fifth of the
+limit, so a restart, an eviction or key churn forgives at most that many attempts minus one, at a
+cost of at most five rows per key and window. Limits that only protect against load (website
+pages, API keys, unsubscribe posts) stay in memory. `docs/security-review.md` lists both with their
+numbers. Code guesses are counted on the code row itself. Sends and first opens write no `events` row: the delivery row
 is their record and the timeline reads it. The store's `Meter` counts rows as
 Cloudflare bills them (`rowsWritten`, index entries included, plus one per alarm; `changes` on Node)
 and `GET /api/dev/writes?accounts=…` reads it when `MC_TEST_DNS` is on. `npm run budget` prints
@@ -164,7 +175,15 @@ rows per operation on `wrangler dev` (`docs/performance.md`).
 
 When the platform refuses a write (Cloudflare's quota message, a full disk), every entry point
 answers `503 storage_write_limit` with a message a person can act on; reads keep working, a click
-still redirects, a pixel still answers, and an unsubscribe says it could not be recorded. A job that
+still redirects, a pixel still answers. An unsubscribe or a provider event (complaint, bounce) that
+cannot be written is parked (`server/account/tracking/pending.ts`): in memory, and when
+`platform.blobs.separate` is true (R2, a disk) as one small object under `<account>/pending/`, so an
+eviction does not lose it; the reader or the mail provider is then answered as if it landed. Parked
+items are applied by the next flush, by the daily ping and before every send batch, which sends
+nothing while any wait or while the blob store cannot be listed, and a claimed delivery to a contact
+whose unsubscribe waits is skipped. Without a separate blob store (a Worker with no `IMAGES`
+bucket) the unsubscribe page still says it could not be recorded, and the memory copy is applied if
+the instance survives. A job that
 meets a refused write spends no attempt: the alarm throws so the platform retries it, and the Worker's
 daily cron (`5 0 * * *`, after the quota resets) pings every account store so queued work resumes
 without a visitor. The web app shows one banner while it sees that code.
@@ -747,7 +766,9 @@ an empty state that says how to add the first item. Copy is plain, short, senten
   formula. Redirects are same-origin or to a recorded link; the one exception is the signup success
   redirect, an absolute http(s) URL the owner sets.
 - Public endpoints have limits per visitor and per target. Nothing a script can trigger emails a
-  stranger more than a few times a day.
+  stranger more than a few times a day. These limits and the sign-in limits survive a restart (3.2).
+- An unsubscribe or a complaint is never lost to a refused write: it is parked and applied before
+  any send (3.2).
 - Webhooks verify signatures (SNS per 11.6, Svix, Stripe, Polar/Standard Webhooks) before any state
   change.
 - MCP and API output that carries people's content is data, never instructions.

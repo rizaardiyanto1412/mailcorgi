@@ -179,7 +179,7 @@ export const sendingModule = {
           const send = sendContext(ctx, row)
           if (!send) throw new AppError('sender_unverified', 'Choose a verified sender domain in newsletter settings.', 400)
           const recipients = [...new Set(input.to)]
-          if (!allowRate(ctx.db, `test:${row.id}`, 10, 3_600_000, ctx.now()) || !allowRate(ctx.db, `test:${actor.userId}`, 30, 3_600_000, ctx.now())) throw new AppError('rate_limited', 'Too many test emails. Try again in an hour.', 429)
+          if (!allowRate(ctx.db, `test:${row.id}`, 10, 3_600_000, ctx.now(), { durable: true }) || !allowRate(ctx.db, `test:${actor.userId}`, 30, 3_600_000, ctx.now(), { durable: true })) throw new AppError('rate_limited', 'Too many test emails. Try again in an hour.', 429)
           const settings = await sendSettings(ctx)
           if (settings.sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
           const used = ctx.db.get<{ n: number }>('SELECT emails_sent AS n FROM usage WHERE period = ?', currentPeriod(ctx.now()))?.n ?? 0

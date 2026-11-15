@@ -11,6 +11,8 @@ export interface Blob {
 }
 
 export interface BlobStore {
+  /** True when the objects live outside the store's own rows (R2, a disk), so a refused row write does not refuse them. */
+  separate?: boolean
   put(key: string, bytes: Uint8Array, contentType: string): Promise<void>
   get(key: string): Promise<Blob | null>
   delete(key: string): Promise<void>

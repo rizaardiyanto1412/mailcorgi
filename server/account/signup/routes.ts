@@ -57,7 +57,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       const ctx = c.get('ctx')
       const nl = publicNewsletter(ctx, c.req.param('newsletterKey'))
       const settings = getSettings(ctx, nl.id)
-      if (!allowRate(ctx.db, `signup:ip:${await sha256Hex(clientIp(c))}`, 20, 3_600_000, ctx.now())) throw new AppError('rate_limited', 'Too many signup attempts. Please try again later.', 429)
+      if (!allowRate(ctx.db, `signup:ip:${await sha256Hex(clientIp(c))}`, 20, 3_600_000, ctx.now(), { durable: true })) throw new AppError('rate_limited', 'Too many signup attempts. Please try again later.', 429)
       if (Number(c.req.header('content-length') ?? 0) > 32_768) throw new AppError('too_large', 'The form is too large.', 413)
       const body = await c.req.text()
       if (body.length > 32_768) throw new AppError('too_large', 'The form is too large.', 413)
@@ -87,7 +87,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       if (input.website) return ok()
       const started = formTokenSchema.safeParse(await verifyToken(ctx, input.formToken, 'form'))
       if (!started.success || started.data.newsletterId !== nl.id || ctx.now() - started.data.issuedAt < 2000 || ctx.now() - started.data.issuedAt > 3_600_000) throw new AppError('form_expired', 'Please reopen the form and take a moment before submitting.', 400)
-      if (!allowRate(ctx.db, `signup:target:${await sha256Hex(input.email)}`, 10, 3_600_000, ctx.now())) return ok()
+      if (!allowRate(ctx.db, `signup:target:${await sha256Hex(input.email)}`, 10, 3_600_000, ctx.now(), { durable: true })) return ok()
       if (ctx.config.turnstile) {
         let verified = false
         try {
@@ -109,7 +109,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       if (nl.double_opt_in && !ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', input.email) && ctx.db.get('SELECT id FROM contacts WHERE id = ? AND newsletter_id = ?', result.contact.id, nl.id)) {
         const confirmToken = await signToken(ctx, 'cf', [result.contact.id, ctx.now()])
         ctx.db.tx(() => {
-          if (!allowRate(ctx.db, `signup:confirm:${targetHash}`, 3, 86_400_000, ctx.now())) return
+          if (!allowRate(ctx.db, `signup:confirm:${targetHash}`, 3, 86_400_000, ctx.now(), { durable: true })) return
           mailId = newId('sgm')
           queueMail(ctx, { id: mailId, newsletterId: nl.id, contactId: result.contact.id, kind: 'confirm', token: confirmToken })
         })

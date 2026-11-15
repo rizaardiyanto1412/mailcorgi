@@ -2,30 +2,31 @@
 
 Numbers from the load pass in `server/test/load.slow.ts` (`npm run test:slow`), on the Node build
 with the `test` email provider, one process, SQLite in WAL mode. Machine: an Apple Silicon Mac mini,
-Node 24. Re-run the test after a change that touches sending, contacts or stats and update this file.
+Node 24, measured on 2026-11-16 on an idle machine (the earlier numbers were taken while CI ran
+alongside). Re-run the test after a change that touches sending, contacts or stats and update this file.
 
 ## 100,000 contacts, one issue
 
 | Step | Wall time | Notes |
 |---|---|---|
-| Create 100,000 contacts (`subscribe`, confirmed) | 8.2 s | 0.08 ms per contact, linear; 82 s before the fix below (measured while CI ran alongside) |
-| Plan the send (audience → 100,000 delivery rows) | 0.8 s | one transaction, chunked inserts |
-| Send 100,000 emails through the test provider | 36 s | 2,750 emails a second, 1,000 per alarm run; 56 s before the index audit |
-| Stats rollup, full rebuild (`rebuild`) | 0.6 s | 100,000 deliveries, 200,000 events |
-| Stats rollup, second full rebuild | 0.6 s | |
-| Recurring `stats.rollup` job | 0.6 s | bounded to the last 3 days and recent campaigns |
-| Campaign report (`stats.report`) | 2 ms | cached counters |
-| Overview (`stats.overview`, 30 days) | 8 ms | |
-| Hygiene scan over the whole list | 140 ms | picks 25 inactive readers per run |
-| List health (`hygiene.health`) | 47 ms | |
-| Segment count, custom field | 14 ms | |
-| Segment count, "ignored the last issue" | 188 ms | correlated subquery over deliveries |
+| Create 100,000 contacts (`subscribe`, confirmed) | 8.1 s | 0.08 ms per contact, linear; 82 s before the fix below |
+| Plan the send (audience → 100,000 delivery rows) | 0.4 s | one transaction, chunked inserts |
+| Send 100,000 emails through the test provider | 35 s | 2,850 emails a second, 1,000 per alarm run; 56 s before the index audit |
+| Stats rollup, full rebuild (`rebuild`) | 1.3 s | 100,000 deliveries, 100,000 events |
+| Stats rollup, second full rebuild | 1.3 s | |
+| Recurring `stats.rollup` job | 1.3 s | bounded to the last 3 days and recent campaigns |
+| Campaign report (`stats.report`) | 1 ms | cached counters |
+| Overview (`stats.overview`, 30 days) | 3 ms | |
+| Hygiene scan over the whole list | 123 ms | picks 25 inactive readers per run |
+| List health (`hygiene.health`) | 40 ms | |
+| Segment count, custom field | 79 ms | |
+| Segment count, "ignored the last issue" | 128 ms | correlated subquery over deliveries |
 | Contacts page (50, keyset) | 1 ms | first and later pages alike |
 
 | Resource | Value |
 |---|---|
-| Peak RSS of the test process | 556 MB (includes 100,000 outbox emails held by the test provider) |
-| Account database after the run | 550 MB (100,000 contacts, 100,050 deliveries, 200,007 events, 100,000 outbox rows) |
+| Peak RSS of the test process | 558 MB (includes 100,000 outbox emails held by the test provider) |
+| Account database after the run | 486 MB (100,000 contacts, 100,050 deliveries, 100,007 events, 100,000 outbox rows) |
 
 The outbox rows are the test provider's copy of every email (about 350 MB of the file); a real
 provider writes none.
@@ -39,7 +40,8 @@ entries are included. The meter also counts per statement, and the script prints
 operation, the statements that wrote rows grouped by table: that breakdown is the map for any
 further cut. The at-volume rows import 1,000 contacts and send one issue to 1,002 readers, and the
 "per item" column divides by that count so the fixed cost of a job or a campaign does not hide in it.
-Measured on 2026-11-16, before and after the index audit (`WORKERS_PLAN=free`, a send rate of 100
+Measured on 2026-11-16, before and after the index audit (and unchanged after the trail review:
+durable rate limits write only at their checkpoints, none of which a single signup or send reaches) (`WORKERS_PLAN=free`, a send rate of 100
 a second, the `test` email provider):
 
 | Operation | Rows written, before | Rows written, after | Rows read, after |

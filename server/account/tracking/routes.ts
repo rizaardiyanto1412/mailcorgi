@@ -4,12 +4,11 @@ import type { StoreEnv } from '../../core/http.ts'
 import { clientIp, jsonNotFound } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 import { safeUrl } from '../render/index.ts'
-import { unsubscribe } from '../contacts/index.ts'
-import { bumpStat } from '../sending/index.ts'
 import { deliveryById, recordClick, recordOpen, recordRepeatOpen } from './events.ts'
 import { isWriteRefused } from '../../core/db.ts'
 import { themedPage } from './pages.ts'
 import { verifyToken } from './tokens.ts'
+import { park, recordUnsubscribe, unsubscribePending } from './pending.ts'
 
 const PIXEL = Uint8Array.from([71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255, 33, 249, 4, 1, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59])
 /** Link scanners and security proxies that fetch every pixel and link before a person sees the email. */
@@ -35,19 +34,6 @@ async function pageToken(ctx: StoreCtx, token: string): Promise<{ purpose: 'u' |
   if (u) return { purpose: 'u', contactId: u[0], campaignId: u[1] && u[1] !== '0' ? u[1] : null }
   const p = await verifyToken(ctx, token, 'p')
   return p ? { purpose: 'p', contactId: p[0], campaignId: null } : null
-}
-
-function doUnsubscribe(ctx: StoreCtx, contact: ContactPage, campaignId: string | null) {
-  ctx.db.tx(() => {
-    const was = contact.status
-    unsubscribe(ctx, { contactId: contact.id, reason: 'link', campaignId: campaignId ?? undefined })
-    if (!campaignId || was !== 'subscribed') return
-    const d = ctx.db.get<{ id: number; unsubscribed_at: number | null }>('SELECT id, unsubscribed_at FROM deliveries WHERE campaign_id = ? AND contact_id = ?', campaignId, contact.id)
-    if (d && !d.unsubscribed_at) {
-      ctx.db.run('UPDATE deliveries SET unsubscribed_at = ? WHERE id = ?', ctx.now(), d.id)
-      bumpStat(ctx, campaignId, 'unsubscribes')
-    }
-  })
 }
 
 export function mountTrackingRoutes(app: Hono<StoreEnv>) {
@@ -97,7 +83,7 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const contact = token && contactForPage(ctx, token.contactId)
     if (!token || !contact) return jsonNotFound(c)
     const action = `/u/${c.req.param('token')}`
-    const subscribed = contact.status === 'subscribed' || contact.status === 'unconfirmed'
+    const subscribed = (contact.status === 'subscribed' || contact.status === 'unconfirmed') && !unsubscribePending(ctx, contact.id)
     if (token.purpose === 'u') return c.html(themedPage({ newsletter: contact, title: subscribed ? 'Unsubscribe?' : 'You are unsubscribed', lines: subscribed ? [`Stop receiving ${contact.name} at ${contact.email}.`] : [`${contact.email} no longer receives ${contact.name}.`], form: subscribed ? { action, button: 'Unsubscribe' } : undefined }), 200, noStore)
     return c.html(themedPage({ newsletter: contact, title: 'Your preferences', lines: [`Email: ${contact.email}`, subscribed ? `You are subscribed to ${contact.name}.` : `You are not subscribed to ${contact.name}.`], form: subscribed ? { action, button: 'Unsubscribe' } : undefined }), 200, noStore)
   })
@@ -109,17 +95,23 @@ export function mountTrackingRoutes(app: Hono<StoreEnv>) {
     const token = await pageToken(ctx, c.req.param('token'))
     const contact = token && contactForPage(ctx, token.contactId)
     if (!token || !contact) return jsonNotFound(c)
+    const finish = async () => {
+      const oneClick = (c.req.header('content-type') ?? '').includes('application/x-www-form-urlencoded') && /(^|&)List-Unsubscribe=One-Click(&|$)/.test(await c.req.text())
+      if (oneClick) return c.text('Unsubscribed.', 200, noStore)
+      return c.html(themedPage({ newsletter: contact, title: 'You are unsubscribed', lines: [`${contact.email} no longer receives ${contact.name}.`] }), 200, noStore)
+    }
     try {
-      doUnsubscribe(ctx, contact, token.campaignId)
+      recordUnsubscribe(ctx, contact.id, token.campaignId)
     } catch (err) {
       if (!isWriteRefused(err)) throw err
-      // Never pretend: the reader must know the request did not land.
+      // Parked where writes still work, it is as good as recorded: it lands before any send.
+      // Otherwise never pretend: the reader must know the request did not land.
+      const parked = await park(ctx, { kind: 'unsubscribe', contactId: contact.id, campaignId: token.campaignId })
+      if (parked) return finish()
       const retry = `We could not record this right now. Try again later, or reply to the email and ask to be removed.`
       return c.html(themedPage({ newsletter: contact, title: 'Please try again later', lines: [retry] }), 503, { ...noStore, 'Retry-After': '3600' })
     }
-    const oneClick = (c.req.header('content-type') ?? '').includes('application/x-www-form-urlencoded') && /(^|&)List-Unsubscribe=One-Click(&|$)/.test(await c.req.text())
-    if (oneClick) return c.text('Unsubscribed.', 200, noStore)
-    return c.html(themedPage({ newsletter: contact, title: 'You are unsubscribed', lines: [`${contact.email} no longer receives ${contact.name}.`] }), 200, noStore)
+    return finish()
   })
 
   app.get('/keep/:token', async (c) => {

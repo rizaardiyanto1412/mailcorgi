@@ -1,4 +1,6 @@
 import type { StoreCtx } from '../../core/store.ts'
+import { isWriteRefused } from '../../core/db.ts'
+import { park } from './pending.ts'
 import type { ProviderEvent } from '../../email/index.ts'
 import { checkProtection, hygieneEpoch } from '../hygiene/index.ts'
 import { setContactStatus } from '../contacts/index.ts'
@@ -100,13 +102,26 @@ function applyEvent(ctx: StoreCtx, e: ProviderEvent): boolean {
 }
 
 /** `account.ingestProviderEvents` per architecture 11.6: each event is deduped and applied in one transaction. */
-export function ingestProviderEvents(ctx: StoreCtx, events: ProviderEvent[]): { applied: number } {
+export async function ingestProviderEvents(ctx: StoreCtx, events: ProviderEvent[], opts: { park?: boolean } = {}): Promise<{ applied: number }> {
   let applied = 0
-  for (const e of events) {
-    if (!e || typeof e.id !== 'string' || !e.id || typeof e.recipient !== 'string') continue
-    if (ctx.db.tx(() => applyEvent(ctx, e))) applied++
+  const valid = events.filter((e) => e && typeof e.id === 'string' && !!e.id && typeof e.recipient === 'string')
+  for (let i = 0; i < valid.length; i++) {
+    try {
+      if (ctx.db.tx(() => applyEvent(ctx, valid[i]))) applied++
+    } catch (err) {
+      // A refused write must not lose a complaint or a bounce: the rest of the batch is parked and
+      // the provider is answered, so it stops retrying. Duplicates are dropped on replay by event id.
+      if (!isWriteRefused(err) || opts.park === false) throw err
+      const rest = valid.slice(i)
+      if (!(await park(ctx, { kind: 'events', events: rest }))) throw err
+      return { applied: applied + rest.length }
+    }
   }
-  checkProtection(ctx)
+  try {
+    checkProtection(ctx)
+  } catch (err) {
+    if (!isWriteRefused(err)) throw err
+  }
   return { applied }
 }
 

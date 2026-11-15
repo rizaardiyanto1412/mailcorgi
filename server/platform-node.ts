@@ -122,6 +122,7 @@ export function diskBlobs(root: string): BlobStore {
     return file.startsWith(root + path.sep) && !key.includes('..') ? file : null
   }
   return {
+    separate: true,
     async put(key, bytes, contentType) {
       const file = fileOf(key)
       if (!file) throw new Error('Bad blob key.')

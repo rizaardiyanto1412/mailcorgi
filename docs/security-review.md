@@ -154,6 +154,41 @@ None of these were changed.
 - **Secrets.** Install and admin settings return only "is set" flags. The client bundle imports only
   pure schema and preset modules. No log line prints credentials or email bodies.
 
+## Rate limits after the write budget (branch `fix/trail-review`)
+
+The write-budget change moved rate-limit counters into memory and wrote a key only when it reached
+its limit. An independent review flagged that a restart, an eviction or key churn (twenty thousand
+other keys push the oldest out of the in-memory map) forgets every count below the limit. The tests
+in `server/test/ratelimit-durable.test.ts` measured what one client was admitted across a restart
+before the fix, and pin what it gets now.
+
+| Limit | Key | Max per window | Admitted before, across a restart | Admitted now (max) | Writes per key and window (max) |
+|---|---|---|---|---|---|
+| Password sign-in, sign-up, code requests and code checks, password reset, per email | `auth:email` | 10 per 15 min | 17 | 11 | 5 |
+| The same, per client IP (/64 for IPv6) | `auth:ip` | 30 per 15 min | 50 | 35 | 5 |
+| Sign-in, sign-up and reset code guesses, per code | `login_codes.attempts` | 5 per code | 5 (on the row) | 5 | 1 per guess, on the row |
+| Password re-authentication (change password, change email, delete account), per user | `account:password` | 10 per 15 min | 16 | 11 | 5 |
+| Email change codes, per user | `account:email` | 3 per hour | 5 | 3 | 3 |
+| Team invitations, per invited address | `team:email` | 5 per day | 8 | 5 | 5 |
+| Team invitations, per owner | `team:owner` | 50 per hour | not measured | 59 | 5 |
+| Public subscribe, per client IP | `signup:ip` | 20 per hour | 32 | 24 | 5 |
+| Public subscribe, per target address | `signup:target` | 10 per hour | 14 | 11 | 5 |
+| Confirmation emails, per address | `signup:confirm` | 3 per day | 5 | 3 | 3 |
+| Test emails, per campaign and per user | `test:*` | 10 and 30 per hour | 16 | 11 and 35 | 5 |
+
+"Admitted now" is the limit plus one checkpoint gap minus one: a durable key writes its count every
+fifth of the limit (at least every attempt) and at the limit, so a restart forgives at most the
+attempts since the last checkpoint. The write cost is bounded at five rows per key and window; an
+attacker who spreads attempts over many keys pays the same per-key limits and buys at most five
+rows per key, which is in the same range as the thirteen rows a public signup already costs.
+
+Best-effort limits, kept in memory and reset by a restart, because they only protect against load:
+website page views (`website:ip`, 600 per minute), API requests per key (`apikey:<id>`, 600 per
+minute) and one-click unsubscribe posts (`unsub:ip`, 60 per minute). There is no limit on failed
+API key presentations: a key is 32 random bytes and a wrong one costs one hashed lookup and no
+write. Invitation acceptance is an authenticated action on a 32-byte single-use token and needs no
+limit.
+
 ## Areas not reached
 
 - Load and CPU-exhaustion testing of imports, stats rebuilds and website rendering on Workers.

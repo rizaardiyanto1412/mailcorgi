@@ -9,6 +9,7 @@ import { countEmails, getPolicy } from '../usage/index.ts'
 import { buildMessage, recordLinks, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats, stepGate } from './stats.ts'
+import { replayPending, unsubscribePending } from '../tracking/pending.ts'
 
 export const STUCK_AFTER_MS = 10 * 60_000
 /**
@@ -39,9 +40,13 @@ export interface SentTally {
 export const newTally = (): SentTally => ({ days: new Map(), sent: 0 })
 export function flushTally(ctx: StoreCtx, campaignId: string, newsletterId: string, tally: SentTally) {
   if (!tally.sent) return
-  for (const [at, n] of tally.days) daily(ctx, newsletterId, 'sent', Number(at), n)
-  bumpStat(ctx, campaignId, 'sent', tally.sent)
-  countEmails(ctx, tally.sent)
+  // All or nothing: a crash here leaves the counters behind by one batch, and the rollup and the
+  // hourly usage job recount them from the delivery rows.
+  ctx.db.tx(() => {
+    for (const [at, n] of tally.days) daily(ctx, newsletterId, 'sent', Number(at), n)
+    bumpStat(ctx, campaignId, 'sent', tally.sent)
+    countEmails(ctx, tally.sent)
+  })
   tally.days.clear()
   tally.sent = 0
 }
@@ -102,7 +107,7 @@ function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: num
     const d = ctx.db.get<DeliveryRow & { name: string | null; fields: string | null; contact_status: string | null }>(`SELECT d.*, c.name, c.fields, c.status AS contact_status FROM deliveries d LEFT JOIN contacts c ON c.id = d.contact_id AND c.newsletter_id = ? WHERE d.id = ? AND d.status = 'queued'`, newsletterId, id)
     if (!d) return null
     const keepAllowed = getCampaignRow(ctx, d.campaign_id).kind !== 'keep' || keepDeliveryAllowed(ctx, newsletterId, d.contact_id)
-    if (!keepAllowed || d.contact_status !== 'subscribed' || isSuppressed(ctx, d.email, newsletterId)) {
+    if (!keepAllowed || d.contact_status !== 'subscribed' || unsubscribePending(ctx, d.contact_id) || isSuppressed(ctx, d.email, newsletterId)) {
       ctx.db.run("UPDATE deliveries SET status = 'skipped', error = ? WHERE id = ? AND status = 'queued'", d.contact_status === 'subscribed' ? 'Suppressed before sending.' : 'No longer subscribed.', id)
       bumpStat(ctx, d.campaign_id, 'skipped')
       return null
@@ -156,6 +161,12 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
   let row: CampaignRow
   try { row = getCampaignRow(ctx, campaignId) } catch { return 'done' }
   if (row.status !== 'sending') return 'done'
+  // Nothing goes out while an unsubscribe or a complaint waits to be written (or cannot be looked up).
+  try {
+    if (await replayPending(ctx)) return { again: now + 60_000 }
+  } catch {
+    return { again: now + 60_000 }
+  }
   if (checkProtection(ctx)) return 'done'
   if (getPolicy(ctx).status !== 'active') {
     pauseCampaign(ctx, row, 'account_blocked')
