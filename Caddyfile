@@ -5,15 +5,21 @@
 	}
 }
 
+# The app host, from DOMAIN in .env.
 {$DOMAIN} {
 	encode zstd gzip
 	reverse_proxy mailcorgi:3000
 }
 
+# Any other host: a newsletter website on a custom domain.
 https:// {
 	tls {
 		on_demand
 	}
 	encode zstd gzip
 	reverse_proxy mailcorgi:3000
+}
+
+http:// {
+	redir https://{host}{uri} permanent
 }

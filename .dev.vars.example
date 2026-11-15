@@ -1,8 +1,9 @@
-# Local variables for `wrangler dev`. Copy to .dev.vars. Nothing here is required:
-# MailCorgi generates its own master key on first boot.
+# Local variables for `wrangler dev`. Copy to .dev.vars and uncomment what you need.
+# Nothing here is required: MailCorgi generates its own master key on first boot.
+# Every line stays commented so the Deploy to Cloudflare button asks for no secrets.
 #
 # APP_URL=http://localhost:8787
 # CLOUD=true
 # ADMIN_EMAILS=admin@example.com
 # ALLOWED_EMAILS=friend@example.com
-# APP_SECRET=
+# WORKERS_PLAN=free

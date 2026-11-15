@@ -65,5 +65,21 @@
     "typescript-eslint": "^8.72.2",
     "vite": "^8.3.7",
     "wrangler": "^4.160.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "CONTROL": {
+        "description": "Durable Object for users, sessions, accounts and install settings. Created for you."
+      },
+      "ACCOUNT": {
+        "description": "One Durable Object per account: newsletters, contacts, campaigns and stats. Created for you."
+      },
+      "IMAGES": {
+        "description": "R2 bucket for uploaded images. R2 must be enabled on your account once (**R2 \u2192 Overview** in the dashboard). Without R2, delete the `r2_buckets` block in `wrangler.jsonc`."
+      },
+      "WORKERS_PLAN": {
+        "description": "Keep `free` on Workers Free. On Workers Paid, delete the `WORKERS_PLAN` line from `wrangler.jsonc` in your repository so each send run can make up to 900 requests."
+      }
+    }
   }
 }
