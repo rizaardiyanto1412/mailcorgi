@@ -8,6 +8,15 @@ import type { ControlRegistrar } from '../rpc.ts'
 export const devModule = {
   name: 'dev',
   register(reg: ControlRegistrar) {
+    reg.routes((app) => {
+      app.get('/api/dev/code', (c) => {
+        const ctx = c.get('ctx')
+        if (!ctx.config.testDns) return c.json({ error: 'Not found.', code: 'not_found' }, 404)
+        const to = (c.req.query('email') ?? '').trim().toLowerCase()
+        const match = readOutbox(ctx, to).map((row) => /\b(\d{6})\b/.exec(row.text)?.[1]).filter(Boolean).at(-1)
+        return match ? c.json({ code: match }) : c.json({ error: 'No code was emailed to that address.', code: 'not_found' }, 404)
+      })
+    })
     return reg.actions(
       defineAction({ name: 'dev.controlOutbox', description: 'Read system emails the test provider wrote. Dev mode only.', scope: 'control', role: 'installAdmin', effect: 'read', input: z.object({ to: z.string().trim().toLowerCase().optional().describe('Only emails sent to this address'), limit: z.number().int().min(1).max(200).default(50).describe('Newest emails to return') }), handler: (ctx, input) => {
         if (!ctx.config.testDns) throw new AppError('not_found', 'Not found.', 404)

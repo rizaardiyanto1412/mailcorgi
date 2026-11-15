@@ -26,7 +26,7 @@ export interface AccountRow {
   policy_version: number
   plan: string
   created_at: number
-  billing_provider: 'stripe' | 'polar' | null
+  billing_provider: 'stripe' | 'polar' | 'test' | null
   billing_customer_id: string | null
   billing_subscription_id: string | null
   billing_status: string | null

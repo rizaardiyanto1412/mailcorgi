@@ -179,3 +179,23 @@ test('send now works on a clock that moves between reading the time and writing 
     assert.equal(sent.campaign.status, 'sending')
   } finally { install.close() }
 })
+
+test('the test billing provider and its webhook exist only in dev mode', async () => {
+  const plain = await createInstall({ cloud: true, env: { BILLING_PROVIDER: 'test' } })
+  try {
+    const owner = await plain.signUp({ email: 'owner@example.com' })
+    assert.equal((await expectError(() => owner.action('billing.checkout', { accountId: owner.accountId!, plan: 'starter', interval: 'monthly' }))).code, 'billing_unconfigured')
+    assert.equal((await plain.fetch('/hooks/test', { method: 'POST', body: '{}' })).status, 404)
+  } finally { plain.close() }
+  const install = await createInstall({ cloud: true, env: { BILLING_PROVIDER: 'test', MC_TEST_DNS: DNS } })
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const checkout = await owner.action('billing.checkout', { accountId: owner.accountId!, plan: 'starter', interval: 'monthly' })
+    assert.match(checkout.url, /\/settings\/billing\?test_checkout=starter_monthly$/)
+    const hook = await install.fetch('/hooks/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'evt_1', accountId: owner.accountId, status: 'active', plan: 'growth' }) })
+    assert.deepEqual(await hook.json(), { received: true, applied: 1 })
+    await install.runJobs()
+    assert.equal((await owner.action('billing.get', { accountId: owner.accountId! })).plan, 'growth')
+    assert.equal(getPolicy(install.app.account(owner.accountId!).ctx).limits.maxNewsletters, 5)
+  } finally { install.close() }
+})

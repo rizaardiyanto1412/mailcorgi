@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { AppError } from '../../core/http.ts'
 import type { Interval, PlanName } from './plans.ts'
 
-export type ProviderName = 'stripe' | 'polar'
+export type ProviderName = 'stripe' | 'polar' | 'test'
 export type BillingEvent = {
   id: string; provider: ProviderName; type: string; occurredAt: number
   accountId: string | null; customerId: string; subscriptionId: string

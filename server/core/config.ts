@@ -12,7 +12,7 @@ export interface Config {
   host: string
   imagesPublicUrl: string
   sendBatchSize: number
-  billingProvider: 'stripe' | 'polar' | ''
+  billingProvider: 'stripe' | 'polar' | 'test' | ''
   turnstile: { siteKey: string; secretKey: string } | null
   /** APP_SECRET when set. The platform generates one otherwise. */
   secret: string
@@ -48,7 +48,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     host: env.HOST || '0.0.0.0',
     imagesPublicUrl: (env.IMAGES_PUBLIC_URL || '').replace(/\/+$/, ''),
     sendBatchSize: Number(env.SEND_BATCH_SIZE || 100),
-    billingProvider: provider === 'stripe' || provider === 'polar' ? provider : '',
+    billingProvider: provider === 'stripe' || provider === 'polar' || provider === 'test' ? provider : '',
     turnstile: env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY } : null,
     secret,
     isProd: env.NODE_ENV === 'production',

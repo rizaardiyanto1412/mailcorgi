@@ -31,7 +31,7 @@ async function scenario(base: string, mode: Mode) {
 }
 
 /** Dev-only switches every server under test gets: canned DNS and the dev outbox endpoints. */
-const devEnv = (mode: Mode) => ({ MC_TEST_DNS: JSON.stringify(SMOKE_DNS), ...(mode === 'cloud' ? { CLOUD: 'true' } : {}) })
+const devEnv = (mode: Mode) => ({ MC_TEST_DNS: JSON.stringify(SMOKE_DNS), ...(mode === 'cloud' ? { CLOUD: 'true', ADMIN_EMAILS: 'smoke@example.com', BILLING_PROVIDER: 'test' } : {}) })
 
 const freePort = () =>
   new Promise<number>((resolve, reject) => {
