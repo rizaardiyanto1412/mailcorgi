@@ -21,6 +21,7 @@
     "lint": "eslint server worker web/src scripts",
     "test": "tsx --test server/test/*.test.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "live:check": "tsx scripts/live-check.ts",
     "ci": "sh scripts/ci.sh",
     "deploy": "npm run build:web && wrangler deploy",
     "docs:api": "tsx scripts/docs-api.ts",

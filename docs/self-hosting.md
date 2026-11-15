@@ -170,6 +170,55 @@ invite them to a newsletter from **Settings → Team**. Each person gets their o
 Until you configure a provider, MailCorgi uses the `test` provider. It stores emails in the database
 and sends nothing.
 
+## Check your deployment
+
+`npm run live:check` tests a running install over HTTPS, the way a reader and an editor use it. It
+works on Cloudflare and on Docker or Node, and needs no dev-only settings. Run it from a clone of the
+repository after `npm ci`:
+
+```sh
+npm run live:check -- --url https://news.example.com --email you@example.com --password 'your password'
+```
+
+Use the install admin's email and password. On a fresh install, the check runs first-run setup with
+them (add `--name` to set the admin's name).
+
+The check creates a newsletter named "Live check" with a random suffix, then:
+
+1. Reads `/healthz`, the app page and a built JavaScript file, and checks the security headers.
+2. Signs in, checks that a request without the CSRF token is refused, and times three sign-ins.
+3. Uploads an image and reads it back byte for byte. On Cloudflare this tests R2.
+4. Imports 1,000 contacts (`@example.com`) in two chunks and waits for the background job to finish.
+   On Cloudflare this tests Durable Object alarms. Then it counts a segment.
+5. Writes a campaign draft with every block type, autosaves it and renders the preview. The review
+   must show one blocking check: no verified sending domain.
+6. Publishes a web post and reads the newsletter's website, feed, sitemap and hosted signup form.
+   Then it subscribes through the public form twice and checks that a new and a known address get
+   the same answer.
+7. Creates two API keys and reads every contact page through the REST API, calls MCP, and checks that
+   the read-only key cannot write.
+8. Checks that the notification for the finished import is there.
+9. Deletes the draft, the author, every contact, and both API keys, and archives the newsletter.
+   It also archives a "Live check" newsletter left by an earlier run that stopped early.
+
+It prints each step's time and flags any request slower than 5 seconds and any server error. On
+Workers Free, a request that runs out of CPU time fails with Cloudflare error 1102. The check prints
+the response body for any server error.
+
+Two things remain after the check. The archived newsletter stays under **Settings → Newsletter → Archived newsletters**, because
+newsletters can be archived but not deleted. The uploaded test image (about 100 bytes) stays in
+storage, because MailCorgi has no action to delete uploads.
+
+The check cannot test these on a live install:
+
+- **Sending.** It needs a sending domain with real DNS records. Follow
+  [Verify a sending domain](#verify-a-sending-domain), then send yourself a test from a campaign.
+- **Confirm, welcome and delivery emails.** They need a real email provider. With the `test`
+  provider nothing leaves the install.
+- **Opens, clicks, unsubscribes and provider webhooks.** They follow a real send.
+- **CPU time per request.** Cloudflare does not report it in the response. Open
+  **Workers & Pages → mailcorgi → Observability** to see it.
+
 ## Choose an email provider
 
 | Provider | Cost | Bounce and complaint tracking | Platforms | Setup effort |
