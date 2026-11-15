@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mailcorgi",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The built web app. The Worker runs first for everything except hashed build assets.
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/*", "!/assets/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONTROL", "class_name": "ControlStore" },
+      { "name": "ACCOUNT", "class_name": "AccountStore" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ControlStore", "AccountStore"] }],
+  // Images. Without this bucket, images fall back to chunked blobs inside the account store.
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "mailcorgi-images" }],
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "observability": { "enabled": true },
+  "vars": {
+    // Optional: "APP_URL": "https://news.example.com", "CLOUD": "true", "ADMIN_EMAILS": "you@example.com"
+  }
+}

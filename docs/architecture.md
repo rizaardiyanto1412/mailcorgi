@@ -75,9 +75,11 @@ with `.ts` extensions, small files, comments only for a non-obvious why. No ORMs
 outside `platform-node.ts`, `server/email/smtp.ts` and `scripts/` (the Worker bundle must build with
 `nodejs_compat` but may not depend on `fs`, `net` or `child_process`).
 
-Dependencies stay few: `hono`, `zod`, `aws4fetch`, `marked`, `sanitize-html`, `papaparse` (web),
-`nodemailer` (Node only, dynamically imported), TipTap, React, TanStack Query, react-router, lucide-react.
-No Stripe or Polar SDK: call their HTTP APIs with `fetch` and verify webhooks with WebCrypto.
+Dependencies stay few: `hono`, `@hono/node-server` (the Node HTTP adapter), `zod`, `aws4fetch`, `marked`,
+`sanitize-html`, `papaparse` (web), `nodemailer` (Node only, dynamically imported), TipTap, React, TanStack
+Query, react-router, lucide-react. Dev only: TypeScript, tsx, esbuild, Vite, Tailwind, wrangler, ESLint with
+`typescript-eslint` and `eslint-plugin-react-hooks`. No Stripe or Polar SDK: call their HTTP APIs with `fetch`
+and verify webhooks with WebCrypto.
 
 ## 3. Kernel contracts
 
@@ -108,8 +110,10 @@ interface StoreCtx {
   platform: Platform
   stores: Stores                    // RPC to other stores
   config: Config
+  keys: Keys                        // derived keys (3.6): session signing, credentials, tokenKey(accountId)
   now(): number                     // ms, test-controllable
   jobs: Jobs                        // enqueue / cancel on this store
+  registry: Registry                // this store's actions, jobs, rpc, routes, resolvers
 }
 interface Stores {
   control: ControlRpc               // typed async methods
@@ -118,27 +122,30 @@ interface Stores {
 interface Platform {
   blobs: BlobStore                  // put/get/delete/list by key, async, bytes + contentType
   fetch: typeof fetch
-  setAlarm(store: StoreRef, at: number): Promise<void>   // earliest wins
+  setAlarm(store: StoreRef, at: number | null): Promise<void>   // the store re-arms to its next wake time; null clears
   resolveDns(name: string, type: 'TXT'|'CNAME'|'MX'|'A'): Promise<string[]>  // DNS over HTTPS
   waitUntil(p: Promise<unknown>): void
   limits: { subrequestsPerRun: number }   // 40 on Workers Free, 900 otherwise, 900 on Node
 }
 ```
 
-RPC methods are plain functions `(ctx, args) => result` registered in `server/control/rpc.ts` and
-`server/account/rpc.ts`. Arguments and results are JSON only. On Cloudflare a store class exposes one
-`rpc(name, args)` method; on Node it is a direct call. Keep RPC surface small and named by intent
-(`control.resolveSession`, `account.applyPlan`).
+RPC methods are plain functions `(ctx, args) => result`. `server/control/rpc.ts` and `server/account/rpc.ts`
+hold the typed interfaces (`ControlRpc`, `AccountRpc`); a module adds its methods by declaration merging
+from its own folder and registers them with `reg.rpc(name, fn)`. Arguments and results are JSON only. On
+Cloudflare a store class exposes one `rpc(name, args)` method whose result is `{ ok, result } | { ok: false,
+code, message, status }` so an `AppError` crosses intact; on Node it is a direct call. Keep RPC surface
+small and named by intent (`control.resolveSession`, `account.applyPolicy`).
 
 ### 3.3 Jobs
 
-Each store has a `jobs` table: `id, kind, payload JSON, run_at, attempts, locked_until, last_error,
-dedupe_key UNIQUE NULL`. `ctx.jobs.enqueue(kind, payload, { runAt, dedupeKey })` inserts and calls
-`platform.setAlarm`. The alarm handler claims due jobs, runs registered handlers
-(`defineJob(kind, handler)`), and re-arms the alarm for the next `run_at`. A handler gets a budget
-(`{ deadline, subrequestsLeft }`) and returns `'done'` or `{ again: runAt }`. Failures retry with
-backoff up to 8 attempts, then land in `jobs_dead` and raise an admin alert. Every handler must be
-idempotent: a job can run twice.
+Each store has a `jobs` table: `id, kind, payload JSON, run_at, attempts, locked_until, claim_token,
+last_error, dedupe_key UNIQUE NULL, created_at`. `ctx.jobs.enqueue(kind, payload, { runAt, dedupeKey })` is
+synchronous, returns `{ id, created }` (`created: false` when the dedupe key already queued one) and arms
+the alarm. The alarm handler claims due jobs, runs registered handlers (`reg.job(kind, handler)`), and
+re-arms the alarm for the next wake time. A handler is async, gets a `Budget` (`take(n)`, `expired()`) and
+returns `'done'` or `{ again: runAt }`. Failures retry with backoff up to 8 attempts, then land in
+`jobs_dead` and raise an admin alert (`admin_alerts` in the control store; an account store gets there
+through its own `alerts.raise` job). Every handler must be idempotent: a job can run twice.
 
 ### 3.4 Actions
 
@@ -160,10 +167,12 @@ defineAction({
 
 - `runAction(ctx, name, rawInput, actor)` validates input, checks role and plan limits, runs the
   handler, and maps `AppError(code, message, status)` to responses. It is the only entry point.
-- `actor = { userId, owner: boolean, grants: Record<newsletterId, 'admin' | 'member'>, access: 'full' | 'read',
-  via: 'web' | 'api' | 'mcp', keyId? }`. Roles are per newsletter. `runAction` resolves the newsletter that
-  the named resource really belongs to (11.2), then checks the actor's role for that newsletter, and
-  rejects a non-`read` action for a `read` key. Details in section 11.
+- `actor = { userId, email, owner: boolean, grants: Record<newsletterId, 'admin' | 'member'>, access: 'full' | 'read',
+  via: 'web' | 'api' | 'mcp', keyId?, installAdmin: boolean }`. Roles are per newsletter. `runAction` resolves
+  the newsletter that the named resource really belongs to (11.2), then checks the actor's role for that
+  newsletter, and rejects a non-`read` action for a `read` key. An action without a `resource` passes for
+  the owner, and for anyone with at least one grant that meets its `role`; the handler filters by grants.
+  A `send` action is refused while the account policy is not `active`. Details in section 11.
 - Dashboard: `POST /api/actions/<name>` with a JSON body. REST: `/api/v1/...` from `rest`. MCP: tool
   name = action name with dots replaced by underscores. OpenAPI and docs are generated from the registry.
 - A test (`server/test/parity.test.ts`) fails when an action lacks a description for its inputs or when
@@ -179,7 +188,8 @@ The edge strips every inbound `x-mc-*` header, then routes:
 | `/api/actions/*` (scope account) | account store | session → `control.resolveSession` → current account |
 | `/api/v1/*`, `/mcp` | account store | API key `mc_<accountId>_<secret>` |
 | `/t/o/:token`, `/t/c/:token`, `/u/:token`, `/confirm/:token`, `/keep/:token` | account store | token prefix `<accountId>.` |
-| `/api/public/subscribe/:newsletterKey`, `/embed.js`, `/f/:newsletterKey` | account store | key `nl_<accountId>_<rand>` |
+| `/api/public/subscribe/:newsletterKey`, `/embed.js?key=`, `/f/:newsletterKey` | account store | key `nl_<accountId>_<rand>` |
+| `/api/public/tls-check?domain=` | edge | Caddy's on-demand TLS `ask`: 200 for the app host and verified custom hosts |
 | `/n/:slug/*` and any request on a custom website host | account store | `control.lookupSite(slug or host)`, cached 60 s |
 | `/hooks/ses`, `/hooks/resend` | account store(s) | signature checked at the edge, account from message tags |
 | `/hooks/stripe`, `/hooks/polar` | control store | — |
@@ -228,8 +238,8 @@ trimmed and lowercased. JSON columns are TEXT. Money never appears in account st
 
 ```
 users(id, email UNIQUE, name, password_hash, email_verified_at, is_install_admin, disabled, created_at)
-sessions(id, user_id, csrf, created_at, expires_at, ip, user_agent)
-login_codes(email, code_hash, purpose 'signup'|'signin'|'reset', expires_at, attempts)
+sessions(id, user_id, csrf, created_at, expires_at, ip, user_agent)   -- id = sha256 of the cookie token
+login_codes(email, code_hash, purpose 'signup'|'signin'|'reset', expires_at, attempts, PRIMARY KEY(email, purpose))
 accounts(id, owner_user_id, name, status 'active'|'blocked'|'deleting', block_reason, policy_version, plan, plan_period_end,
          billing_provider, billing_customer_id, billing_subscription_id, billing_status, billing_paused,
          created_at, deleted_at)
@@ -243,6 +253,7 @@ billing_events(id PRIMARY KEY, provider, type, received_at, processed_at)   -- w
 admin_alerts(id, kind, account_id NULL, title, body, created_at, resolved_at)
 usage_snapshots(account_id, period, contacts, emails_sent, updated_at)      -- pushed by account stores
 rate_limits(key, window_start, count)
+outbox(id, to_email, subject, html, text, headers JSON, kind, created_at)    -- system emails from the `test` provider
 jobs, jobs_dead, _migrations
 ```
 
@@ -304,6 +315,7 @@ api_keys(id, name, hash UNIQUE, last4, access 'full'|'read', created_by, last_us
 notifications(id, user_id NULL, kind, tone, title, body, href, created_at, read_at)
 usage(period PRIMARY KEY, emails_sent, contacts_peak)
 outbox(id, to_email, subject, html, text, headers JSON, kind, created_at)    -- only the `test` provider writes here
+_blobs(key, seq, content_type, data BLOB)   -- images when no R2 bucket is bound (Cloudflare only)
 rate_limits, jobs, jobs_dead, _migrations
 ```
 
@@ -526,6 +538,8 @@ These are the seams between modules. Build to them exactly. Change one only toge
 
 ### 11.1 Sessions and the actor envelope
 
+- `sessionId` is the sha256 hex of the `mc_session` cookie value; `POST /api/auth/account { accountId }` sets
+  the `mc_account` cookie.
 - `control.resolveSession({ sessionId, wantAccountId? }) → { user: { id, email, name, isInstallAdmin },
   csrf, accounts: [{ id, name, owner: boolean, grants: Record<newsletterId, 'admin'|'member'>, status }],
   current: accountId | null } | null`. `wantAccountId` comes from the `mc_account` cookie, which is only
@@ -602,7 +616,8 @@ type SendResult =
   `send_rate_per_second`). Monthly email limits are reserved in the same call in cloud mode.
 - Block and plan changes: the control store bumps `accounts.policy_version`, and in the same transaction
   enqueues a `policy.push` job that calls `account.applyPolicy({ version, status, plan, limits })`. The
-  account store ignores a version it already has or passed. Every send batch re-reads the local policy,
+  account store ignores a version it already has or passed. A limit of `null` means unlimited (JSON has
+  no Infinity); `usage.limits(ctx)` turns it into `Infinity`. Every send batch re-reads the local policy,
   so a block stops sending within one batch. Account-to-control updates (slug and host directory rows,
   usage snapshots, global suppression reports) use the same pattern in the other direction:
   enqueue a job, never a bare RPC after commit.
