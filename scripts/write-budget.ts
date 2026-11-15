@@ -69,10 +69,21 @@ async function scenario(base: string) {
   const { jar, json, action, call, expect } = createSmokeContext(base)
   const rows: [string, number, number][] = []
   let accountId = ''
-  const meter = async (): Promise<Meter> => {
+  // Each object's meter is in memory and starts over when the runtime evicts an idle object, so a
+  // running total is kept here: a count that went down means a fresh instance.
+  const last = new Map<string, { writes: number; reads: number }>()
+  const total = { writes: 0, reads: 0 }
+  const meter = async () => {
     const r = await fetch(`${base}/api/dev/writes?accounts=${accountId}`)
     if (!r.ok) throw new Error(`budget: /api/dev/writes answered ${r.status}; is MC_TEST_DNS on?`)
-    return (await r.json()) as Meter
+    const { stores } = (await r.json()) as Meter
+    for (const [id, now] of Object.entries(stores)) {
+      const prev = last.get(id) ?? { writes: 0, reads: 0 }
+      total.writes += now.writes >= prev.writes ? now.writes - prev.writes : now.writes
+      total.reads += now.reads >= prev.reads ? now.reads - prev.reads : now.reads
+      last.set(id, now)
+    }
+    return { ...total }
   }
   const measure = async (label: string, fn: () => Promise<unknown>) => {
     const before = await meter()
@@ -80,6 +91,13 @@ async function scenario(base: string) {
     const after = await meter()
     rows.push([label, after.writes - before.writes, after.reads - before.reads])
     if (verbose) console.log(`${label}: ${after.writes - before.writes} writes, ${after.reads - before.reads} reads`)
+  }
+  // Reading the meter every few seconds keeps the objects' counts from being lost mid-wait.
+  const idle = async (seconds: number) => {
+    for (let waited = 0; waited < seconds; waited += 5) {
+      await sleep(Math.min(5, seconds - waited) * 1000)
+      await meter()
+    }
   }
 
   // Setup is not measured: a fresh install writes its migrations, the first user and the account.
@@ -151,11 +169,11 @@ async function scenario(base: string) {
   await measure('first open (GET /t/o/)', async () => expect((await fetch(`${base}/t/o/${openToken}`, reader)).status === 200, 'pixel'))
   await measure('repeat open of the same delivery', async () => expect((await fetch(`${base}/t/o/${openToken}`, reader)).status === 200, 'pixel'))
   await measure('first click (GET /t/c/)', async () => expect((await fetch(`${base}/t/c/${clickToken}`, reader)).status === 302, 'redirect'))
-  await measure(`idle ${idleSeconds} s, nothing queued but the flush of the views and opens above`, () => sleep(idleSeconds * 1000))
+  await measure(`idle ${idleSeconds} s, nothing queued but the flush of the views and opens above`, () => idle(idleSeconds))
   const later = await action('campaigns.create', { newsletterId: nl.id, subject: 'Budget later', doc })
   await action('campaigns.update', { campaignId: later.id, revision: later.revision, previewText: 'A preview' })
   await action('campaigns.schedule', { campaignId: later.id, scheduledAt: Date.now() + 86_400_000 })
-  await measure(`idle ${idleSeconds} s with a campaign scheduled for tomorrow`, () => sleep(idleSeconds * 1000))
+  await measure(`idle ${idleSeconds} s with a campaign scheduled for tomorrow`, () => idle(idleSeconds))
 
   const width = Math.max(...rows.map(([label]) => label.length))
   console.log(`\nRows written per operation (${useNode ? 'Node build, changes()' : 'wrangler dev, rowsWritten incl. index entries'}; the sent issue went to ${sentRows} readers):\n`)
