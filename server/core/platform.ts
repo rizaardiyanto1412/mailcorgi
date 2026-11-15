@@ -1,3 +1,5 @@
+import { AppError } from './http.ts'
+
 /** What a store may do outside its own database. Each platform provides one. */
 export type StoreRef = { kind: 'control' } | { kind: 'account'; accountId: string }
 
@@ -35,12 +37,44 @@ export function dnsResolver(testDns: Record<string, string[]> | null, real: Plat
   return async (name, type) => testDns[`${type}:${name.toLowerCase().replace(/\.$/, '')}`] ?? []
 }
 
+/** Thrown when the resolver could not answer. It never means "no records". */
+export class DnsUnavailableError extends Error {
+  constructor(message = 'DNS lookup failed') {
+    super(message)
+    this.name = 'DnsUnavailableError'
+  }
+}
+
+/**
+ * Turns any resolver failure into the user-facing "try again" error. Callers must change no state
+ * when this throws: a resolver outage says nothing about the records.
+ */
+export async function lookupDns(platform: Pick<Platform, 'resolveDns'>, name: string, type: DnsType): Promise<string[]> {
+  try {
+    return await platform.resolveDns(name, type)
+  } catch {
+    throw new AppError('dns_unavailable', 'We could not check DNS right now. Nothing was changed. Try again in a few minutes.', 503)
+  }
+}
+
 /** DNS over HTTPS through Cloudflare's resolver. Tests swap in a fake. */
 export async function resolveDnsOverHttps(fetchFn: typeof fetch, name: string, type: DnsType): Promise<string[]> {
   const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`
-  const response = await fetchFn(url, { headers: { accept: 'application/dns-json' } })
-  if (!response.ok) return []
-  const data = (await response.json()) as { Answer?: { type: number; data: string }[] }
+  let response: Response
+  try {
+    response = await fetchFn(url, { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(10_000) })
+  } catch {
+    throw new DnsUnavailableError()
+  }
+  if (!response.ok) throw new DnsUnavailableError(`DNS resolver answered ${response.status}`)
+  let data: { Status?: number; Answer?: { type: number; data: string }[] }
+  try {
+    data = (await response.json()) as typeof data
+  } catch {
+    throw new DnsUnavailableError('DNS resolver sent an unreadable answer')
+  }
+  // 0 NOERROR and 3 NXDOMAIN are real answers; anything else (SERVFAIL, REFUSED, …) is not.
+  if (data.Status !== undefined && data.Status !== 0 && data.Status !== 3) throw new DnsUnavailableError(`DNS resolver status ${data.Status}`)
   const wanted = { A: 1, CNAME: 5, MX: 15, TXT: 16 }[type]
   return (data.Answer ?? []).filter((a) => a.type === wanted).map((a) => (type === 'TXT' ? a.data.replace(/^"|"$/g, '').replace(/"\s+"/g, '') : a.data.replace(/\.$/, '')))
 }

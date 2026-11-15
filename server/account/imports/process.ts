@@ -32,6 +32,8 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
   if (budget.expired()) return again(ctx)
   const global = new Set((await ctx.stores.control.checkSuppressed({ emailHashes: hashes })).suppressed)
   ctx.db.run("UPDATE imports SET status = 'processing' WHERE id = ? AND newsletter_id = ? AND status = 'queued'", imp.id, imp.newsletter_id)
+  // When the resolver is down, nobody's address is skipped as "no MX" and nothing is cached.
+  let dnsDown = false
   for (let pos = chunk.position; pos < rows.length; pos++) {
     if (budget.expired()) return again(ctx)
     const row = rows[pos]
@@ -49,10 +51,17 @@ export async function processImport(ctx: StoreCtx, { importId }: { importId: str
       const cached = ctx.db.get<{ valid: number }>('SELECT valid FROM import_dns WHERE domain = ? AND expires_at > ?', cleaned.domain, ctx.now())
       let valid = cached?.valid
       if (valid === undefined) {
-        if (!budget.take(1)) return again(ctx)
-        const mx = await ctx.platform.resolveDns(cleaned.domain, 'MX')
-        valid = mx.some((record) => record.trim() !== '.' && record.trim() !== '0 .' && record.trim() !== '') ? 1 : 0
-        ctx.db.run('INSERT INTO import_dns (domain, valid, expires_at) VALUES (?, ?, ?) ON CONFLICT(domain) DO UPDATE SET valid = excluded.valid, expires_at = excluded.expires_at', cleaned.domain, valid, ctx.now() + 86_400_000)
+        if (dnsDown) valid = 1
+        else {
+          if (!budget.take(1)) return again(ctx)
+          let mx: string[] | null = null
+          try { mx = await ctx.platform.resolveDns(cleaned.domain, 'MX') } catch { dnsDown = true }
+          if (mx === null) valid = 1
+          else {
+            valid = mx.some((record) => record.trim() !== '.' && record.trim() !== '0 .' && record.trim() !== '') ? 1 : 0
+            ctx.db.run('INSERT INTO import_dns (domain, valid, expires_at) VALUES (?, ?, ?) ON CONFLICT(domain) DO UPDATE SET valid = excluded.valid, expires_at = excluded.expires_at', cleaned.domain, valid, ctx.now() + 86_400_000)
+          }
+        }
       }
       if (!valid) reason = 'no_mx'
     }
