@@ -8,7 +8,7 @@ import { AppError, clientIp, readJson, validate, type StoreEnv } from '../../cor
 import { allowRate, clearRate } from '../../core/ratelimit.ts'
 import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
 import { appUrl, learnAppUrl, getSettingSync } from '../install/index.ts'
-import { createAccountForUser, isInstallAdmin, resolveSession } from '../accounts/index.ts'
+import { createAccountForUser, isInstallAdmin, resolveSession, validateInviteSignup } from '../accounts/index.ts'
 import type { ControlRegistrar } from '../rpc.ts'
 
 export const SESSION_COOKIE = 'mc_session'
@@ -183,9 +183,10 @@ export const authModule = {
 
       app.post('/api/auth/signup', async (c) => {
         const ctx = c.get('ctx')
-        const input = validate(z.object({ name, email, password }), await readJson(c))
+        const input = validate(z.object({ name, email, password, inviteToken: z.string().min(20).max(200).optional() }), await readJson(c))
         limit(ctx, c, input.email)
-        if (!mayJoin(ctx, input.email)) throw new AppError('signup_closed', 'Sign-up is by invitation. Ask the person who runs this install.', 403)
+        if (input.inviteToken) await validateInviteSignup(ctx, input.inviteToken, input.email)
+        if (!input.inviteToken && !mayJoin(ctx, input.email)) throw new AppError('signup_closed', 'Sign-up is by invitation. Ask the person who runs this install.', 403)
         const passwordHash = await hashPassword(input.password)
         const save = (codeHash?: string) => {
           const existing = userByEmail(ctx, input.email)
