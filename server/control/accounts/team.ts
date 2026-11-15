@@ -160,6 +160,7 @@ export const teamActions = [
         ctx.db.run('INSERT INTO memberships (user_id, account_id, newsletter_id, role, created_at) VALUES (?, ?, ?, ?, ?)', actor.userId, current.account_id, current.newsletter_id, current.role, ctx.now())
       }
       ctx.db.run('UPDATE invites SET accepted_at = ? WHERE id = ?', ctx.now(), current.id)
+      ctx.jobs.enqueue('notifications.forward', { accountId: current.account_id, notification: { kind: 'invite_accepted', title: 'A teammate accepted your invitation', body: 'Your newsletter has a new team member.', href: '/settings/team' } }, { dedupeKey: `invite.accepted:${current.id}` })
     })
     return scope
   } }),

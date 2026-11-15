@@ -17,7 +17,7 @@ export async function handleEmailHook(deps: EdgeDeps, request: Request, accountE
       result = new URL(request.url).pathname === '/hooks/ses'
         ? await parseSesWebhook({ platform: { fetch: networkFetch } }, verifiedRequest, settings)
         : await parseResendWebhook({ now: deps.now }, verifiedRequest, settings)
-    } catch { throw new AppError('invalid_webhook', 'Webhook verification failed.', 400) }
+    } catch { await deps.stores.control.raiseAlert({ kind: 'webhook_verification', title: 'Email webhook verification failed', body: 'Check the provider signing configuration.' }).catch(() => {}); throw new AppError('invalid_webhook', 'Webhook verification failed.', 400) }
     if (result.confirmUrl) {
       const response = await networkFetch(result.confirmUrl, { redirect: 'error', signal: AbortSignal.timeout(10_000) })
       if (!response.ok || response.redirected) throw new Error('Subscription confirmation failed.')

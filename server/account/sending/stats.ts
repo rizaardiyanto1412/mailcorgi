@@ -1,6 +1,7 @@
 import type { StoreCtx } from '../../core/store.ts'
 import { parseJson } from '../../core/db.ts'
-import { newId } from '../../core/ids.ts'
+import { notify } from '../notifications/index.ts'
+export { notify } from '../notifications/index.ts'
 import { transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 
 /** Cached counters on `campaigns.stats`. Opens, clicks and unsubscribes count unique deliveries. */
@@ -34,12 +35,12 @@ export function recountStats(ctx: StoreCtx, campaignId: string): CampaignStats {
   const current = readStats(ctx, campaignId)
   const rows = ctx.db.all<{ status: string; n: number }>('SELECT status, COUNT(*) AS n FROM deliveries WHERE campaign_id = ? GROUP BY status', campaignId)
   const by = (status: string) => rows.find((r) => r.status === status)?.n ?? 0
-  const stats: CampaignStats = { ...current, planned: rows.reduce((n, r) => n + r.n, 0), sent: by('sent'), delivered: by('delivered'), bounced: by('bounced'), complained: by('complained'), failed: by('failed'), skipped: by('skipped'), unknown: by('unknown') }
+  const stats: CampaignStats = { ...current, planned: rows.reduce((n, r) => n + r.n, 0), sent: ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM deliveries WHERE campaign_id = ? AND sent_at IS NOT NULL', campaignId)!.n, delivered: by('delivered'), bounced: by('bounced'), complained: by('complained'), failed: by('failed'), skipped: by('skipped'), unknown: by('unknown') }
   writeStats(ctx, campaignId, stats)
   return stats
 }
 
-export const attempted = (s: CampaignStats) => s.sent + s.delivered + s.bounced + s.complained
+export const attempted = (s: CampaignStats) => s.sent
 export const HARD_BOUNCE_LIMIT = 0.025
 export const COMPLAINT_LIMIT = 0.0008
 export const AUTO_PAUSE_MIN_SENT = 200
@@ -63,11 +64,6 @@ export function resetRateBaseline(ctx: StoreCtx, campaignId: string) {
 export const dayOf = (at: number) => new Date(at).toISOString().slice(0, 10)
 export function daily(ctx: StoreCtx, newsletterId: string, column: 'sent' | 'delivered' | 'opens' | 'clicks' | 'bounces' | 'complaints' | 'unsubscribed', at: number, n = 1) {
   ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, ${column}) VALUES (?, ?, ?) ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = ${column} + excluded.${column}`, newsletterId, dayOf(at), n)
-}
-
-/** The notifications module is not built yet, so sending writes the row it describes in architecture 6. */
-export function notify(ctx: StoreCtx, input: { kind: string; tone?: 'info' | 'ok' | 'warn' | 'danger'; title: string; body?: string; href?: string }) {
-  ctx.db.run('INSERT INTO notifications (id, user_id, kind, tone, title, body, href, created_at) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)', newId('ntf'), input.kind, input.tone ?? 'info', input.title, input.body ?? '', input.href ?? '', ctx.now())
 }
 
 export const PAUSE_MESSAGES: Record<string, string> = {

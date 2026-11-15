@@ -15,7 +15,7 @@ import { buildMessage, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBaseline } from './stats.ts'
 export { sendHooks } from './provider.ts'
-export { readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, AUTO_PAUSE_MIN_SENT } from './stats.ts'
+export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, AUTO_PAUSE_MIN_SENT } from './stats.ts'
 export { markSentEffects } from './batch.ts'
 export type { CampaignStats } from './stats.ts'
 

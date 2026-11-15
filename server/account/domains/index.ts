@@ -1,3 +1,4 @@
+import { notify } from '../notifications/index.ts'
 import { z } from 'zod'
 import type { AccountRegistrar } from '../rpc.ts'
 import type { StoreCtx } from '../../core/store.ts'
@@ -40,7 +41,7 @@ export function transitionDomain(ctx: StoreCtx, id: string, status: 'verified' |
       ctx.db.run('INSERT INTO events (type, newsletter_id, data, at) VALUES (?, ?, ?, ?)', `domain.${status}`, newsletter.id, JSON.stringify({ domainId: id }), ctx.now())
       ctx.db.run('INSERT OR IGNORE INTO daily_stats (newsletter_id, day) VALUES (?, ?)', newsletter.id, new Date(ctx.now()).toISOString().slice(0, 10))
     }
-    ctx.db.run('INSERT INTO notifications (id, kind, tone, title, body, href, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', newId('ntf'), `domain.${status}`, status === 'verified' ? 'ok' : 'warn', status === 'verified' ? 'Sending domain verified' : 'Sending domain needs attention', row.name, '/settings/domains', ctx.now())
+    notify(ctx, { kind: status === 'verified' ? 'domain_verified' : 'domain_failed', title: status === 'verified' ? 'Sending domain verified' : 'Sending domain needs attention', body: row.name, href: '/settings/domains' })
   })
 }
 

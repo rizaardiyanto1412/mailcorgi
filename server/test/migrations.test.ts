@@ -39,7 +39,7 @@ test('an account store has every table from the contract', async () => {
 
 test('migrations run once and a restart applies nothing new', async () => {
   const before = install.app.control.ctx.db.all<{ id: string }>('SELECT id FROM _migrations')
-  assert.equal(before.length, controlMigrations.length)
+  assert.equal(before.length, controlMigrations.length + controlRegistry.migrations.length)
   install = await install.restart()
   const after = install.app.control.ctx.db.all<{ id: string }>('SELECT id FROM _migrations')
   assert.deepEqual(after, before)
