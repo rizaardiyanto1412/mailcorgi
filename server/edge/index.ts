@@ -2,6 +2,7 @@
  * The stateless edge: works out who is asking and which store answers, then forwards the request
  * with a signed actor envelope. Section 3.5 of docs/architecture.md is the routing table.
  */
+import { handleEmailHook } from './email-hooks.ts'
 import type { Config } from '../core/config.ts'
 import { appHost } from '../core/config.ts'
 import type { Keys } from '../core/crypto.ts'
@@ -31,6 +32,7 @@ export interface EdgeDeps {
   blobs: BlobStore | null
   assets(request: Request): Promise<Response>
   now(): number
+  fetch?: typeof fetch
 }
 
 export interface Edge {
@@ -155,7 +157,7 @@ export function createEdge(deps: EdgeDeps): Edge {
     }
 
     if (path === '/hooks/stripe' || path === '/hooks/polar') return forward({ kind: 'control' }, request, headers)
-    if (path === '/hooks/ses' || path === '/hooks/resend') return notFound()
+    if (path === '/hooks/ses' || path === '/hooks/resend') return handleEmailHook(deps, request)
 
     if (path.startsWith('/api/v1/') || path === '/mcp') {
       const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') || '')
