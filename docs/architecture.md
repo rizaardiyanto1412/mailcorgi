@@ -125,6 +125,9 @@ interface StoreCtx {
   now(): number                     // ms, test-controllable
   jobs: Jobs                        // enqueue / cancel on this store
   registry: Registry                // this store's actions, jobs, rpc, routes, resolvers
+  meter: Meter                      // rows written and read since this instance opened (alarms count as writes)
+  later: Later                      // later.add(key, flush): a write that may wait for the next alarm
+  memory: Map<string, unknown>      // per-instance scratch; lost on restart, so only for what may be lost
 }
 interface Stores {
   control: ControlRpc               // typed async methods
@@ -134,12 +137,32 @@ interface Platform {
   blobs: BlobStore                  // put/get/delete/list by key, async, bytes + contentType
   fetch: typeof fetch
   setAlarm(store: StoreRef, at: number | null): Promise<void>   // the store re-arms to its next wake time; null clears
+  getAlarm(store: StoreRef): Promise<number | null>             // what is armed; asked once after a restart
   resolveDns(name: string, type: 'TXT'|'CNAME'|'MX'|'A'): Promise<string[]>  // DNS over HTTPS
   waitUntil(p: Promise<unknown>): void
   destroyStore(store: StoreRef): Promise<void>   // deletes an account store's data for good
   limits: { subrequestsPerRun: number }   // 40 on Workers Free, 900 otherwise, 900 on Node
 }
 ```
+
+**Row writes are the scarce resource.** Workers Free allows 100,000 Durable Object rows written a
+day for the whole Cloudflare account, and a `setAlarm` costs one. So: a read-only request writes
+nothing; a store calls `setAlarm` only when its next wake time differs from what it holds in memory
+(one `getAlarm` read after a restart); an idle store writes nothing. Bookkeeping that may lag or be
+lost (page views, repeat opens, rate-limit counters, the stats rollup's change marker) lives in
+`ctx.memory` and is written in one batch through `ctx.later` when the next alarm fires, within five
+minutes of an alarm that is queued anyway, else on an alarm armed for that purpose. Counters a send
+batch bumps (daily, campaign, usage) are written once per batch. The store's `Meter` counts rows as
+Cloudflare bills them (`rowsWritten`, index entries included, plus one per alarm; `changes` on Node)
+and `GET /api/dev/writes?accounts=…` reads it when `MC_TEST_DNS` is on. `npm run budget` prints
+rows per operation on `wrangler dev` (`docs/performance.md`).
+
+When the platform refuses a write (Cloudflare's quota message, a full disk), every entry point
+answers `503 storage_write_limit` with a message a person can act on; reads keep working, a click
+still redirects, a pixel still answers, and an unsubscribe says it could not be recorded. A job that
+meets a refused write spends no attempt: the alarm throws so the platform retries it, and the Worker's
+daily cron (`5 0 * * *`, after the quota resets) pings every account store so queued work resumes
+without a visitor. The web app shows one banner while it sees that code.
 
 `resolveDns` throws `DnsUnavailableError` on a network or HTTP error, an unreadable answer or a
 resolver status other than NOERROR or NXDOMAIN; callers answer `503 dns_unavailable` and change
@@ -214,6 +237,7 @@ The edge strips every inbound `x-mc-*` header, then routes:
 | `/hooks/stripe`, `/hooks/polar` | control store | — |
 | `/img/:accountId/:key` | blobs directly | path |
 | `/healthz` | edge | — |
+| `/api/dev/writes` | edge | only when `MC_TEST_DNS` is active: the write meters of the control store and the named account stores |
 | `/api/dev/*`, `/hooks/test` | control store | only when `MC_TEST_DNS` is active (3.6) |
 | everything else | SPA assets (`index.html` fallback for paths without a file extension) | — |
 
@@ -686,8 +710,9 @@ an empty state that says how to add the first item. Copy is plain, short, senten
   (`new_sqlite_classes`), the `IMAGES` R2 bucket, `version_metadata`, and `nodejs_compat`. The README's
   Deploy to Cloudflare button needs no secrets. When the `IMAGES` binding is absent, images fall back to
   chunked blobs in the account store. Workers Free works for small lists (50 outbound requests per
-  run and 100,000 row writes per day); the self-hosting guide says when to move to Workers Paid.
-  `wrangler.jsonc` also sets `WORKERS_PLAN: "free"` (see 3.2).
+  run and 100,000 row writes per day across the whole Cloudflare account); the self-hosting guide
+  says what fits and when to move to Workers Paid. `wrangler.jsonc` also sets `WORKERS_PLAN: "free"`
+  (see 3.2) and a daily cron trigger that wakes every store after the write quota resets.
 - **Docker**: multi-stage `Dockerfile` (sets `NODE_ENV=production`), `docker-compose.yml` with an
   optional `https` profile (Caddy with on-demand TLS for custom website hosts), one `/data` volume, a
   `/healthz` healthcheck. The container listens on 3000; the host port is `MAILCORGI_PORT`, bound to
@@ -764,8 +789,9 @@ signing and verification; signup uses its exports.
 - `enqueue` inserts the row and arms the alarm in the same event. On Cloudflare both commit together
   (storage writes in one event are atomic). On Node there is no alarm registry: the scheduler asks each
   open store for its next wake time every second and, at startup, opens every account database.
-- Next wake time = the smallest of `run_at` over unclaimed jobs and `locked_until` over claimed ones.
-  Every store invocation (request, RPC, alarm) ends by re-arming to that time.
+- Next wake time = the smallest of `run_at` over unclaimed jobs and `locked_until` over claimed ones,
+  or a pending `later` flush. Every store invocation (request, RPC, alarm) ends by re-arming to that
+  time, but only calls `setAlarm` when the time differs from the one it holds in memory (3.2).
 - A claim sets `locked_until` and a random `claim_token`. Completing, failing or rescheduling a job is a
   conditional update on that token, so a claimant whose lease expired cannot overwrite its successor.
 - One `Budget` per invocation, shared by every handler in it: `budget.take(n)` returns how many outbound
