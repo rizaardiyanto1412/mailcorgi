@@ -71,6 +71,7 @@ export function setContactStatus(ctx: StoreCtx, contactId: string, status: Conta
     const at = typeof detail.at === 'number' ? detail.at : ctx.now()
     const timeColumn = status === 'subscribed' ? 'subscribed_at' : status === 'bounced' ? 'bounced_at' : status === 'complained' ? 'complained_at' : 'unsubscribed_at'
     ctx.db.run(`UPDATE contacts SET status = ?, ${timeColumn} = ?, updated_at = ?, confirmed_at = CASE WHEN ? THEN ? ELSE confirmed_at END, unsubscribe_reason = CASE WHEN ? THEN ? ELSE unsubscribe_reason END WHERE id = ? AND newsletter_id = ?`, status, at, ctx.now(), confirmed, at, status === 'unsubscribed', typeof detail.reason === 'string' ? detail.reason : '', c.id, c.newsletter_id)
+    if (status === 'subscribed') ctx.db.run('UPDATE contacts SET ignored_streak = 0, strict_ignored_streak = 0, keep_asked_at = NULL WHERE id = ? AND newsletter_id = ?', c.id, c.newsletter_id)
     const type = status === 'subscribed' ? (confirmed ? 'confirm' : 'signup') : status === 'unsubscribed' ? 'unsubscribe' : status === 'bounced' ? 'bounce' : status === 'complained' ? 'complaint' : 'cleaned'
     event(ctx, c, type, detail, at)
     daily(ctx, c.newsletter_id, status === 'subscribed' ? 'subscribed' : status === 'bounced' ? 'bounces' : status === 'complained' ? 'complaints' : 'unsubscribed', at)
