@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { StoreCtx } from '../core/store.ts'
-import { createInstall, expectError } from './harness.ts'
+import { APP_URL, createInstall, expectError } from './harness.ts'
+import { subscribe } from '../account/contacts/index.ts'
 import { addContacts, createIssue, sendableInstall } from './sending-setup.ts'
 import { finish, upload } from './imports-setup.ts'
 import { statusOutcome } from '../account/imports/model.ts'
@@ -164,4 +165,46 @@ test('gap 3: the import options tell REST and MCP callers what an unmapped statu
   const doc = JSON.stringify(await response.json())
   assert.match(doc, /adds contacts as unconfirmed: they receive no issues and no confirmation email/)
   assert.match(doc, /every other active row is added as unconfirmed and receives no email/)
+})
+
+test('gap 4: past the contact limit, the API refuses, signup says so, imports skip, and subscribe() reports limit', async (t) => {
+  const install = await createInstall({ cloud: true })
+  t.after(() => install.close())
+  install.dns.set('example.com', 'MX', ['10 mx.example.com'])
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  const nl = await owner.action('newsletters.create', { name: 'Limits' })
+  const accountId = owner.accountId!
+  await install.app.stores.account(accountId).applyPolicy({ version: 5, status: 'active', plan: 'test', limits: { maxContacts: 2, maxEmailsPerMonth: 100, maxNewsletters: 3, maxTeamPerNewsletter: 2 } })
+  const ctx = install.app.account(accountId).ctx
+  await owner.action('contacts.create', { newsletterId: nl.id, email: 'one@example.com' })
+  await owner.action('contacts.create', { newsletterId: nl.id, email: 'two@example.com' })
+  const count = () => ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM contacts')!.n
+
+  const err = await expectError(() => owner.action('contacts.create', { newsletterId: nl.id, email: 'three@example.com' }))
+  assert.equal(err.status, 403)
+  assert.equal(err.code, 'limit_reached')
+  assert.equal((err.details as { billingUrl: string }).billingUrl, '/settings/billing')
+  assert.match(err.message, /2 of 2 contacts used/)
+  assert.equal(count(), 2)
+
+  const key = await owner.action('apikeys.create', { name: 'Full', access: 'full' })
+  const rest = await install.fetch(`/api/v1/newsletters/${nl.id}/contacts`, { method: 'POST', headers: { authorization: `Bearer ${key.secret}`, 'content-type': 'application/json' }, body: JSON.stringify({ email: 'four@example.com' }) })
+  assert.equal(rest.status, 403)
+  const body = await rest.json() as { error: { code: string } }
+  assert.equal(body.error.code, 'limit_reached')
+  assert.equal(count(), 2)
+
+  assert.equal(subscribe(ctx, { newsletterId: nl.id, email: 'five@example.com', source: 'test', consent: 'confirmed' }).outcome, 'limit')
+
+  const formConfig = await (await install.fetch(`/api/public/subscribe/${nl.key}`)).json() as { formToken: string }
+  install.clock.advance(2001)
+  const signup = await install.app.edge.fetch(new Request(`${APP_URL}/api/public/subscribe/${nl.key}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'reader@example.com', formToken: formConfig.formToken }) }), '192.0.2.9')
+  assert.equal(signup.status, 503)
+  assert.match(JSON.stringify(await signup.json()), /not taking new subscribers/)
+  assert.equal(count(), 2)
+  assert.equal(install.outbox(accountId).filter((m) => m.to_email === 'reader@example.com').length, 0)
+  assert.equal(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM notifications WHERE title = 'New signups are being turned away'")!.n, 1)
+
+  const id = await upload(owner, nl.id, [{ email: 'six@example.com', status: 'subscribed' }])
+  assert.deepEqual((await finish(install, owner, nl.id, id)).skipped, { contact_limit: 1 })
 })

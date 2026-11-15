@@ -55,6 +55,13 @@ export function repairActiveContacts(ctx: StoreCtx): number {
   return count
 }
 
+/** The error for a contact that does not fit the plan, with the live count from the maintained counter. */
+export function contactLimitError(ctx: StoreCtx): AppError {
+  const used = activeContacts(ctx)
+  const limit = limits(ctx).maxContacts
+  return new AppError('limit_reached', `This account has reached its contact limit: ${used.toLocaleString('en-US')} of ${limit.toLocaleString('en-US')} contacts used. Remove inactive contacts or change your plan.`, 403, { resource: 'contacts', used, limit })
+}
+
 /** Whether `n` more contacts fit the plan. Call inside the caller's transaction. */
 export function reserveContacts(ctx: StoreCtx, n: number): boolean {
   const max = limits(ctx).maxContacts

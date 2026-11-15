@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
-import { reserveContacts } from '../usage/index.ts'
+import { contactLimitError, reserveContacts } from '../usage/index.ts'
 import { emailHash } from './hash.ts'
 
 export const statusSchema = z.enum(['unconfirmed', 'subscribed', 'unsubscribed', 'bounced', 'complained', 'cleaned'])
@@ -67,7 +67,7 @@ export function setContactStatus(ctx: StoreCtx, contactId: string, status: Conta
     const confirmed = detail.consent === 'confirmed'
     if (status === 'unconfirmed' || (status === 'subscribed' && c.status !== 'unconfirmed' && !confirmed)) throw new AppError('invalid_transition', 'A suppressed contact must confirm their subscription.', 409)
     if (status === 'subscribed' && isSuppressed(ctx, c.email, c.newsletter_id)) throw new AppError('suppressed', 'This address is suppressed.', 409)
-    if (active(status) && !active(c.status) && !reserveContacts(ctx, 1)) throw new AppError('limit_reached', 'This account has reached its contact limit.', 403)
+    if (active(status) && !active(c.status) && !reserveContacts(ctx, 1)) throw contactLimitError(ctx)
     const at = typeof detail.at === 'number' ? detail.at : ctx.now()
     const timeColumn = status === 'subscribed' ? 'subscribed_at' : status === 'bounced' ? 'bounced_at' : status === 'complained' ? 'complained_at' : 'unsubscribed_at'
     ctx.db.run(`UPDATE contacts SET status = ?, ${timeColumn} = ?, updated_at = ?, confirmed_at = CASE WHEN ? THEN ? ELSE confirmed_at END, unsubscribe_reason = CASE WHEN ? THEN ? ELSE unsubscribe_reason END WHERE id = ? AND newsletter_id = ?`, status, at, ctx.now(), confirmed, at, status === 'unsubscribed', typeof detail.reason === 'string' ? detail.reason : '', c.id, c.newsletter_id)

@@ -5,6 +5,7 @@ import { allowRate } from '../../core/ratelimit.ts'
 import { sha256Hex } from '../../core/crypto.ts'
 import { newId } from '../../core/ids.ts'
 import { subscribe } from '../contacts/index.ts'
+import { notifySignupsRefused } from '../notifications/index.ts'
 import { parseTheme, escapeHtml, safeUrl } from '../render/index.ts'
 import { customFields, getSettings, publicNewsletter, getNewsletter, redirectSchema } from './settings.ts'
 import { confirmationSchema, formTokenSchema, formToken } from './tokens.ts'
@@ -101,9 +102,11 @@ export function registerRoutes(reg: AccountRegistrar) {
       const result = ctx.db.tx(() => {
         const result = subscribe(ctx, { newsletterId: nl.id, email: input.email, name: settings.showName ? input.name : undefined, fields, source: 'signup', consent: nl.double_opt_in ? 'pending' : 'confirmed' })
         if (!nl.double_opt_in && result.outcome === 'subscribed') mailId = queueWelcome(ctx, nl.id, result.contact.id, result.contact.subscribedAt)
+        if (result.outcome === 'limit') notifySignupsRefused(ctx)
         return result
       })
-      if (nl.double_opt_in && result.outcome !== 'limit' && !ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', input.email) && ctx.db.get('SELECT id FROM contacts WHERE id = ? AND newsletter_id = ?', result.contact.id, nl.id)) {
+      if (result.outcome === 'limit') throw new AppError('not_accepting', 'This newsletter is not taking new subscribers right now. Please try again later.', 503)
+      if (nl.double_opt_in && !ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', input.email) && ctx.db.get('SELECT id FROM contacts WHERE id = ? AND newsletter_id = ?', result.contact.id, nl.id)) {
         const confirmToken = await signToken(ctx, 'cf', [result.contact.id, ctx.now()])
         ctx.db.tx(() => {
           if (!allowRate(ctx.db, `signup:confirm:${targetHash}`, 3, 86_400_000, ctx.now())) return

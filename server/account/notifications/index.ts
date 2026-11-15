@@ -43,6 +43,15 @@ export function notifyLimitNear(ctx: StoreCtx, resource: 'contacts' | 'emails') 
   })
 }
 
+/** Once a month: the plan is full and readers who sign up are being turned away. */
+export function notifySignupsRefused(ctx: StoreCtx) {
+  const key = `notifications.limit:${new Date(ctx.now()).toISOString().slice(0, 7)}:signups`
+  ctx.db.tx(() => {
+    if (!ctx.db.run('INSERT OR IGNORE INTO account_meta (key, value) VALUES (?, ?)', key, '1').changes) return
+    notify(ctx, { kind: 'plan_limit_near', tone: 'danger', title: 'New signups are being turned away', body: 'Your account has reached its contact limit, so the signup form refuses new readers. Remove inactive contacts or change your plan.', href: '/settings/billing' })
+  })
+}
+
 const notificationSchema = z.object({ kind: z.enum(notificationKinds), tone: z.enum(['info', 'ok', 'warn', 'danger']).optional(), title: z.string().max(500), body: z.string().max(4000).optional(), href: z.string().max(2000).optional(), userId: z.string().optional() })
 
 export const notificationsModule = {
