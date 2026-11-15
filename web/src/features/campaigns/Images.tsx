@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { ApiError, useAction, useActionQuery } from '../../lib/api.ts'
+import { callAction, useAction, useActionQuery } from '../../lib/api.ts'
 import { useRole } from '../../lib/session.tsx'
 import { Banner, Button, EmptyState, IconButton, Modal, Spinner, useFeedback } from '../../ui/index.tsx'
 
@@ -23,16 +23,15 @@ export function ImageLibrary({ newsletterId, open, onClose, onPick, onUpload }: 
   const { confirm, toast } = useFeedback()
   const del = async (image: Image) => {
     setError('')
-    if (!(await confirm({ title: 'Delete this image?', body: 'It is removed from storage. Emails already sent show a broken image where they used it.', confirmLabel: 'Delete image', danger: true }))) return
     try {
-      await remove.mutateAsync({ newsletterId, imageId: image.id })
+      const usage = await callAction('campaigns.imageUsage', { newsletterId, imageId: image.id })
+      const used = usage.campaigns.length > 0 || usage.settings
+      const body = used ? `It appears in ${where(usage)}. Deleting it leaves a broken image there.` : 'It is removed from storage. Emails already sent show a broken image where they used it.'
+      if (!(await confirm({ title: used ? 'This image is still used' : 'Delete this image?', body, confirmLabel: used ? 'Delete anyway' : 'Delete image', danger: true }))) return
+      await remove.mutateAsync({ newsletterId, imageId: image.id, confirm: used })
     } catch (err) {
-      if (!(err instanceof ApiError) || err.code !== 'image_in_use') { setError(err instanceof Error ? err.message : 'Could not delete the image.'); return }
-      const usage = err.details as Usage
-      if (!(await confirm({ title: 'This image is still used', body: `It appears in ${where(usage)}. Deleting it leaves a broken image there.`, confirmLabel: 'Delete anyway', danger: true }))) return
-      try {
-        await remove.mutateAsync({ newsletterId, imageId: image.id, confirm: true })
-      } catch (again) { setError(again instanceof Error ? again.message : 'Could not delete the image.'); return }
+      setError(err instanceof Error ? err.message : 'Could not delete the image.')
+      return
     }
     toast('Image deleted')
   }

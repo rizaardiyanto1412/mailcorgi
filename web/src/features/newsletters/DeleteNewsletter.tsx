@@ -20,7 +20,7 @@ export function DeleteNewsletterButton({ newsletter, onDeleted, size }: { newsle
     } catch {}
   }
   return <>
-    <Button variant="danger" size={size} onClick={() => setOpen(true)}>Delete</Button>
+    <Button variant="danger" size={size} aria-label={`Delete ${newsletter.name}`} onClick={() => setOpen(true)}>Delete</Button>
     <Modal open={open} onClose={close} title={`Delete ${newsletter.name}?`} description="This permanently deletes its contacts, campaigns, stats, imports, website, images and team access. It cannot be undone.">
       <form onSubmit={submit} className="flex flex-col gap-4">
         {remove.error && <Banner kind="danger">{remove.error.message}</Banner>}

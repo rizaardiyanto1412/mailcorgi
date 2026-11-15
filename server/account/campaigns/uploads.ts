@@ -91,6 +91,19 @@ export const listImagesAction = defineAction({
   },
 })
 
+export const imageUsageAction = defineAction({
+  name: 'campaigns.imageUsage', description: 'List the campaigns, and whether the newsletter settings, that still use an uploaded image.', scope: 'account', role: 'member', effect: 'read',
+  resource: { type: 'newsletter', param: 'newsletterId' },
+  input: z.object({ newsletterId: z.string().min(1).describe('The newsletter that owns the image'), imageId }),
+  rest: { method: 'GET', path: '/newsletters/:newsletterId/images/:imageId/usage' },
+  mcp: { title: 'Show where an image is used', destructive: false },
+  handler: (ctx, input) => {
+    const key = `${input.newsletterId}/${input.imageId}`
+    if (!ctx.db.get('SELECT key FROM uploads WHERE key = ? AND newsletter_id = ?', key, input.newsletterId)) throw new AppError('not_found', 'Image not found.', 404)
+    return imageUsage(ctx, input.newsletterId, key)
+  },
+})
+
 export const deleteImageAction = defineAction({
   name: 'campaigns.deleteImage', description: 'Delete an uploaded image from storage. Emails already sent show a broken image where they used it. When a campaign still uses the image, nothing is deleted unless `confirm` is true; the error lists where it is used.', scope: 'account', role: 'admin', effect: 'write',
   resource: { type: 'newsletter', param: 'newsletterId' },

@@ -27,6 +27,10 @@ test('images: list a newsletter’s uploads, delete one, and refuse while a camp
     const draft = await owner.action('campaigns.create', { newsletterId: nl.id, subject: 'Uses the dot' })
     await owner.action('campaigns.update', { campaignId: draft.id, revision: draft.revision, doc: doc(a.url) })
     const id = second.images[0].id
+    const usage = await owner.action('campaigns.imageUsage', { newsletterId: nl.id, imageId: id })
+    assert.deepEqual(usage.campaigns.map((c) => c.id), [draft.id])
+    assert.equal(usage.settings, false)
+    assert.deepEqual((await owner.action('campaigns.imageUsage', { newsletterId: nl.id, imageId: first.images[0].id })).campaigns, [])
     const err = await expectError(() => owner.action('campaigns.deleteImage', { newsletterId: nl.id, imageId: id }))
     assert.equal(err.status, 409)
     assert.equal(err.code, 'image_in_use')

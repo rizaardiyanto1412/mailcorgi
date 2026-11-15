@@ -85,8 +85,10 @@ or its settings still mentions the image, it answers `409 image_in_use` with
 first, then the row. A deleted image may still sit in a browser or CDN cache for a while, since
 `/img/` is served as immutable.
 
+`campaigns.imageUsage` (member, read) answers the same `{ campaigns, settings }` without deleting.
 The editor has an Images button. Its dialog lists the uploads; choosing one inserts it, and admins can
-delete one. When the image is in use, a second confirmation names the campaigns.
+delete one. The dialog asks `imageUsage` first, so its one confirmation already names the campaigns
+that use the image; the 409 guard stays for API and MCP callers.
 
 ## Invites without email
 
