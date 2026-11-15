@@ -44,6 +44,19 @@ export function publicIssues(ctx: StoreCtx, newsletterId: string): PublicIssue[]
   const posts = ctx.db.all<WebPost>('SELECT * FROM website_posts WHERE newsletter_id = ? AND web_visible = 1', newsletterId).map((row): PublicIssue => ({ kind: 'post', row }))
   return [...campaigns, ...posts].sort((a, b) => issueDate(b) - issueDate(a) || b.row.id.localeCompare(a.row.id))
 }
+/** Public issue count from indexes, for paging checks without loading every issue. */
+export function countPublicIssues(ctx: StoreCtx, newsletterId: string, authorId?: string): number {
+  const filter = authorId ? ' AND author_id = ?' : ''
+  const args = authorId ? [newsletterId, authorId] : [newsletterId]
+  return ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM campaigns WHERE newsletter_id = ? AND ${publishedWhere}${filter}`, ...args)!.n
+    + ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM website_posts WHERE newsletter_id = ? AND web_visible = 1${filter}`, ...args)!.n
+}
+/** Whether `/<slug>` names a public issue, by the slug index (or the id when an issue has no slug). */
+export function hasPublicIssue(ctx: StoreCtx, newsletterId: string, slug: string): boolean {
+  return !!ctx.db.get(`SELECT 1 FROM campaigns WHERE newsletter_id = ? AND slug != '' AND slug = ? AND ${publishedWhere}`, newsletterId, slug)
+    || !!ctx.db.get(`SELECT 1 FROM campaigns WHERE id = ? AND newsletter_id = ? AND COALESCE(slug, '') = '' AND ${publishedWhere}`, slug, newsletterId)
+    || !!ctx.db.get('SELECT 1 FROM website_posts WHERE newsletter_id = ? AND slug = ? AND web_visible = 1', newsletterId, slug)
+}
 export const issueSlug = (issue: PublicIssue) => issue.row.slug || issue.row.id
 export const issueDate = (issue: PublicIssue) => issue.kind === 'campaign' ? issue.row.published_at ?? issue.row.sent_at ?? issue.row.created_at : issue.row.published_at
 export function assertSlugFree(ctx: StoreCtx, newsletterId: string, slug: string, exceptId = '') {

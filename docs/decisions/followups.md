@@ -52,3 +52,11 @@ The edge now signs an actor for website requests only on the app host and only f
 Its one use is to leave the owner's own visits out of page views. Custom hosts get no actor at all,
 and no website request with a state-changing method gets one, so the missing CSRF check there no
 longer matters. Signup form posts on a website are anonymous anyway.
+
+## Website 404s
+
+Before it loads the archive, the website route now checks the path with indexed queries: a count of
+public issues for paging, the author by slug, and the issue by slug (or id when it has none). A miss
+answers 404 at once, and that 404 is cached for 60 seconds (`s-maxage=60`, and 60 seconds in the
+in-process and Workers caches) under the same versioned key as the pages. Publishing, hiding or
+renaming anything bumps the version, so a cached 404 never hides a new post. 404s count no page view.
