@@ -114,6 +114,7 @@ export function Progress({ campaign, onChange }: {
   const done = counts.planned - counts.queued - counts.sending
   const pct = counts.planned ? Math.round((done / counts.planned) * 100) : 0
   const pending = steps.find((s) => s.state === 'pending')
+  const held = pending ? progress.data.nextStepHeld : null
   return <section className="space-y-4 rounded-xl border border-line bg-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">{status === 'scheduled' ? 'Scheduled' : status === 'sent' ? 'Sent' : status === 'paused' ? 'Paused' : status === 'canceled' ? 'Canceled' : 'Sending'}</h2><StatusBadge status={status} /></div>
     {status === 'scheduled' && <p className="text-sm">Goes out {when(progress.data.scheduledAt)}.</p>}
@@ -125,10 +126,11 @@ export function Progress({ campaign, onChange }: {
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">{LABELS.map(([key, label]) => <div key={key} className="rounded-lg bg-sunken p-3"><dt className="text-xs text-fg-3">{label}</dt><dd className="text-lg font-semibold">{(counts[key as keyof typeof counts] ?? 0).toLocaleString()}</dd></div>)}</dl>
     </>}
     {steps.length > 1 && <ol className="space-y-1 text-sm">{steps.map((s) => <li key={s.id} className="flex flex-wrap items-center gap-2"><Badge tone={s.state === 'done' ? 'ok' : s.state === 'released' ? 'accent' : 'neutral'}>{statusLabel(s.state)}</Badge><span>Step {s.step}: {s.kind === 'warmup' ? 'warm-up' : s.kind === 'more' ? 'the rest' : 'main'} · {s.planned.toLocaleString()} subscribers{s.state === 'pending' && s.releaseAt ? ` · releases ${when(s.releaseAt)}` : ''}</span></li>)}</ol>}
+    {status === 'sending' && held && <Banner kind="warn">{held.message}</Banner>}
     {error && <Banner kind="danger">{error}</Banner>}
     <div className="flex flex-wrap gap-2">
       {status === 'sending' && <Button loading={pause.isPending} onClick={() => pause.mutate({ campaignId: campaign.id })}>Pause</Button>}
-      {status === 'sending' && pending && <Button loading={more.isPending} onClick={() => more.mutate({ campaignId: campaign.id })}>Send to more now</Button>}
+      {status === 'sending' && pending && <Button loading={more.isPending} disabled={!!held} title={held?.message} onClick={() => more.mutate({ campaignId: campaign.id })}>Send to more now</Button>}
       {status === 'paused' && <Button variant="primary" loading={resume.isPending} onClick={() => resume.mutate({ campaignId: campaign.id })}>Resume</Button>}
       {status === 'paused' && <Button variant="danger" loading={cancel.isPending} onClick={async () => { if (await confirm({ title: 'Stop this send?', body: `${counts.queued.toLocaleString()} subscribers will not get this issue.`, confirmLabel: 'Stop send', danger: true })) cancel.mutate({ campaignId: campaign.id }) }}>Stop and skip the rest</Button>}
       {status === 'scheduled' && <Button variant="danger" loading={cancel.isPending} onClick={async () => { if (await confirm({ title: 'Cancel this schedule?', body: 'The issue will not be sent.', confirmLabel: 'Cancel schedule', danger: true })) cancel.mutate({ campaignId: campaign.id }) }}>Cancel schedule</Button>}

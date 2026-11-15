@@ -1,4 +1,4 @@
-import { imageShape, decodeImage } from './images.ts'
+import { imageShape, decodeImage, queueImageRemoval } from './images.ts'
 import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import { newId } from '../../core/ids.ts'
@@ -22,7 +22,9 @@ export const authorActions = [
     try {
       ctx.db.tx(() => {
         ctx.db.run('INSERT INTO uploads (key, newsletter_id, content_type, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', fullKey, i.newsletterId, i.contentType, bytes.length, actor.userId, ctx.now())
-        if (!ctx.db.run('UPDATE authors SET avatar_key = ? WHERE id = ? AND newsletter_id = ?', key, i.authorId, i.newsletterId).changes) throw notFound('That author')
+        const old = ctx.db.get<{ avatar_key: string | null }>('SELECT avatar_key FROM authors WHERE id = ? AND newsletter_id = ?', i.authorId, i.newsletterId)
+        if (!old || !ctx.db.run('UPDATE authors SET avatar_key = ? WHERE id = ? AND newsletter_id = ?', key, i.authorId, i.newsletterId).changes) throw notFound('That author')
+        queueImageRemoval(ctx, i.newsletterId, old.avatar_key)
       })
     } catch (error) { await ctx.platform.blobs.delete(fullKey); throw error }
     return { avatarKey: key }
@@ -41,5 +43,10 @@ export const authorActions = [
     if (!r) throw notFound('That author')
     return serialize(r)
   } }),
-  defineAction({ name: 'authors.delete', description: 'Delete a newsletter author.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'author', param: 'authorId' }, input: z.object({ newsletterId, authorId }), rest: { method: 'DELETE', path: '/newsletters/:newsletterId/authors/:authorId' }, mcp: { title: 'Delete an author', destructive: true }, handler: (ctx, i) => { ctx.db.run('DELETE FROM authors WHERE id = ? AND newsletter_id = ?', i.authorId, i.newsletterId); return { deleted: true } } }),
+  defineAction({ name: 'authors.delete', description: 'Delete a newsletter author.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'author', param: 'authorId' }, input: z.object({ newsletterId, authorId }), rest: { method: 'DELETE', path: '/newsletters/:newsletterId/authors/:authorId' }, mcp: { title: 'Delete an author', destructive: true }, handler: (ctx, i) => ctx.db.tx(() => {
+    const old = ctx.db.get<{ avatar_key: string | null }>('SELECT avatar_key FROM authors WHERE id = ? AND newsletter_id = ?', i.authorId, i.newsletterId)
+    ctx.db.run('DELETE FROM authors WHERE id = ? AND newsletter_id = ?', i.authorId, i.newsletterId)
+    queueImageRemoval(ctx, i.newsletterId, old?.avatar_key ?? null)
+    return { deleted: true }
+  }) }),
 ] as const

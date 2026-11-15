@@ -17,9 +17,10 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 - Merge fields such as `{{first_name|there}}`, a send preview and test emails to up to 5 addresses.
 - A review step that checks the subject, preview text, unsubscribe link, size against Gmail's clipping
   limit, postal address, sender domain, image alt text and links.
-- Schedule, pause, resume and cancel. Gradual sending for addresses you never emailed before, with an
-  automatic pause when bounces or complaints cross a safe rate. "Send to more now" and resuming a
-  paused send follow the same check. Send to the most engaged readers first.
+- Schedule, pause and resume a send, cancel a scheduled one, or stop a paused one and skip the rest.
+  Gradual sending for addresses you never emailed before, with an automatic pause when hard bounces pass
+  2.5% or complaints pass 0.08%. "Send to more now" and resuming a paused send follow the same check,
+  and the send page says when the next step is held and why. Send to the most engaged readers first.
 - One-click unsubscribe headers (RFC 8058) on every email.
 
 **Your list**
@@ -32,8 +33,10 @@ keeps your list, your issues and your stats in SQLite databases that you own.
   EmailOctopus and listmonk. Imports leave out invalid, misspelled, role, disposable, duplicate and
   suppressed addresses, and report each reason. Rows without a subscribed status and confirmed consent
   are added as unconfirmed and get no email; the import says so before it starts and in its report.
-- List hygiene: readers who ignore many issues in a row get one "still interested?" email and are
-  removed if they do not click.
+  Importing them again with consent confirmed subscribes them. No import brings back an address that
+  unsubscribed, bounced, complained or was deleted.
+- List hygiene: readers who ignore 8 issues in a row (you can change the number) get one "still interested?" email. If they do not
+  click within 14 days, they stop getting issues.
 
 **Delivery and tracking**
 
@@ -48,8 +51,7 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 
 - A public site for each newsletter at `/n/<slug>` or on your own domain: home page with a signup form,
   issue pages, author pages, RSS, sitemap, Open Graph tags and JSON-LD.
-- Privacy-friendly page view counts without cookies, plus Plausible, Google Analytics, Fathom or Umami
-  if you want them.
+- Page view counts without cookies, plus Plausible, Google Analytics, Fathom or Umami if you want them.
 
 **Teams and automation**
 
@@ -99,11 +101,24 @@ cd mailcorgi
 docker compose up -d
 ```
 
-Open <http://localhost:3000> and create the first account. On a server with a domain name, use the
-installer instead. It asks for your domain and turns on HTTPS:
+Open <http://localhost:3000> and create the first account. The port listens on this machine only; set
+`MAILCORGI_PORT` in `.env` to use another one. On a server with a domain name, use the installer
+instead. It asks for your domain, writes `.env` and starts the stack with Caddy for HTTPS
+(`docker compose --profile https up -d`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rizaardiyanto1412/mailcorgi/main/scripts/install.sh | sh
+```
+
+### Check a live install
+
+After you deploy, run this from a checkout to test the install over HTTPS. It uses no dev switches,
+creates its own test data and removes it afterwards. On a fresh install it creates the first account
+with these credentials.
+
+```sh
+npm ci
+npm run live:check -- --url https://news.example.com --email you@example.com --password 'your-password'
 ```
 
 ## Guides

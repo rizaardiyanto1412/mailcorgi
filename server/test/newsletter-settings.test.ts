@@ -63,3 +63,32 @@ test('concurrent newsletter creation cannot race past the account limit', async 
     assert.equal((await owner.action('newsletters.list', {})).newsletters.length, 1)
   } finally { install.close() }
 })
+
+test('replacing a logo, icon or avatar removes the old file, and so does deleting the author', async () => {
+  const install = await createInstall()
+  try {
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const nl = await owner.action('newsletters.create', { name: 'Branding' })
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP1sAAAAASUVORK5CYII='
+    const stored = async (key: string | null) => (await install.fetch(`/img/${owner.accountId}/${key}`)).status
+    for (const kind of ['logo', 'icon'] as const) {
+      const pick = (n: { logoKey: string | null; iconKey: string | null }) => kind === 'logo' ? n.logoKey : n.iconKey
+      const first = pick(await owner.action('newsletters.uploadImage', { newsletterId: nl.id, kind, contentType: 'image/png', data: png }))
+      const second = pick(await owner.action('newsletters.uploadImage', { newsletterId: nl.id, kind, contentType: 'image/png', data: png }))
+      await install.runJobs()
+      assert.equal(await stored(second), 200, `the new ${kind} is kept`)
+      assert.equal(await stored(first), 404, `the old ${kind} is gone`)
+    }
+    const author = await owner.action('authors.create', { newsletterId: nl.id, name: 'A writer', slug: 'writer' })
+    const first = (await owner.action('authors.uploadAvatar', { newsletterId: nl.id, authorId: author.id, contentType: 'image/png', data: png })).avatarKey
+    const second = (await owner.action('authors.uploadAvatar', { newsletterId: nl.id, authorId: author.id, contentType: 'image/png', data: png })).avatarKey
+    await install.runJobs()
+    assert.equal(await stored(second), 200)
+    assert.equal(await stored(first), 404)
+    await owner.action('authors.delete', { newsletterId: nl.id, authorId: author.id })
+    await install.runJobs()
+    assert.equal(await stored(second), 404)
+    const left = (await install.app.platform.blobs.list(`${owner.accountId}/`)).length
+    assert.equal(left, 2, 'only the current logo and icon remain')
+  } finally { install.close() }
+})

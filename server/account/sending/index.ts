@@ -204,18 +204,21 @@ export const sendingModule = {
         handler: (ctx, input) => audienceCount(ctx, getCampaignRow(ctx, input.campaignId)),
       }),
       defineAction({
-        name: 'campaigns.progress', description: 'Live counters of a send: queued, sent, delivered, bounced, opened and the gradual steps.', scope: 'account', role: 'member', effect: 'read', resource,
+        name: 'campaigns.progress', description: 'Live counters of a send: queued, sent, delivered, bounced, opened and the gradual steps. nextStepHeld says why the next step cannot be released now (bounce or complaint rate over the limit), or is null.', scope: 'account', role: 'member', effect: 'read', resource,
         input: z.object({ campaignId }), rest: { method: 'GET', path: '/campaigns/:campaignId/progress' }, mcp: { title: 'Read campaign send progress', destructive: false },
         handler: (ctx, input) => {
           const row = getCampaignRow(ctx, input.campaignId)
           const stats = readStats(ctx, row.id)
           const rows = ctx.db.all<{ status: string; n: number }>('SELECT status, COUNT(*) AS n FROM deliveries WHERE campaign_id = ? GROUP BY status', row.id)
           const by = (status: string) => rows.find((r) => r.status === status)?.n ?? 0
+          const list = steps(ctx, row.id)
+          const breach = row.status === 'sending' && list.some((s) => s.state === 'pending') ? stepGate(stats) : null
           return {
             status: row.status, pauseReason: row.pause_reason, pauseMessage: row.pause_reason ? PAUSE_MESSAGES[row.pause_reason] ?? row.pause_reason : null,
             scheduledAt: row.scheduled_at, sendStartedAt: row.send_started_at, sentAt: row.sent_at,
             counts: { planned: stats.planned, queued: by('queued'), sending: by('sending'), sent: by('sent'), delivered: by('delivered'), bounced: by('bounced'), complained: by('complained'), failed: by('failed'), skipped: by('skipped'), unknown: by('unknown'), opens: stats.opens, clicks: stats.clicks, unsubscribes: stats.unsubscribes, softBounces: stats.softBounces },
-            steps: steps(ctx, row.id),
+            steps: list,
+            nextStepHeld: breach ? { reason: breach.reason, message: stepGateMessage(breach) } : null,
           }
         },
       }),

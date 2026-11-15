@@ -4,7 +4,7 @@ import { defineAction, type Actor } from '../../core/actions.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { websiteHost } from '../website/index.ts'
 import { authorActions } from './authors.ts'
-import { imageShape, decodeImage } from './images.ts'
+import { imageShape, decodeImage, deleteBrandingImage, queueImageRemoval } from './images.ts'
 import { newId, newNewsletterKey } from '../../core/ids.ts'
 import { themeSchema, type Theme } from '../render/theme.ts'
 import { limits } from '../usage/index.ts'
@@ -133,6 +133,7 @@ export const newslettersModule = {
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
     registerNewsletterDelete(reg)
+    reg.job<{ newsletterId: string; key: string }>('newsletters.deleteImage', deleteBrandingImage)
     // A newsletter being deleted no longer exists for actions; its rows are going away.
     reg.resolver('newsletter', (ctx, id) => (ctx.db.get('SELECT id FROM newsletters WHERE id = ? AND deleting_at IS NULL', id) ? id : null))
     reg.resolver('author', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM authors WHERE id = ?', id)?.newsletter_id ?? null)
@@ -163,7 +164,9 @@ export const newslettersModule = {
           try {
             ctx.db.tx(() => {
               ctx.db.run('INSERT INTO uploads (key, newsletter_id, content_type, bytes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)', fullKey, i.newsletterId, i.contentType, bytes.length, actor.userId, ctx.now())
+              const old = ctx.db.get<{ logo_key: string | null; icon_key: string | null }>('SELECT logo_key, icon_key FROM newsletters WHERE id = ?', i.newsletterId)
               ctx.db.run(`UPDATE newsletters SET ${i.kind === 'logo' ? 'logo_key' : 'icon_key'} = ?, updated_at = ? WHERE id = ?`, key, ctx.now(), i.newsletterId)
+              queueImageRemoval(ctx, i.newsletterId, (i.kind === 'logo' ? old?.logo_key : old?.icon_key) ?? null)
             })
           } catch (err) { await ctx.platform.blobs.delete(fullKey); throw err }
           return getNewsletter(ctx, i.newsletterId)

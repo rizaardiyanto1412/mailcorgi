@@ -4,7 +4,8 @@ MailCorgi is a newsletter app: write an issue, send it to a list, publish it on 
 Cloudflare Workers (one click) or on any Node.js 22+ server (Docker). License: AGPL-3.0-only.
 
 This file is the contract for everyone who builds MailCorgi. Read it before you write code. If the code
-and this file disagree, fix one of them in the same change.
+and this file disagree, fix one of them in the same change. `docs/decisions/` keeps the history of
+each build unit's choices; their accepted deviations are folded in here.
 
 MailCheap (github.com/marclou/mailcheap) is only a feature reference. Never copy its code, text or
 assets. Ansa (`~/Code/ansa`) is the owner's own MIT app: copy from it freely.
@@ -54,11 +55,11 @@ server/
     ratelimit.ts   fixed-window counters in a store table
   edge/            routing: sessions, account resolution, public tokens, webhooks, assets
   control/         control store: schema.ts, rpc.ts, routes.ts, modules below
-    auth/ accounts/ directory/ install/ billing/ admin/ suppression/
+    auth/ accounts/ directory/ install/ billing/ admin/ suppression/ setup/ dev/
   account/         account store: schema.ts, rpc.ts, routes.ts, modules below
     newsletters/ contacts/ segments/ imports/ campaigns/ render/ sending/
     tracking/ signup/ website/ domains/ stats/ hygiene/ team/ notifications/
-    apikeys/ usage/
+    apikeys/ usage/ setup/ dev/
   email/           EmailProvider interface + ses.ts resend.ts smtp.ts test.ts, platform-email.ts
   api/             REST v1 router, OpenAPI, MCP server (all generated from the action registry)
   platform-node.ts Node platform + entry (index.ts)
@@ -66,8 +67,9 @@ server/
 worker/index.ts    Cloudflare entry: Worker edge + ControlStore + AccountStore classes
 web/               Vite + React 19 + Tailwind 4 SPA (dashboard, auth, admin)
   src/app/ ui/ lib/ features/<module>/
-scripts/           ci.sh, smoke.ts (drives a running instance end to end)
-docs/              this file, self-hosting.md, api.md
+scripts/           ci.sh, smoke.ts + smoke/ (end to end), ui-pass.ts (browser pass), live-check.ts
+                   (checks a real deployment), docs-api.ts, env-reference.ts, backup.mjs, install.sh
+docs/              this file, self-hosting.md, cloud-mode.md, api.md (generated), decisions/
 ```
 
 Code style follows Ansa: TypeScript strict, ES modules, 2 spaces, single quotes, no semicolons, imports
@@ -106,8 +108,7 @@ date, module name and description (`2026-11-16-imports-add-foo`). Duplicate ids 
 malformed ids and wrong module names are rejected. Shipped ids and SQL are immutable.
 A migration may touch only its module's tables or add columns/indexes it owns, and must be safe
 after any other module's migrations. Feature units add their own migration and smoke step files;
-see `docs/development.md`. Contract deviations go in `docs/decisions/<unit>.md` instead of edits
-here. At most 100 bound parameters per statement and
+see `docs/development.md`. At most 100 bound parameters per statement and
 100 columns per table (Durable Object limits): batch inserts in chunks.
 
 ### 3.2 StoreCtx and Platform
@@ -135,9 +136,17 @@ interface Platform {
   setAlarm(store: StoreRef, at: number | null): Promise<void>   // the store re-arms to its next wake time; null clears
   resolveDns(name: string, type: 'TXT'|'CNAME'|'MX'|'A'): Promise<string[]>  // DNS over HTTPS
   waitUntil(p: Promise<unknown>): void
+  destroyStore(store: StoreRef): Promise<void>   // deletes an account store's data for good
   limits: { subrequestsPerRun: number }   // 40 on Workers Free, 900 otherwise, 900 on Node
 }
 ```
+
+`resolveDns` throws `DnsUnavailableError` on a network or HTTP error, an unreadable answer or a
+resolver status other than NOERROR or NXDOMAIN; callers answer `503 dns_unavailable` and change
+nothing, so a resolver outage never unverifies a domain or host. `MC_TEST_DNS` (JSON keyed
+`TYPE:name`) replaces every lookup with canned answers for tests, smoke and the UI pass (see 3.6).
+The Worker reads its plan from `WORKERS_PLAN`; `wrangler.jsonc` ships `"free"` (with `keep_vars`),
+and a Workers Paid install deletes that line.
 
 RPC methods are plain functions `(ctx, args) => result`. `server/control/rpc.ts` and `server/account/rpc.ts`
 hold the typed interfaces (`ControlRpc`, `AccountRpc`); a module adds its methods by declaration merging
@@ -197,7 +206,7 @@ The edge strips every inbound `x-mc-*` header, then routes:
 | `/api/auth/*`, `/api/control/*`, `/api/billing/*`, `/admin` APIs | control store | — |
 | `/api/actions/*` (scope account) | account store | session → `control.resolveSession` → current account |
 | `/api/v1/*`, `/mcp` | account store | API key `mc_<accountId>_<secret>` |
-| `/t/o/:token`, `/t/c/:token`, `/u/:token`, `/confirm/:token`, `/keep/:token` | account store | token prefix `<accountId>.` |
+| `/t/o/:token`, `/t/c/:token`, `/u/:token`, `/confirm/:token`, `/keep/:token` | account store | token prefix `<accountId>.` (`/u/` also serves the preferences page for a `p` token) |
 | `/api/public/subscribe/:newsletterKey`, `/embed.js?key=`, `/f/:newsletterKey` | account store | key `nl_<accountId>_<rand>` |
 | `/api/public/tls-check?domain=` | edge | Caddy's on-demand TLS `ask`: 200 for the app host and verified custom hosts |
 | `/n/:slug/*` and any request on a custom website host | account store | `control.lookupSite(slug or host)`, cached 60 s |
@@ -205,7 +214,8 @@ The edge strips every inbound `x-mc-*` header, then routes:
 | `/hooks/stripe`, `/hooks/polar` | control store | — |
 | `/img/:accountId/:key` | blobs directly | path |
 | `/healthz` | edge | — |
-| everything else | SPA assets (`index.html` fallback) | — |
+| `/api/dev/*`, `/hooks/test` | control store | only when `MC_TEST_DNS` is active (3.6) |
+| everything else | SPA assets (`index.html` fallback for paths without a file extension) | — |
 
 The edge forwards the original request to the store's HTTP app and adds trusted headers
 (`x-mc-actor` = signed JSON actor, `x-mc-account`). Session cookie: `mc_session`, HttpOnly, SameSite=Lax,
@@ -213,7 +223,18 @@ Secure when the app URL is https. State-changing dashboard requests need the `x-
 matches the session's CSRF token.
 
 Custom website hosts are known to the control directory. A request whose host is neither the app host
-nor a known website host gets a 404.
+nor a known website host gets a 404. Website requests carry a signed actor only on the app host and
+only for GET and HEAD (to leave the owner's visits out of page views); custom hosts never get one.
+
+Static assets: on Cloudflare `/assets/*` skips the Worker and `not_found_handling` is `none`, so a
+missing hashed file is a 404, never `index.html`; the Worker serves the SPA shell for other paths.
+`web/public/_headers` makes `/assets/*` immutable for a year, and Node sends the same header. The web
+app reloads once when a chunk from an older deploy fails to load.
+
+Every response carries `Strict-Transport-Security: max-age=31536000` (no `includeSubDomains`) when the
+app is on https and not on a local host. On Node the edge trusts `x-forwarded-for`, `-proto`, `-host`
+and `x-real-ip` only from a peer named in `TRUST_PROXY` (addresses, or `true` for any private or
+loopback peer) and strips them otherwise. The Worker uses `cf-connecting-ip`.
 
 ### 3.6 Secrets and config
 
@@ -222,18 +243,29 @@ No secret is required to deploy. On first boot the control store generates a mas
 signing per account, credential encryption, suppression hashing.
 
 Environment: `APP_URL` (optional; learned from the first sign-in when unset), `CLOUD=true`,
-`BILLING_PROVIDER=stripe|polar`, `ADMIN_EMAILS` (comma list, install admins), `DATA_DIR`, `PORT`,
-`IMAGES_PUBLIC_URL` (optional CDN origin for images), `SEND_BATCH_SIZE`, `TURNSTILE_SITE_KEY` /
-`TURNSTILE_SECRET_KEY` (optional). Provider credentials (SES, Resend, SMTP, Stripe, Polar) are entered in
-the install settings page and stored encrypted in the control store; matching env vars
-(`SES_ACCESS_KEY_ID`, `STRIPE_SECRET_KEY`, …) take precedence when set. Never log a secret or an email
-body.
+`BILLING_PROVIDER=stripe|polar`, `ADMIN_EMAILS` (comma list, install admins), `ALLOWED_EMAILS`,
+`SIGNUP_MODE`, `DATA_DIR`, `PORT`, `HOST`, `TRUST_PROXY`, `IMAGES_PUBLIC_URL` (optional CDN origin for
+images), `SEND_BATCH_SIZE`, `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` (optional), `WORKERS_PLAN`,
+`WEBSITE_CNAME_TARGET`, `CF_API_TOKEN` / `CF_ZONE_ID`. The full list is generated into
+`docs/self-hosting.md` from `scripts/env-reference.ts`, and a test fails when code and list differ.
+Provider credentials (SES, Resend, SMTP, Stripe, Polar, Cloudflare) are entered in the install settings
+page and stored encrypted in the control store; matching env vars (`SES_ACCESS_KEY_ID`,
+`STRIPE_SECRET_KEY`, …) take precedence when set. Saving a provider choice that lacks its credentials
+(after merging saved values and env) is refused with `400 missing_credentials`. Never log a secret or
+an email body.
+
+`MC_TEST_DNS` turns on canned DNS, the install-admin actions `dev.outbox`, `dev.ingest` and
+`dev.controlOutbox`, `GET /api/dev/code`, and the `test` billing provider with `POST /hooks/test`. It
+is inert when `NODE_ENV=production` (the Docker image sets it) and on a Worker whose app URL is not a
+loopback address.
 
 ## 4. Modes
 
 - **Self-hosted** (default): the first visitor creates the install admin (email + password, no email
-  needed). Further users join by invitation or when their email is in `ALLOWED_EMAILS`. Each user owns
-  one account. No billing, no limits.
+  needed). Further users join by invitation link (proof on its own), or, when their email is in
+  `ALLOWED_EMAILS`, with an emailed 6-digit code. While the email provider is `test`, sign-up is by
+  invitation only. `ADMIN_EMAILS` grants install admin only to a verified address. Each user owns one
+  account. No billing, no limits (newsletters and team size included).
 - **Cloud** (`CLOUD=true`): open sign-up with an emailed 6-digit code, plans with limits, billing
   through Stripe or Polar, admin console with blocking. Both modes run from the same files, so every
   change has to work in both.
@@ -334,12 +366,35 @@ Indexes that matter: `contacts(newsletter_id, status)`, `deliveries(campaign_id,
 `deliveries(provider_message_id)`, `events(newsletter_id, at)`, `events(campaign_id, type)`,
 `page_views(newsletter_id, at)`.
 
+Module migrations add to the base tables above (each module owns its own):
+
+- **newsletters**: `newsletters.deleting_at`.
+- **contacts**: triggers that keep `account_meta.active_contacts` (subscribed + unconfirmed) exact.
+- **imports**: `imports.uploaded_at`, `headers`, `added_detail`; `import_chunks.position`;
+  `import_seen`, `import_skips`, `import_dns` (24-hour MX cache).
+- **sending**: `deliveries.attempts` (a temporary refusal retries at most 3 times).
+- **signup**: `signup_settings`, `signup_mail` (confirmation and welcome attempts).
+- **website**: `website_posts` (web-only Markdown posts), `website_hosts`, `website_cache_versions`
+  plus triggers on `campaigns`, `newsletters` and `authors` that bump the cache version.
+- **stats**: `stats_reports`, `stats_sources` (with a live trigger on `events`), `stats_website`.
+- **hygiene**: `contacts.strict_ignored_streak`, `deliveries.hygiene_epoch`, `hygiene_requests`,
+  `hygiene_paused`.
+- **notifications**: `notifications.email_attempted_at`, `notification_receipts`,
+  `notification_emails`, `notification_events`.
+- **control/admin**: `admin_alert_emails`, `admin_alert_email_attempts` (email cooldowns).
+
 ### 5.3 State machines
 
-- **Contact**: `unconfirmed → subscribed` (confirm link, or an import/API call that asserts consent);
+- **Contact**: `unconfirmed → subscribed` (confirm link, or an import/API call that asserts consent,
+  including a re-import of an existing unconfirmed contact);
   `subscribed → unsubscribed | bounced | complained | cleaned`. Only the contact's own action
   (confirm link, signup with opt-in) brings a suppressed address back. Imports and API calls never do.
-- **Campaign**: `draft → scheduled → sending → sent`; `sending ⇄ paused`; `draft|scheduled → canceled`.
+  A signup with double opt-in may create an unconfirmed row for a deleted or newsletter-suppressed
+  address; the tombstone and suppression stay until the reader confirms.
+- **Campaign**: `draft → scheduled → sending → sent`; `sending ⇄ paused`; `scheduled ⇄ paused`
+  (account protection only); `draft|scheduled → canceled`. A paused send cannot be canceled: stopping
+  it marks the queued deliveries `skipped` and finishes the campaign as `sent`; a running send must be
+  paused first. Sending now accepts a scheduled time up to 5 seconds in the past (clock drift).
   Only `draft` is editable. One delivery row per `(campaign_id, contact_id)`; a send is attempted at
   most once automatically (11.5).
 - **Delivery**: `queued → sending → sent → delivered`; `sending|sent|delivered → bounced`;
@@ -359,11 +414,15 @@ actions, its jobs, its tests in `server/test/<module>.test.ts`, and its pages in
 `web/src/features/<module>/`. A module calls another module only through that module's exported
 functions in its `index.ts`.
 
-**newsletters** — create, edit, archive, switch. Settings: identity, sender, reply-to, postal address,
-logo, theme (colors, fonts, button style, header/footer), authors, website options. Unlimited newsletters
-on self-hosted; per-plan limits in cloud. `MAX_NEWSLETTERS` is retained in config for older installs
-but does not impose a self-hosted plan limit. Slug changes update the
-control directory.
+**newsletters** — create, edit, archive, switch, delete. Settings: identity, sender, reply-to, postal
+address, logo, icon, theme (colors, fonts, button style, header/footer), authors, website options.
+Unlimited newsletters on self-hosted; per-plan limits in cloud. Slug changes update the control
+directory. Replacing a logo, icon or author avatar, or deleting an author, queues removal of the old
+file after the new state commits (`newsletters.deleteImage`, skipped while anything still names it).
+`newsletters.delete` (owner) needs `confirmName` equal to the name and is refused while a campaign is
+sending or scheduled. It sets `deleting_at`, after which every action on the newsletter or its rows
+404s, and a resumable `newsletters.delete` job removes images (blob first, then the row), queued jobs
+and rows in chunks, then team grants, invites and the directory entry. Account-wide suppressions stay.
 
 **contacts** — list with search, status filter, tag filter, sort, paging (keyset). Create, edit,
 delete (writes `deleted_contacts`), bulk tag, bulk delete, bulk unsubscribe. Custom fields. Contact
@@ -381,13 +440,22 @@ Buttondown, Ghost, EmailOctopus and listmonk, including their status and signup 
 processes chunks. Cleaning leaves out: invalid syntax, misspelled domains (gmial.com → reported with the
 fix suggested), role addresses, disposable domains, duplicates, suppressed and previously deleted
 contacts, and domains without MX (checked through `platform.resolveDns`, cached per domain). The report
-lists every skip reason with counts and a downloadable CSV of skipped rows.
+lists every skip reason with counts and a downloadable CSV of skipped rows (admins only). Imports use
+`asserted` or `pending` consent, never `confirmed`. Opt-outs in the file become suppressed contacts and
+count as `imported_<status>` skips. A row for an existing contact is a duplicate, except that a
+consented subscribed row turns an existing `unconfirmed` contact `subscribed` and counts as
+`updated`. The report splits added contacts into subscribed and unconfirmed, with the reason. Import
+states: `uploading`, `queued`, `processing`, `completed`, `canceled`, `stalled` (no chunk for an hour),
+`failed` (eight processing failures). Each row commits its contact change and checkpoint together.
 
 **campaigns** — drafts, autosave with a `revision` check (a stale save gets a 409 with the newer
 revision), duplicate, delete, schedule, cancel. Formats: `doc` (the editor), `markdown`, `html` (API and
 MCP). Review step with checks: subject present and under 150 chars, preview text, unsubscribe link in
 html format, size under Gmail's 102 KB clip, postal address, verified sender domain, images have alt
-text, links resolve to http(s). Test email to up to 5 addresses.
+text, links resolve to http(s). Test email to up to 5 addresses. Image library: `campaigns.listImages`
+lists campaign uploads (not logos, icons or avatars); `campaigns.deleteImage` refuses with
+`409 image_in_use` while a campaign or the settings mention the image, unless `confirm: true`. A
+deleted image can linger in caches because `/img/` is served immutable.
 
 **render** — pure functions, no DOM. `renderEmail(campaign, newsletter, recipient) → { html, text,
 headers }` and `renderWeb(campaign, newsletter) → html`. The doc format is TipTap JSON with these nodes:
@@ -402,37 +470,53 @@ escaped. HTML-format campaigns are sanitized (`sanitize-html`) for the web archi
 **sending** — audience → `deliveries` rows (chunked inserts) → `send.batch` jobs. Each run claims up to
 `min(SEND_BATCH_SIZE, platform.limits.subrequestsPerRun)` queued rows, renders, calls the provider once
 per recipient, records the provider message id. Pace is capped by the provider's send rate
-(`install_settings.send_rate_per_second`, default 10). Features: schedule, pause, resume, cancel;
-gradual sending for contacts the account never emailed (a random 2% first, then 5% more, then the rest,
-30 minutes apart, each step released only while that campaign's hard bounces stay under 2.5% and
-complaints under 0.08%); "send to most engaged first, the rest later"; auto-pause past those
-thresholds; provider throttling or Gmail deferrals back off with jitter and resume. Headers on every
+(`install_settings.send_rate_per_second`, default 10). Features: schedule, pause, resume, stop (a paused
+send only; see 5.3); gradual sending when the audience has at least 50 contacts the account never
+emailed (step 1: everyone emailed before plus a random 2% of the new ones; step 2: 5% more 30 minutes
+later; step 3: the rest 30 minutes after that); "most engaged first" (opened or clicked in the last 90
+days now, the rest 24 hours later); `campaigns.sendMore` releases the next step at once. One gate,
+`stepGate`, holds every step release (timed, `sendMore`, and a resume into a due step) while the whole
+campaign's hard bounces exceed 2.5% or complaints 0.08%, once 20 emails went out; `sendMore` and
+`resume` then refuse with `409 step_held`, and `campaigns.progress` reports `nextStepHeld { reason,
+message }` so the dashboard disables the button and says why. A running send auto-pauses past the same
+limits measured from the last resume (from 200 emails). Provider throttling or Gmail deferrals back off
+with jitter and resume. Headers on every
 email: `List-Unsubscribe` (https + mailto), `List-Unsubscribe-Post: List-Unsubscribe=One-Click`,
 `Feedback-ID`, `X-MC-Account`, `X-MC-Delivery`. Suppressed and non-subscribed contacts are filtered at
 audience time and again right before each send.
 
 **tracking** — open pixel `/t/o/<token>`, click redirect `/t/c/<token>` (only to URLs recorded in
 `links`: never an open redirect), unsubscribe `/u/<token>` (GET shows a confirm page, POST one-click per
-RFC 8058), preferences page, `/keep/<token>`. Tokens are HMAC-signed with the account's token key.
-Opens and clicks from link scanners are left out: known scanner user agents, data-center opens within
-2 seconds of delivery, and clicks on every link within a few seconds. Provider webhooks (SES via SNS,
+RFC 8058), preferences page (also under `/u/`, picked by token purpose), `/keep/<token>`. Tokens are
+HMAC-signed with the account's token key. Opens and clicks from link scanners are left out: known
+scanner user agents, opens within 2 seconds and clicks within 3 seconds of the send (neither platform
+can detect data-center IPs), and every link of an issue clicked within 10 seconds (undone). Opens
+through recognized privacy proxies (Apple Mail, Google image proxy) are flagged. Provider webhooks (SES via SNS,
 Resend via Svix) become one event shape (`delivered`, `bounce` hard/soft, `complaint`, `deferred`) and
 update deliveries, contacts, suppressions and, for hard bounces to nonexistent mailboxes, the global
 suppression list in the control store.
 
 **signup** — hosted form page `/f/<newsletterKey>`, embeddable script `/embed.js` (renders an iframe or
 inline form), and `POST /api/public/subscribe/<newsletterKey>` (JSON or form-encoded, CORS open). Double
-opt-in on by default: a confirm email, then `subscribed` on click. Welcome email after confirmation.
-Abuse limits: per IP and per target email (`ratelimit.ts`), honeypot field, minimum fill time, optional
-Turnstile, and no more than 3 confirm emails per address per day.
+opt-in on by default: a confirm email, then `subscribed` on click. Welcome email after confirmation
+(its content is a `kind: 'welcome'` draft campaign; confirm and welcome emails go out as system emails
+with durable attempt records). Abuse limits: 20 submissions per IP per hour, 10 per target per hour,
+honeypot field, a signed `formToken` from `GET /api/public/subscribe/<key>` that must be 2 seconds to
+1 hour old, optional Turnstile, and no more than 3 confirm emails per address per day. Past the plan
+contact limit the endpoint answers `503 not_accepting` and the owner is told once a month. A success
+redirect may be any absolute http(s) URL (an exception to the same-origin rule in section 10).
 
 **website** — server-rendered public site per newsletter at `/n/<slug>` and on a custom host: home
 (description, signup form, featured and latest issues), issue pages, author pages, paging, RSS
 (`/feed.xml`), `sitemap.xml`, `robots.txt`, Open Graph and Twitter meta, JSON-LD, canonical URLs.
-Owner options: analytics ids (Plausible, GA4, Fathom, Umami by id only), custom head/body code (custom
-hosts only), social links, hide an issue from the web. Page views are counted without cookies (bots
-left out). Custom host flow: owner enters a hostname, MailCorgi shows a CNAME target and a TXT
-verification record, checks them, then registers the host in the control directory. On Cloudflare the
+Owner options: analytics ids (Plausible, GA4, Fathom, Umami by id only), custom head/body code (only on
+a verified custom host), social links, hide an issue from the web, and web-only Markdown posts
+(`website_posts`) that never send email. Pages are cached per newsletter cache version (Cache API on
+Cloudflare, a 256-entry LRU on Node, `s-maxage=300`); unknown paths answer a 404 cached for 60
+seconds. Page views are counted without cookies (bots, prefetches, feeds and 404s left out). Custom
+host flow: owner enters a hostname, MailCorgi shows a CNAME target (`WEBSITE_CNAME_TARGET` or the app
+host) and a TXT record at `_mailcorgi.<host>`, checks both, then registers the host in the control
+directory through a job. On Cloudflare the
 operator also adds the hostname to the Worker (Custom Domain or Cloudflare for SaaS; when
 `CF_API_TOKEN` and `CF_ZONE_ID` are set MailCorgi creates the custom hostname itself). On Node the
 bundled Caddy config uses on-demand TLS with `/api/public/tls-check` as its `ask` endpoint.
@@ -445,33 +529,44 @@ and only check SPF/DMARC presence.
 
 **stats** — overview (subscribers over time, growth, last campaigns), campaign report (sent, delivered,
 unique opens, unique clicks, bounces, complaints, unsubscribes, link table, by inbox provider,
-timeline), contacts growth by source, website views. Counters come from `daily_stats` and cached
-`campaigns.stats`, never from scanning `events` on page load.
+timeline), contacts growth by source, website views. Counters come from `daily_stats`, cached
+`campaigns.stats` and the `stats_*` tables, never from scanning `events` on page load; the one
+exception is the current subscriber count, an indexed count on `contacts`. Rollup jobs rebuild them.
 
 **hygiene** — on by default per newsletter. A contact who ignored N consecutive issues (default 8, and
 at least 90 days subscribed) gets one "do you still want this?" email (`kind 'keep'`). No click within
-14 days → `cleaned`. Account protection: past 5% hard bounces or 0.3% complaints over the trailing
-1,000+ emails the account store asks the control store to block the account (cloud) or pauses all sends
-and alerts the admin (self-hosted).
+14 days → `cleaned`. A scan queues at most 25 reminders per run; a strict-engagement option ignores
+privacy-proxy opens. Account protection (always on): past 5% hard bounces or 0.3% complaints over the
+latest 1,000 sent emails, or on any global spam-trap match, the account store pauses all sending and
+scheduled campaigns and asks the control store to block the account (cloud,
+`control.requestBlock`) or alerts the admin (self-hosted). Resume needs a newer active policy after
+the block (cloud) or the owner typing `RESUME` (self-hosted), and starts a fresh 1,000-email window.
 
-**team** — the owner invites up to 5 people per newsletter as `admin` or `member`. Members write and
-edit drafts and see stats. Admins also send, import, and change newsletter settings. Only the owner
-manages billing, domains, API keys, team and account deletion. Invitations are emailed links; the
-invitee signs up or signs in, then sees the shared newsletter in their switcher.
+**team** — the owner invites people to each newsletter as `admin` or `member`. Self-hosted installs have
+no team limit; in cloud mode the plan's `maxTeamPerNewsletter` limits members plus pending invitations
+(5 when a plan sets none). Members write and edit drafts, list contacts and see stats. Admins also
+send, import, export contacts and change newsletter settings. Only the owner manages billing, domains,
+API keys, team and account deletion. Invitations are emailed links valid for 7 days; `team.invite`
+also returns the link once, so an install without a real email provider can share it. The invitee
+signs up or signs in, then sees the shared newsletter in their switcher. Team actions run in the
+control store.
 
 **notifications** — bell in the sidebar with unread count. Created by: import finished, campaign sent,
 campaign paused, domain verified or failed, account blocked, invite accepted, plan limit near. Important
-ones are also emailed to the owner. Install admins get `admin_alerts` (dead jobs, provider refusing
-sends, webhook failures, auto-blocks) on `/admin` and by email to `ADMIN_EMAILS`.
+ones (paused or failed campaigns, failed domains, blocks, limits, failed imports, account protection)
+are also emailed to the owner, at most once per kind in six hours. Install admins get `admin_alerts`
+(dead jobs, provider refusing sends, webhook failures, auto-blocks) on `/admin` and by email to
+`ADMIN_EMAILS`, with the same cooldown.
 
 **apikeys + api** — keys `mc_<accountId>_<secret>` with `full` or `read` access, shown once. REST v1 and
 the OpenAPI document at `/api/v1/openapi.json` come from the registry. MCP (`/mcp`, stateless streamable
 HTTP, JSON-RPC over POST) exposes the same actions as tools; destructive and sending tools say so in
 their descriptions and annotations. `llms.txt` and `/docs/api` render from the registry.
 
-**control/auth** — sign-up, sign-in (password, or emailed code in cloud mode), sign-out, password reset,
-email change with confirmation, sessions list and revoke. Passwords: PBKDF2-SHA256 via WebCrypto.
-Attempts are rate-limited per IP and per email.
+**control/auth** — sign-up (emailed 6-digit code in both modes, except first-run setup and invite
+links), sign-in (password, or emailed code in cloud mode), sign-out, password reset, email change with
+confirmation, sessions list and revoke. Passwords: PBKDF2-SHA256 via WebCrypto. Attempts are
+rate-limited per IP and per email.
 
 **control/billing + plans** (cloud only) — plans in `server/control/billing/plans.ts`: `free`, `starter`,
 `growth`, `pro`, `scale`, each with `maxContacts`, `maxEmailsPerMonth`, `maxNewsletters`,
@@ -499,7 +594,9 @@ Billing details:
   period plus a 7-day grace period. Payment recovery clears expiry. A 30-day block returns to free
   and cancels billing. Policy pushes requeue if the version changed while RPC was in flight.
 - Account stores push usage immediately after bootstrap and hourly afterward through `usage.push`.
-  Monthly limits at send time still use the reserved permits contract in 11.5; snapshots are for display.
+  Monthly limits at send time still use the reserved permits contract in 11.5. `billing.get` reads live
+  counts through `account.liveUsage`, falling back to the snapshot; the admin list shows snapshots.
+  Limit errors carry `details { resource, used, limit }`.
 - Cloud plan-limit errors include `details.billingUrl = '/settings/billing'`; the shared web shell
   displays a link to plans and usage. Billing settings navigation is absent in self-hosted mode.
 
@@ -514,15 +611,16 @@ Provider documentation checked while implementing (November 15, 2026):
 
 **control/admin** — install settings (email provider and credentials, sender for system emails, sending
 on/off, billing provider keys, sign-up rules), accounts list with usage, block and unblock with a
-reason, impersonation-free read-only account summary, alerts, dead jobs with retry. Account deletion:
+reason, impersonation-free read-only account summary, alerts, dead jobs with retry, and a setup
+checklist (`setup.checklist`, which asks account stores through `account.setupStatus`). Account deletion:
 the owner requests it, the control store marks `deleting`, the account store cancels sends and wipes
 itself and its images, then the control rows go.
 The control store first cancels the subscription, then calls `account.selfWipe({})` until it returns
 `{ done: true }`. The account store marks a deleting policy, cancels queued jobs, removes at most 20
-blobs per call, and clears feature tables. It retains migrations and a policy tombstone so an old RPC
-cannot bootstrap deleted data. Empty SQLite databases / Durable Objects remain allocated because the
-platform contract has no store-destroy method. Control users, sessions, memberships, invites, sites,
-usage and addressed test emails are removed only after the wipe succeeds. Every step may retry.
+blobs per call, and clears feature tables. Then `platform.destroyStore` deletes the store (Node removes
+the database files; the Worker calls `deleteAll()` on the object); a 404 from a store that is already
+gone counts as done. Control users, sessions, memberships, invites, sites, usage and addressed test
+emails are removed only after that succeeds. Every step may retry.
 
 Profile operations live in `control/accounts` and `web/src/features/account` (the existing `accounts`
 feature entry re-exports it). Email changes use the `account_email_changes` confirmation table, expire
@@ -570,10 +668,17 @@ an empty state that says how to add the first item. Copy is plain, short, senten
   rows a user can see. No test reaches the network.
 - `npm run typecheck`, `npm run lint` (eslint), `npm run build` (web + node bundle + `wrangler deploy
   --dry-run`).
-- `npm run smoke` — starts the Node build and a `wrangler dev` Worker in turn and runs
-  `scripts/smoke.ts` against each: first-run setup, create newsletter, import contacts, write and send a
-  campaign through the test provider, open tracking, unsubscribe, archive page, API key call, MCP call.
+- `npm run smoke` — starts the Node build and a `wrangler dev` Worker, each in self-hosted and cloud
+  mode, with `MC_TEST_DNS`, and runs the steps in `scripts/smoke/` (and `scripts/smoke/cloud/`)
+  against each: first-run setup, create newsletter, import contacts, write and send a campaign through
+  the test provider, open tracking, unsubscribe, archive page, API key call, MCP call, and each unit's
+  own step. `--selfhosted`, `--cloud` and `--only node|wrangler` narrow a run.
+- Generated docs are tested: `docs/api.md` must equal `npm run docs:api` output, and the environment
+  reference in `docs/self-hosting.md` must match the code.
 - `npm run ci` runs all of the above. There is no GitHub Actions workflow: CI is local by decision.
+- `npm run ui:pass` (not in CI; needs Chromium) drives every page in headless Chromium at desktop and
+  phone sizes in both themes and refreshes `docs/screenshots/`. `npm run live:check -- --url …` checks
+  a real deployment over HTTPS without dev switches.
 
 ## 9. Deploy
 
@@ -582,15 +687,21 @@ an empty state that says how to add the first item. Copy is plain, short, senten
   Deploy to Cloudflare button needs no secrets. When the `IMAGES` binding is absent, images fall back to
   chunked blobs in the account store. Workers Free works for small lists (50 outbound requests per
   run and 100,000 row writes per day); the self-hosting guide says when to move to Workers Paid.
-- **Docker**: multi-stage `Dockerfile`, `docker-compose.yml` with an optional Caddy profile for HTTPS and
-  on-demand TLS for custom website hosts, one `/data` volume, a `/healthz` healthcheck.
+  `wrangler.jsonc` also sets `WORKERS_PLAN: "free"` (see 3.2).
+- **Docker**: multi-stage `Dockerfile` (sets `NODE_ENV=production`), `docker-compose.yml` with an
+  optional `https` profile (Caddy with on-demand TLS for custom website hosts), one `/data` volume, a
+  `/healthz` healthcheck. The container listens on 3000; the host port is `MAILCORGI_PORT`, bound to
+  `127.0.0.1` unless `BIND` says otherwise. `.env` reaches the app through `env_file`. Caddy has the
+  fixed address `172.31.250.10`, which is the default `TRUST_PROXY`. `scripts/install.sh` sets up a
+  server; `scripts/backup.mjs` (in the image) takes online SQLite backups plus `secret.key` and images.
 
 ## 10. Security rules
 
 - Every account query is scoped by the store itself (one database per account), and every
   newsletter-scoped action checks the actor's newsletter list in `runAction`.
 - Input never becomes SQL, a field path, unescaped HTML, CSS, a template, a redirect target or a CSV
-  formula. Redirects are same-origin or to a recorded link.
+  formula. Redirects are same-origin or to a recorded link; the one exception is the signup success
+  redirect, an absolute http(s) URL the owner sets.
 - Public endpoints have limits per visitor and per target. Nothing a script can trigger emails a
   stranger more than a few times a day.
 - Webhooks verify signatures (SNS per 11.6, Svix, Stripe, Polar/Standard Webhooks) before any state
@@ -644,8 +755,9 @@ These are the seams between modules. Build to them exactly. Change one only toge
 `purpose.payload` with the account's token key, truncated to 16 bytes. Purposes and payloads:
 `o` open (delivery id), `c` click (delivery id, link id), `u` unsubscribe (contact id, campaign id or 0),
 `p` preferences (contact id), `cf` confirm (contact id, issued-at; valid 7 days), `k` keep (contact id,
-issued-at; valid 30 days), `w` website-host verification. A token for one purpose never passes for
-another. Tokens die with the contact row.
+issued-at; valid 30 days), `w` website-host verification, `form` signed signup-form timestamp. A
+token for one purpose never passes for another. Tokens die with the contact row. Tracking owns
+signing and verification; signup uses its exports.
 
 ### 11.4 Jobs, precisely
 
@@ -728,8 +840,10 @@ unsubscribe(ctx, { contactId, reason?, campaignId? }): void
 suppress(ctx, { email, newsletterId: string | null, reason }): void
 isSuppressed(ctx, email, newsletterId): boolean
 setContactStatus(ctx, contactId, status, detail?): void
-// 'pending' → unconfirmed + confirm email (signup module sends it). 'asserted' never revives a
-// suppressed or deleted address. Plan limits are checked inside subscribe(), in its transaction.
+// 'pending' → unconfirmed + confirm email (signup module sends it); it may create a row for a deleted or
+// newsletter-suppressed address, which stays suppressed until 'confirmed'. 'asserted' never revives a
+// suppressed or deleted address. Account-wide suppressions block all three. Plan limits are checked
+// inside subscribe(), in its transaction, against the maintained account_meta.active_contacts counter.
 
 // server/account/segments/index.ts
 type Filter = { all: Filter[] } | { any: Filter[] } | { not: Filter } | Condition

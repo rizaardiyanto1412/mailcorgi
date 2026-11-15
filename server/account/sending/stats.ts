@@ -77,7 +77,7 @@ export function stepGate(stats: CampaignStats): StepGateBreach | null {
 const percent = (n: number) => `${Number((n * 100).toFixed(2))}%`
 export function stepGateMessage(g: StepGateBreach): string {
   const what = g.reason === 'bounce_rate' ? 'Hard bounces are' : 'Spam complaints are'
-  return `${what} at ${percent(g.rate)} of the ${g.sent.toLocaleString('en-US')} emails sent, above the ${percent(g.limit)} limit, so the next step stays held. Stop the send to skip the rest.`
+  return `${what} at ${percent(g.rate)} of the ${g.sent.toLocaleString('en-US')} emails sent, above the ${percent(g.limit)} limit, so the next step stays held. To skip the rest, pause the send and then stop it.`
 }
 
 /** Called on resume: rates are measured from here on. */

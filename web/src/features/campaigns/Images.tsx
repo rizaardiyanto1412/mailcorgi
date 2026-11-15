@@ -26,7 +26,8 @@ export function ImageLibrary({ newsletterId, open, onClose, onPick, onUpload }: 
     try {
       const usage = await callAction('campaigns.imageUsage', { newsletterId, imageId: image.id })
       const used = usage.campaigns.length > 0 || usage.settings
-      const body = used ? `It appears in ${where(usage)}. Deleting it leaves a broken image there.` : 'It is removed from storage. Emails already sent show a broken image where they used it.'
+      const cached = 'It can take a while to disappear from email clients and caches.'
+      const body = used ? `It appears in ${where(usage)}. Deleting it leaves a broken image there. ${cached}` : `It is removed from storage. Emails already sent show a broken image where they used it. ${cached}`
       if (!(await confirm({ title: used ? 'This image is still used' : 'Delete this image?', body, confirmLabel: used ? 'Delete anyway' : 'Delete image', danger: true }))) return
       await remove.mutateAsync({ newsletterId, imageId: image.id, confirm: used })
     } catch (err) {

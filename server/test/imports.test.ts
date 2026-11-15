@@ -11,6 +11,7 @@ import { classifyDomain } from '../account/imports/cleaning.ts'
 import { detectPreset, suggestMapping } from '../account/imports/presets.ts'
 import type { CsvRow } from '../account/imports/model.ts'
 import { finish, upload } from './imports-setup.ts'
+import { setContactStatus } from '../account/contacts/index.ts'
 
 for (const fixture of fs.readdirSync(new URL('./fixtures/imports/', import.meta.url)).filter((f) => f.endsWith('.csv'))) {
   test(`preset fixture ${fixture} preserves consent, opt-outs and signup dates`, async () => {
@@ -275,4 +276,33 @@ test('beehiiv detection tolerates partial, reordered and case-varied headers; un
   assert.equal(detectPreset(['email', 'status', 'created_at']), 'generic')
   assert.equal(detectPreset(['subscription_tier']), 'generic')
   assert.equal(suggestMapping(['Unfamiliar address column']).email, '')
+})
+
+test('a consented re-import subscribes unconfirmed contacts and never revives opt-outs', async () => {
+  const install = await createInstall()
+  try {
+    install.dns.set('example.com', 'MX', ['mx.example.com'])
+    const owner = await install.signUp({ email: 'owner@example.com' })
+    const newsletterId = (await owner.action('newsletters.create', { name: 'Reimport' })).id
+    const emails = ['pending@example.com', 'left@example.com', 'bounced@example.com', 'gone@example.com']
+    const first = await upload(owner, newsletterId, emails.map((email) => ({ email, status: 'subscribed' })), { options: { consent: false } })
+    await finish(install, owner, newsletterId, first)
+    const byEmail = async () => new Map((await owner.action('contacts.list', { newsletterId })).contacts.map((c) => [c.email, c]))
+    let contacts = await byEmail()
+    await owner.action('contacts.unsubscribe', { newsletterId, contactId: contacts.get('left@example.com')!.id })
+    setContactStatus(install.app.account(owner.accountId!).ctx, contacts.get('bounced@example.com')!.id, 'bounced')
+    await owner.action('contacts.delete', { newsletterId, contactId: contacts.get('gone@example.com')!.id })
+    const second = await upload(owner, newsletterId, emails.map((email) => ({ email, status: 'subscribed' })), { options: { consent: true } })
+    const report = await finish(install, owner, newsletterId, second)
+    assert.equal(report.added, 0)
+    assert.equal(report.updated, 1)
+    assert.equal(report.skipped.duplicate_existing, undefined)
+    contacts = await byEmail()
+    assert.equal(contacts.get('pending@example.com')!.status, 'subscribed')
+    assert.equal(contacts.get('left@example.com')!.status, 'unsubscribed')
+    assert.equal(contacts.get('bounced@example.com')!.status, 'bounced')
+    assert.equal(contacts.has('gone@example.com'), false)
+    const notice = (await owner.action('notifications.list', {})).items.find((n) => n.title === 'Import finished' && /updated to subscribed/.test(n.body))
+    assert.ok(notice)
+  } finally { install.close() }
 })
