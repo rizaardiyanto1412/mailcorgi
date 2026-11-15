@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { AccountRegistrar } from '../rpc.ts'
-import { AppError, clientIp, errorResponse, validate } from '../../core/http.ts'
+import { AppError, clientAddress, clientIp, errorResponse, validate } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 import { sha256Hex } from '../../core/crypto.ts'
 import { newId } from '../../core/ids.ts'
@@ -90,7 +90,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       if (ctx.config.turnstile) {
         let verified = false
         try {
-          const response = await ctx.platform.fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: new URLSearchParams({ secret: ctx.config.turnstile.secretKey, response: input['cf-turnstile-response'] ?? '', remoteip: clientIp(c) }) })
+          const response = await ctx.platform.fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: new URLSearchParams({ secret: ctx.config.turnstile.secretKey, response: input['cf-turnstile-response'] ?? '', remoteip: clientAddress(c) }) })
           verified = response.ok && z.object({ success: z.literal(true) }).safeParse(await response.json()).success
         } catch { /* A verification outage must not admit unchecked requests. */ }
         if (!verified) throw new AppError('challenge_failed', 'Please complete the verification and try again.', 400)

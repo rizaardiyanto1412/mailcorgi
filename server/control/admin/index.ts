@@ -75,6 +75,8 @@ export const adminModule = {
     })
     reg.rpc('raiseAlert', (ctx, args) => {
       if (args.kind === 'account_protection' && ctx.db.get('SELECT id FROM admin_alerts WHERE kind = ? AND account_id = ? AND title = ?', args.kind, args.accountId ?? null, args.title)) return
+      // Anyone can post a bad webhook, so one open alert stands for all of them until an admin resolves it.
+      if (args.kind === 'webhook_verification' && ctx.db.get('SELECT id FROM admin_alerts WHERE kind = ? AND resolved_at IS NULL', args.kind)) return
       raiseAlert(ctx, args)
     })
     reg.job<Parameters<typeof raiseAlert>[1]>('alerts.raise', async (ctx, alert) => {
