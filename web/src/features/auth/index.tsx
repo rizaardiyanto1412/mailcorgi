@@ -1,3 +1,4 @@
+import { InvitePage } from './Invite.tsx'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api.ts'
@@ -220,6 +221,7 @@ export function ResetPage() {
 export const authFeature: Feature = {
   name: 'auth',
   publicRoutes: [
+    { path: '/invite', element: <InvitePage /> },
     { path: '/signin', element: <SignInPage /> },
     { path: '/signup', element: <SignUpPage /> },
     { path: '/reset', element: <ResetPage /> },
