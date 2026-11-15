@@ -50,6 +50,8 @@ export function withSecurityHeaders(response: Response): Response {
 export type StoreEnv = { Variables: { ctx: StoreCtx; actor: Actor | null } }
 
 export async function readJson<T = Record<string, unknown>>(c: Context<any>): Promise<T> {
+  // A cross-site form can post text/plain without a preflight; JSON needs one, so sessionless routes stay same-origin.
+  if ((c.req.header('content-type') ?? '').split(';')[0].trim().toLowerCase() !== 'application/json') throw new AppError('unsupported_media_type', 'Send the request body as application/json.', 415)
   try {
     const body = await c.req.json()
     if (body === null || typeof body !== 'object') throw new Error()

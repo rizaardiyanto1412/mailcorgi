@@ -98,3 +98,15 @@ test('rotating addresses inside one IPv6 /64 shares one rate limit', async () =>
     install.close()
   }
 })
+
+test('a cross-site form cannot sign a visitor in to the attacker account', async () => {
+  const install = await createInstall()
+  try {
+    await install.signUp({ email: 'owner@example.com' })
+    const response = await install.fetch('/api/auth/signin', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ email: 'owner@example.com', password: 'correct horse battery' }) })
+    assert.equal(response.status, 415)
+    assert.equal(response.headers.getSetCookie().length, 0)
+  } finally {
+    install.close()
+  }
+})
