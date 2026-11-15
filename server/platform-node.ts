@@ -237,6 +237,7 @@ export async function createNodeApp(opts: NodeOptions): Promise<NodeApp> {
     if (ticking) return
     ticking = true
     try {
+      await Promise.all([control, ...accounts.values()].map((store) => store.rearm()))
       const due = [...alarms.entries()].filter(([, at]) => at <= now()).map(([id]) => id)
       for (const id of due) {
         alarms.delete(id)
