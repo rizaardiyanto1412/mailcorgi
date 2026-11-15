@@ -9,4 +9,5 @@ export const entries = {
   'newsletters.setSlug': { role: 'admin' },
   'newsletters.archive': { role: 'owner' },
   'newsletters.unarchive': { role: 'owner' },
+  'newsletters.delete': { role: 'owner', error: 'confirm_mismatch', input: { confirmName: 'Not the name' } },
 } satisfies PermissionEntries

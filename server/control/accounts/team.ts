@@ -9,6 +9,7 @@ import { sendSystemEmail, simpleEmail } from '../../email/platform-email.ts'
 import { planLimits } from '../billing/index.ts'
 import { appUrl, emailConfigured } from '../install/index.ts'
 import { ownedAccount } from './index.ts'
+import type { ControlRegistrar } from '../rpc.ts'
 
 const accountId = z.string().min(1).describe('The account that owns the newsletter.')
 const newsletterId = z.string().min(1).describe('The newsletter to share.')
@@ -88,6 +89,22 @@ const inviteSummary = (i: Invite) => ({ id: i.id, email: i.email, role: i.role, 
 async function sendInvite(ctx: StoreCtx, invite: Invite, secret: string, name: string) {
   const emailed = await emailInvite(ctx, invite, secret, name)
   return { ...inviteSummary(invite), link: inviteLink(ctx, secret), emailed }
+}
+
+declare module '../rpc.ts' {
+  interface ControlRpc {
+    removeNewsletterAccess(args: { accountId: string; newsletterId: string }): Promise<void>
+  }
+}
+
+/** A deleted newsletter's team grants and pending invites. Called by the account store's delete job. */
+export function registerTeamRpc(reg: ControlRegistrar) {
+  reg.rpc('removeNewsletterAccess', (ctx, { accountId, newsletterId }) => {
+    ctx.db.tx(() => {
+      ctx.db.run('DELETE FROM memberships WHERE account_id = ? AND newsletter_id = ? AND role != ?', accountId, newsletterId, 'owner')
+      ctx.db.run('DELETE FROM invites WHERE account_id = ? AND newsletter_id = ?', accountId, newsletterId)
+    })
+  })
 }
 
 export const teamActions = [
