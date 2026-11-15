@@ -1,19 +1,25 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Palette, PenLine } from 'lucide-react'
-import { useAction } from '../../lib/api.ts'
+import { DesignPage } from './Design.tsx'
+import { AuthorsPage } from './Authors.tsx'
+import { SenderSettings, NewsletterImages } from './SenderSettings.tsx'
+import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useDocumentTitle, useSession } from '../../lib/session.tsx'
-import { Banner, Button, Card, Field, Input, StubPage, Textarea, useFeedback } from '../../ui/index.tsx'
+import { Banner, Button, Card, EmptyState, Field, Input, Textarea, useFeedback } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
 
 function NewsletterSettings() {
-  const { current } = useSession()
-  return current ? <NewsletterForm key={current.id} /> : null
+  const { current, account, refreshNewsletters, setCurrent } = useSession()
+  const all = useActionQuery('newsletters.list', { includeArchived: true })
+  const restore = useAction('newsletters.unarchive', { invalidate: ['newsletters.list'] })
+  const archived = all.data?.newsletters.filter((n) => n.archivedAt !== null) ?? []
+  return <div className="flex flex-col gap-5">{current ? <><NewsletterForm key={current.id} /><SenderSettings key={current.id + '-sender'} newsletter={current} /><NewsletterImages newsletter={current} /></> : <Card><EmptyState title="No active newsletter" body="Restore an archived newsletter below or create a new one from the switcher." /></Card>}{account?.owner && <Card className="flex flex-col gap-3 p-5"><h2 className="font-semibold">Archived newsletters</h2>{(all.error || restore.error) && <Banner kind="danger">{all.error?.message ?? restore.error?.message}</Banner>}{archived.length ? archived.map((n) => <div key={n.id} className="flex items-center justify-between gap-3"><span>{n.name}</span><Button loading={restore.isPending} onClick={async () => { try { await restore.mutateAsync({ newsletterId: n.id }); await refreshNewsletters(); setCurrent(n.id) } catch {} }}>Restore</Button></div>) : <p className="text-sm text-fg-3">No archived newsletters. You can archive an active newsletter from its settings.</p>}</Card>}</div>
 }
 
 function NewsletterForm() {
   useDocumentTitle('Newsletter settings')
-  const { current, boot, refreshNewsletters, setCurrent, newsletters } = useSession()
+  const { current, account, boot, refreshNewsletters, setCurrent, newsletters } = useSession()
   const { toast, confirm } = useFeedback()
   const navigate = useNavigate()
   const [name, setName] = useState(current?.name ?? '')
@@ -26,27 +32,34 @@ function NewsletterForm() {
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
-    await update.mutateAsync({ newsletterId: current.id, name, description })
-    await refreshNewsletters()
-    toast('Saved.')
+    try {
+      await update.mutateAsync({ newsletterId: current.id, name, description })
+      await refreshNewsletters()
+      toast('Saved.')
+    } catch {}
   }
   const moveSlug = async (e: FormEvent) => {
     e.preventDefault()
     if (slug === current.slug) return
     if (!(await confirm({ title: 'Change the web address?', body: 'Links to the old address stop working.', confirmLabel: 'Change address' }))) return
-    await setSlugAction.mutateAsync({ newsletterId: current.id, slug })
-    await refreshNewsletters()
-    toast('Address changed.')
+    try {
+      await setSlugAction.mutateAsync({ newsletterId: current.id, slug })
+      await refreshNewsletters()
+      toast('Address changed.')
+    } catch {}
   }
   const doArchive = async () => {
     if (!(await confirm({ title: `Archive ${current.name}?`, body: 'It leaves the switcher and its public site goes away. You can bring it back later.', confirmLabel: 'Archive', danger: true }))) return
+    try {
     await archive.mutateAsync({ newsletterId: current.id })
     await refreshNewsletters()
     const next = newsletters.find((n) => n.id !== current.id)
     if (next) setCurrent(next.id)
-    navigate('/')
+    navigate('/settings/newsletter')
+    } catch {}
   }
 
+  const canEdit = account?.owner || account?.grants[current.id] === 'admin'
   return (
     <div className="flex flex-col gap-4">
       <Card className="p-5">
@@ -58,7 +71,7 @@ function NewsletterForm() {
             {(id) => <Textarea id={id} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />}
           </Field>
           <div>
-            <Button type="submit" variant="primary" loading={update.isPending}>
+            <Button type="submit" variant="primary" loading={update.isPending} disabled={!canEdit}>
               Save
             </Button>
           </div>
@@ -72,13 +85,14 @@ function NewsletterForm() {
             {(id) => <Input id={id} required maxLength={60} pattern="[a-z0-9][a-z0-9-]{1,58}[a-z0-9]" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />}
           </Field>
           <div>
-            <Button type="submit" loading={setSlugAction.isPending} disabled={slug === current.slug}>
+            <Button type="submit" loading={setSlugAction.isPending} disabled={!canEdit || slug === current.slug}>
               Change address
             </Button>
           </div>
         </form>
       </Card>
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+      {archive.error && <Banner kind="danger">{archive.error.message}</Banner>}
+      {account?.owner && <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
         <div>
           <h2 className="text-[15px] font-semibold">Archive</h2>
           <p className="text-[13px] text-fg-3">Stops sending and hides the public site. Contacts and issues stay.</p>
@@ -86,7 +100,7 @@ function NewsletterForm() {
         <Button variant="danger" onClick={() => void doArchive()} loading={archive.isPending}>
           Archive newsletter
         </Button>
-      </Card>
+      </Card>}
     </div>
   )
 }
@@ -100,7 +114,7 @@ export const newslettersFeature: Feature = {
   ],
   settingsRoutes: [
     { path: 'newsletter', element: <NewsletterSettings /> },
-    { path: 'design', element: <StubPage title="Design" body="Colors, fonts, buttons, header and footer for your emails and site." /> },
-    { path: 'authors', element: <StubPage title="Authors" body="People who write issues, with a name, bio and avatar." /> },
+    { path: 'design', element: <DesignPage /> },
+    { path: 'authors', element: <AuthorsPage /> },
   ],
 }

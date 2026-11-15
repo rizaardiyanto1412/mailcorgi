@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Navigate, useRoutes, type RouteObject } from 'react-router-dom'
+import { Navigate, useLocation, useRoutes, type RouteObject } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, setCsrf, useActionQuery } from '../lib/api.ts'
 import { AuthContext, readLocal, SessionContext, writeLocal, type Bootstrap, type Session } from '../lib/session.tsx'
@@ -74,9 +74,11 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
     [boot, session, account, list, current, storageKey, refresh, newsletters],
   )
 
+  const location = useLocation()
+  const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/')
   const tree: RouteObject[] = [
     { path: '/welcome', element: <Welcome /> },
-    list.length === 0 && account
+    list.length === 0 && account && !inSettings
       ? { path: '*', element: <Navigate to="/welcome" replace /> }
       : {
           element: <Shell />,
