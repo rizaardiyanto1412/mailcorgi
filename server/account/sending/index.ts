@@ -15,7 +15,7 @@ import { finishCampaign, sendBatch } from './batch.ts'
 import { audienceCount, startSending, type SendOptions } from './plan.ts'
 import { buildMessage, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
-import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBaseline } from './stats.ts'
+import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBaseline, stepGate, stepGateMessage } from './stats.ts'
 export { sendHooks } from './provider.ts'
 export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, resetRateBaseline, AUTO_PAUSE_MIN_SENT } from './stats.ts'
 export { markSentEffects } from './batch.ts'
@@ -45,6 +45,12 @@ function wakeBatch(ctx: StoreCtx, campaignId: string) {
   const key = `send.batch:${campaignId}`
   ctx.jobs.cancelByKey(key)
   ctx.jobs.enqueue('send.batch', { campaignId }, { dedupeKey: key })
+}
+
+/** Refuse to let a step out by hand, or by resuming into a due step, while the campaign's rates are over the gate. */
+function assertStepGate(ctx: StoreCtx, campaignId: string) {
+  const breach = stepGate(readStats(ctx, campaignId))
+  if (breach) throw new AppError('step_held', stepGateMessage(breach), 409, { reason: breach.reason, rate: breach.rate, limit: breach.limit, sent: breach.sent })
 }
 
 function steps(ctx: StoreCtx, id: string) {
@@ -141,6 +147,7 @@ export const sendingModule = {
           if ((await sendSettings(ctx)).sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
           if (!verifiedSenderFor(ctx, row.newsletter_id)) throw new AppError('sender_unverified', 'Choose a verified sender domain in newsletter settings.', 400)
           return ctx.db.tx(() => {
+            if (ctx.db.get("SELECT 1 FROM campaign_sends WHERE campaign_id = ? AND state = 'pending' AND release_at IS NOT NULL AND release_at <= ?", row.id, ctx.now())) assertStepGate(ctx, row.id)
             resetRateBaseline(ctx, row.id)
             transitionCampaign(ctx, row.id, 'sending')
             wakeBatch(ctx, row.id)
@@ -149,13 +156,14 @@ export const sendingModule = {
         },
       }),
       defineAction({
-        name: 'campaigns.sendMore', description: 'Release the next waiting step of a gradual or engaged-first send now.', scope: 'account', role: 'admin', effect: 'send', resource,
+        name: 'campaigns.sendMore', description: 'Release the next waiting step of a gradual or engaged-first send now. Refused while the campaign\'s hard bounces are above 2.5% or complaints above 0.08%.', scope: 'account', role: 'admin', effect: 'send', resource,
         input: z.object({ campaignId }), rest: { method: 'POST', path: '/campaigns/:campaignId/send-more' }, mcp: { title: 'Send a campaign to more subscribers now', destructive: true },
         handler: (ctx, input) => ctx.db.tx(() => {
           const row = getCampaignRow(ctx, input.campaignId)
           if (row.status !== 'sending') throw new AppError('invalid_transition', 'The send must be in progress to send to more subscribers.', 409)
           const next = ctx.db.get<{ id: string }>("SELECT id FROM campaign_sends WHERE campaign_id = ? AND state = 'pending' ORDER BY step LIMIT 1", row.id)
           if (!next) throw new AppError('nothing_pending', 'Every step of this send has been released.', 409)
+          assertStepGate(ctx, row.id)
           ctx.db.run("UPDATE campaign_sends SET state = 'released', release_at = ? WHERE id = ?", ctx.now(), next.id)
           wakeBatch(ctx, row.id)
           return { steps: steps(ctx, row.id) }
