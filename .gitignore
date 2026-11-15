@@ -9,3 +9,11 @@ web/dist
 .dev.vars
 .claude/worktrees
 .audit
+# npm run ui:pass writes every page here; only the README screenshots are committed.
+docs/screenshots/*/*/*.png
+!docs/screenshots/light/desktop/overview.png
+!docs/screenshots/light/desktop/campaign-write.png
+!docs/screenshots/light/desktop/campaign-report.png
+!docs/screenshots/light/desktop/contacts.png
+!docs/screenshots/light/desktop/site-home.png
+!docs/screenshots/light/desktop/site-issue.png

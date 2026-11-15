@@ -71,7 +71,7 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 | ![A campaign report with opens, clicks and bounces](docs/screenshots/light/desktop/campaign-report.png) | ![Contacts with status, tags and filters](docs/screenshots/light/desktop/contacts.png) |
 | ![The public website home page](docs/screenshots/light/desktop/site-home.png) | ![The public issue page](docs/screenshots/light/desktop/site-issue.png) |
 
-More screenshots, in light and dark at desktop and phone width, are in [docs/screenshots](docs/screenshots).
+`npm run ui:pass` captures every page in light and dark, at desktop and phone width (see [docs/development.md](docs/development.md#browser-pass-and-screenshots)).
 
 ## Install
 
