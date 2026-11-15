@@ -101,7 +101,7 @@ function AccountMenu() {
           <Avatar name={session.user.name || session.user.email} size={26} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-medium">{session.user.name || session.user.email}</span>
-            <span className="block truncate text-xs text-fg-3">{account?.name ?? session.user.email}</span>
+            {session.user.name && <span className="block truncate text-xs text-fg-3">{session.user.email}</span>}
           </span>
         </button>
       )}

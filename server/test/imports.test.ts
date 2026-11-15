@@ -114,8 +114,7 @@ test('members, mismatched newsletters, other accounts and read keys cannot mutat
     const member: Actor = { userId: 'member', email: 'member@example.com', owner: false, grants: { [nl.id]: 'member' }, access: 'full', via: 'web', installAdmin: false }
     await assert.doesNotReject(() => runAction(ctx, 'imports.get', { newsletterId: nl.id, importId: imp.id }, member))
     await assert.doesNotReject(() => runAction(ctx, 'imports.list', { newsletterId: nl.id }, member))
-    await assert.doesNotReject(() => runAction(ctx, 'imports.skipped', { newsletterId: nl.id, importId: imp.id }, member))
-    for (const action of ['imports.create', 'imports.addChunk', 'imports.start', 'imports.cancel']) {
+    for (const action of ['imports.create', 'imports.addChunk', 'imports.start', 'imports.cancel', 'imports.skipped']) {
       await assert.rejects(runAction(ctx, action, { newsletterId: nl.id, importId: imp.id, mapping: { email: 'email' }, seq: 0, rows: [{ email: 'reader@example.com' }], totalRows: 0 }, member), (e: unknown) => e instanceof AppError && e.status === 403)
     }
     assert.equal((await expectError(() => owner.action('imports.get', { newsletterId: otherNl.id, importId: imp.id }))).status, 404)

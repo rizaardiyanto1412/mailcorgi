@@ -7,5 +7,5 @@ export const entries = {
   'imports.cancel': { role: 'admin', input: { importId: 'imp_example' }, error: 'not_found' },
   'imports.get': { role: 'member', input: { importId: 'imp_example' }, error: 'not_found' },
   'imports.list': { role: 'member' },
-  'imports.skipped': { role: 'member', input: { importId: 'imp_example' }, error: 'not_found' },
+  'imports.skipped': { role: 'admin', input: { importId: 'imp_example' }, error: 'not_found' },
 } satisfies PermissionEntries

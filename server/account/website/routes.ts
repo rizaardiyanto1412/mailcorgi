@@ -1,13 +1,14 @@
 import type { Context } from 'hono'
 import type { AccountRegistrar } from '../rpc.ts'
 import type { StoreEnv } from '../../core/http.ts'
+import type { StoreCtx } from '../../core/store.ts'
 import { clientIp } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 import { randomToken, sha256Hex } from '../../core/crypto.ts'
 import { formToken } from '../signup/index.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { escapeHtml as e, safeUrl } from '../render/index.ts'
-import { baseUrl, ensureAppUrl, issueDate, issueSlug, publicIssues, settings, websiteHost } from './model.ts'
+import { baseUrl, countPublicIssues, ensureAppUrl, hasPublicIssue, issueDate, issueSlug, publicIssues, settings, websiteHost } from './model.ts'
 import { csp, feed, imageUrl, issueCard, issueUrl, layout, rendered, signup, xml, type Author, type Site } from './templates.ts'
 import { readPage, writePage, type CachedPage } from './cache.ts'
 
@@ -53,13 +54,22 @@ export function registerRoutes(reg: AccountRegistrar) {
       const key = new URL('/__mailcorgi_website_cache', origin)
       key.searchParams.set('key', `${ctx.accountId}:${nl.id}:${version}:${url.origin}:${path}:${page}:${Math.floor(ctx.now() / 300000)}`)
       const respond = (cached: CachedPage) => {
+        if (cached.status === 404) return new Response(c.req.method === 'HEAD' ? null : cached.body, { status: 404, headers: { 'content-type': cached.type, 'cache-control': 'public, max-age=0, s-maxage=60', 'content-security-policy': cached.csp, 'cache-tag': `website-${nl.id}-${version}`, 'x-robots-tag': 'noindex, nofollow' } })
         if (cached.type.startsWith('text/html')) countView(c, nl.id, cached.campaignId)
         const headers = { 'Content-Type': cached.type, 'Cache-Control': 'public, max-age=0, s-maxage=300, stale-while-revalidate=60', ETag: cached.etag, 'Content-Security-Policy': cached.csp, 'Cache-Tag': `website-${nl.id}-${version}`, 'X-Robots-Tag': site.options.enabled ? 'index, follow' : 'noindex, nofollow' }
         if (c.req.header('if-none-match')?.split(',').map((v) => v.trim().replace(/^W\//, '')).some((v) => v === cached.etag || v === '*')) return new Response(null, { status: 304, headers })
         return new Response(c.req.method === 'HEAD' ? null : cached.body, { headers })
       }
-      const hit = await readPage(key.href, 'caches' in globalThis)
+      const hit = await readPage(key.href, 'caches' in globalThis, ctx.now())
       if (hit) return respond(hit)
+      // Unknown paths and pages past the end are answered from indexes and cached for a minute, so
+      // a crawler or a script cannot make every miss load and sort the whole archive.
+      if (!routeExists(ctx, nl.id, path, page, site.options.enabled)) {
+        const body = layout(site, { title: `Page not found · ${nl.name}`, description: 'This page is unavailable.', canonical: site.base, noindex: true, body: `<h1>Page not found</h1><p>This page may have moved or is no longer public.</p><a href="${e(site.base)}">Back to home</a>` })
+        const missing: CachedPage = { body, type: 'text/html; charset=utf-8', etag: '', csp: csp(site), campaignId: null, status: 404, expiresAt: ctx.now() + 60_000 }
+        ctx.platform.waitUntil(writePage(key.href, missing, 'caches' in globalThis))
+        return respond(missing)
+      }
       const signupToken = await formToken(ctx, nl.id)
       const issues = site.options.enabled ? publicIssues(ctx, nl.id) : []
       const authors = ctx.db.all<Author>('SELECT * FROM authors WHERE newsletter_id = ? ORDER BY name', nl.id)
@@ -114,6 +124,16 @@ export function registerRoutes(reg: AccountRegistrar) {
       return respond(cached)
     })
   })
+}
+function routeExists(ctx: StoreCtx, newsletterId: string, path: string, page: number, enabled: boolean): boolean {
+  if (path === '/feed.xml' || path === '/sitemap.xml' || path === '/robots.txt') return true
+  if (!enabled) return false
+  if (path === '/') return page === 1 || (page - 1) * 10 < countPublicIssues(ctx, newsletterId)
+  if (path.startsWith('/authors/')) {
+    const author = ctx.db.get<{ id: string }>('SELECT id FROM authors WHERE newsletter_id = ? AND slug = ?', newsletterId, path.slice('/authors/'.length))
+    return !!author && (page === 1 || (page - 1) * 10 < countPublicIssues(ctx, newsletterId, author.id))
+  }
+  return /^\/[^/]+$/.test(path) && hasPublicIssue(ctx, newsletterId, path.slice(1))
 }
 function zLinks(value: string): Record<string, string> {
   const parsed: unknown = JSON.parse(value)

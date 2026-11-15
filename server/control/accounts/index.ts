@@ -44,7 +44,9 @@ export function ownedAccount(ctx: StoreCtx, id: string, userId: string): Account
   return row
 }
 
-export const isInstallAdmin = (ctx: StoreCtx, user: Pick<UserRow, 'email' | 'is_install_admin'>) => !!user.is_install_admin || ctx.config.adminEmails.includes(user.email)
+/** `ADMIN_EMAILS` counts only once the user has proved the address (code, invite link or first-run setup). */
+export const isInstallAdmin = (ctx: StoreCtx, user: Pick<UserRow, 'email' | 'is_install_admin' | 'email_verified_at'>) =>
+  !!user.is_install_admin || (user.email_verified_at != null && ctx.config.adminEmails.includes(user.email))
 
 /** The policy an account store should hold, from the control row. Self-hosted installs have no limits. */
 export function policyFor(ctx: StoreCtx, account: Pick<AccountRow, 'policy_version' | 'status' | 'plan'>): Policy {

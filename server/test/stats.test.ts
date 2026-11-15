@@ -5,6 +5,7 @@ import { rebuild, rebuildCampaign } from '../account/stats/index.ts'
 import { subscribe, unsubscribe } from '../account/contacts/index.ts'
 import { signToken } from '../account/tracking/index.ts'
 import { createInstall, expectError } from './harness.ts'
+import { finish, upload } from './imports-setup.ts'
 import { addContacts, createIssue, drive, issueDoc, LINK_A, LINK_B, sendableInstall, tokensIn } from './sending-setup.ts'
 
 const UA = 'Mozilla/5.0 Mobile Safari/604.1'
@@ -147,4 +148,24 @@ test('overview query count stays constant with 200 campaigns and 50,000 contacts
   assert.equal(data.campaigns.length, 5)
   assert.ok(queries.length <= 10, `overview ran ${queries.length} reads`)
   assert.ok(queries.every((q) => !/\bFROM\s+(events|deliveries|page_views)\b/i.test(q)), 'page load does not scan raw event or delivery data')
+})
+
+test('growth by source counts every imported contact, at once and on its signup day, and a full recount agrees', async (t) => {
+  const install = await createInstall()
+  t.after(() => install.close())
+  install.dns.set('example.com', 'MX', ['mx.example.com'])
+  const owner = await install.signUp({ email: 'owner@example.com' })
+  const nl = await owner.action('newsletters.create', { name: 'Growth' })
+  const ctx = install.app.account(owner.accountId!).ctx
+  await install.runJobs()
+  const tenDaysAgo = new Date(install.clock.now() - 10 * 86_400_000).toISOString()
+  const rows = Array.from({ length: 40 }, (_, i) => ({ email: `reader${i}@example.com`, status: 'subscribed', created_at: i < 25 ? tenDaysAgo : '' }))
+  const importId = await upload(owner, nl.id, rows)
+  await finish(install, owner, nl.id, importId)
+  const bySource = async (range: '7' | '30') => (await owner.action('stats.overview', { newsletterId: nl.id, range })).sources.reduce((n, s) => n + s.added, 0)
+  assert.equal(await bySource('30'), 40)
+  assert.equal(await bySource('7'), 15)
+  const before = ctx.db.all('SELECT * FROM stats_sources WHERE newsletter_id = ? ORDER BY day, source', nl.id)
+  rebuild(ctx, nl.id)
+  assert.deepEqual(ctx.db.all('SELECT * FROM stats_sources WHERE newsletter_id = ? ORDER BY day, source', nl.id), before)
 })

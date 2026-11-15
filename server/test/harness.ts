@@ -52,7 +52,8 @@ export interface Install {
   config: Config
   clock: Clock
   dataDir: string
-  dns: { set(name: string, type: DnsType, values: string[]): void }
+  /** `fail(true)` makes every lookup throw, as a resolver outage does. */
+  dns: { set(name: string, type: DnsType, values: string[]): void; fail(on: boolean): void }
   fetch(path: string, init?: RequestInit): Promise<Response>
   /** Emails the test provider wrote: in the control store, or in one account store. */
   outbox(scope?: 'control' | string): OutboxRow[]
@@ -87,13 +88,17 @@ export async function createInstall(opts: InstallOptions = {}): Promise<Install>
   const clock = opts.clock ?? fakeClock()
   const config = parseConfig({ DATA_DIR: dataDir, APP_URL: APP_URL, CLOUD: opts.cloud ? 'true' : '', ...opts.env })
   const dns = new Map<string, string[]>()
+  let dnsDown = false
   const app = await createNodeApp({
     config,
     now: clock.now,
     fetch: async () => {
       throw new Error('Tests must not reach the network.')
     },
-    resolveDns: async (name, type) => dns.get(`${type}:${name.toLowerCase()}`) ?? [],
+    resolveDns: async (name, type) => {
+      if (dnsDown) throw new Error('DNS resolver unreachable')
+      return dns.get(`${type}:${name.toLowerCase()}`) ?? []
+    },
     log: () => {},
   })
 
@@ -176,7 +181,7 @@ export async function createInstall(opts: InstallOptions = {}): Promise<Install>
     config,
     clock,
     dataDir,
-    dns: { set: (name, type, values) => void dns.set(`${type}:${name.toLowerCase()}`, values) },
+    dns: { set: (name, type, values) => void dns.set(`${type}:${name.toLowerCase()}`, values), fail: (on) => void (dnsDown = on) },
     fetch: fetchEdge,
     outbox(scope = 'control') {
       const store = scope === 'control' ? app.control : app.account(scope)

@@ -153,3 +153,19 @@ test('raw HTML links are wrapped exclusively by the recipient hook', () => {
   assert.match(wrapped.html, /<a href="https:\/\/example.com\/tracked">Read/)
   assert.match(wrapped.text, /https:\/\/example.com\/story\?x=1&y=2/)
 })
+
+test('website excerpts leave out image alt text and keep captions, while the text email keeps the alt', () => {
+  const doc = { type: 'doc', content: [
+    { type: 'image', attrs: { src: 'https://example.com/corgi.png', alt: 'A corgi on a beach', caption: 'Biscuit at low tide' } },
+    { type: 'image', attrs: { alt: 'Missing picture' } },
+    { type: 'paragraph', content: [{ type: 'text', text: 'Trails, treats and towels.' }] },
+  ] }
+  const campaign = { subject: 'Beach day', doc }
+  const newsletter = { name: 'Weekly' }
+  const web = renderWeb({ campaign, newsletter, theme: {} })
+  assert.equal(web.excerpt, 'Biscuit at low tide Trails, treats and towels.')
+  const markdown = renderWeb({ campaign: { subject: 'Beach', format: 'markdown', source: 'Hello **readers**.\n\n![A corgi](https://example.com/corgi.png)\n\nBye.' }, newsletter, theme: {} })
+  assert.doesNotMatch(markdown.excerpt, /\[|corgi/i)
+  const email = renderEmail({ campaign, newsletter, theme: {}, recipient: { contact: { name: 'Reader' }, links: { unsubscribe: 'https://example.com/u', web: 'https://example.com/w', preferences: 'https://example.com/p' } } })
+  assert.match(email.text, /\[A corgi on a beach\]/)
+})

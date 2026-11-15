@@ -393,3 +393,34 @@ test('members draft web-only posts; admins publish and hide them', async () => {
     assert.equal((await install.fetch('/n/weekly/member-draft')).status, 404)
   } finally { install.close() }
 })
+test('unknown paths and pages past the end answer 404 from indexes, and the 404 is cached briefly', async () => {
+  const { install, owner, nl } = await setup()
+  try {
+    for (let i = 0; i < 3; i++) await owner.action('website.publishPost', { newsletterId: nl.id, subject: `Story ${i}`, slug: `story-${i}`, source: 'Read me' })
+    await owner.action('authors.create', { newsletterId: nl.id, name: 'Writer', slug: 'writer' })
+    const db = install.app.account(owner.accountId!).ctx.db
+    const all = db.all.bind(db)
+    const archiveLoads: string[] = []
+    db.all = ((sql: string, ...params: never[]) => {
+      if (/FROM (campaigns|website_posts) WHERE newsletter_id = \?/.test(sql) && !/COUNT/.test(sql)) archiveLoads.push(sql)
+      return all(sql, ...params)
+    }) as typeof db.all
+    try {
+      for (const path of ['/n/weekly/no-such-issue', '/n/weekly?page=2', '/n/weekly/authors/nobody', '/n/weekly/authors/writer?page=2', '/n/weekly/story-1/extra']) {
+        const response = await install.fetch(path)
+        assert.equal(response.status, 404, path)
+        assert.match(response.headers.get('cache-control') ?? '', /s-maxage=60/, path)
+        assert.doesNotMatch(response.headers.get('cache-control') ?? '', /no-store/, path)
+      }
+      assert.deepEqual(archiveLoads, [])
+      const hits = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM page_views')!.n
+      assert.equal(hits, 0)
+      // A cached 404 never hides a post published afterwards: publishing bumps the cache version.
+      await owner.action('website.publishPost', { newsletterId: nl.id, subject: 'Late', slug: 'no-such-issue', source: 'Now here' })
+      assert.equal((await install.fetch('/n/weekly/no-such-issue')).status, 200)
+      assert.equal((await install.fetch('/n/weekly/story-1')).status, 200)
+    } finally {
+      db.all = all
+    }
+  } finally { install.close() }
+})

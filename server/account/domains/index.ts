@@ -5,9 +5,11 @@ import type { StoreCtx } from '../../core/store.ts'
 import { defineAction } from '../../core/actions.ts'
 import { AppError } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
+import { lookupDns } from '../../core/platform.ts'
 import { providerFromSettings, providerSettings, type Identity } from '../../email/index.ts'
 
 const DAY = 86_400_000
+const HOUR = 3_600_000
 const recordSchema = z.object({ name: z.string(), type: z.enum(['TXT', 'CNAME', 'MX', 'A']), value: z.string(), purpose: z.string(), found: z.boolean().default(false), required: z.boolean().default(true) })
 type DnsRecord = z.infer<typeof recordSchema>
 interface DomainRow {
@@ -67,8 +69,7 @@ export async function checkDomain(ctx: StoreCtx, id: string) {
   const records = identity ? recordsFor(row.name, identity) : z.array(recordSchema).parse(JSON.parse(row.records))
   if (identity && !records.some((record) => record.required && record.purpose !== 'DMARC')) throw new AppError('identity_pending', 'The provider has not supplied DNS records yet. Check again shortly.', 409)
   for (const record of records) {
-    let values: string[]
-    try { values = await ctx.platform.resolveDns(record.name, record.type) } catch { throw new AppError('dns_unavailable', 'DNS lookup failed. Try again shortly.', 502) }
+    const values = await lookupDns(ctx.platform, record.name, record.type)
     record.found = values.some((value) => {
       const actual = value.replace(/"\s*"/g, '').replace(/^"|"$/g, '')
       if (record.purpose === 'DMARC') return /^v=DMARC1\s*;/i.test(actual)
@@ -105,7 +106,13 @@ export const domainsModule = {
       if (!ctx.db.get('SELECT id FROM domains WHERE id = ?', domainId)) return 'done'
       const count = z.array(recordSchema).parse(JSON.parse(getDomain(ctx, domainId).records)).length + 3
       if (budget.take(count) < count) return { again: ctx.now() + 1000 }
-      await checkDomain(ctx, domainId)
+      try {
+        await checkDomain(ctx, domainId)
+      } catch (error) {
+        // A resolver outage must not burn retries into a dead job; the next daily check still runs.
+        if (error instanceof AppError && error.code === 'dns_unavailable') return { again: ctx.now() + HOUR }
+        throw error
+      }
       return { again: ctx.now() + DAY }
     })
     return reg.actions(

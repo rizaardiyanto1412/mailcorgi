@@ -24,8 +24,8 @@ export interface EnvVar {
 export const ENV_VARS: EnvVar[] = [
   { name: 'APP_URL', group: 'Core', platform: 'both', default: 'learned from the first sign-in', description: 'Public address of the install, for example `https://news.example.com`. Links in emails and secure cookies use it.' },
   { name: 'CLOUD', group: 'Core', platform: 'both', default: 'off', description: '`true` turns on cloud mode: open sign-up with emailed codes, plans, limits and billing.' },
-  { name: 'ADMIN_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email.' },
-  { name: 'ALLOWED_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated addresses that may sign up on a self-hosted install. Adds to the list in **Admin → Settings**.' },
+  { name: 'ADMIN_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. Admin rights start only after the address is confirmed with an emailed code or an invite link.' },
+  { name: 'ALLOWED_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated addresses that may sign up on a self-hosted install with an emailed code. Adds to the list in **Admin → Settings**.' },
   { name: 'SIGNUP_MODE', group: 'Core', platform: 'both', default: 'open in cloud mode, allowlist otherwise', description: '`closed`, `allowlist` or `open`. Overrides the setting in **Admin → Settings**.' },
   { name: 'APP_SECRET', group: 'Core', platform: 'both', secret: true, default: 'generated on first boot', description: 'Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable.' },
   { name: 'IMAGES_PUBLIC_URL', group: 'Core', platform: 'both', default: '`APP_URL/img`', description: 'Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them.' },
@@ -60,6 +60,7 @@ export const ENV_VARS: EnvVar[] = [
   { name: 'CF_ZONE_ID', group: 'Websites', platform: 'cloudflare', description: 'ID of the zone that holds your Cloudflare for SaaS setup.' },
   { name: 'WORKERS_PLAN', group: 'Platform', platform: 'cloudflare', default: 'free in `wrangler.jsonc`', description: '`free` keeps each run under 40 outbound requests, inside the Workers Free limit of 50. On Workers Paid, delete the line from `wrangler.jsonc` to allow 900 per run.' },
   { name: 'PORT', group: 'Platform', platform: 'node', default: '3000', description: 'HTTP port.' },
+  { name: 'TRUST_PROXY', group: 'Platform', platform: 'node', default: 'unset (Caddy\'s fixed address in `docker-compose.yml`)', description: 'Reverse proxies whose `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` count: a comma-separated list of their addresses, or `true` for any loopback or private peer. Unset, MailCorgi uses the socket address and ignores forwarding headers. Set it only when every request reaches MailCorgi through that proxy.' },
   { name: 'HOST', group: 'Platform', platform: 'node', default: '0.0.0.0', description: 'Interface to listen on.' },
   { name: 'DATA_DIR', group: 'Platform', platform: 'node', default: '`./data` (`/data` in Docker)', description: 'Folder for `control.db`, `accounts/*.db`, `images/` and `secret.key`.' },
   { name: 'WEB_DIR', group: 'Platform', platform: 'node', default: '`web/dist`', description: 'Folder with the built web app.' },

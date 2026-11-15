@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import { AppError } from '../../core/http.ts'
 import { encodeJsonUrl, hmac, randomToken, toBase64Url } from '../../core/crypto.ts'
+import { lookupDns } from '../../core/platform.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { baseUrl, ensureAppUrl, hostnameSchema, newsletter, websiteHost } from './model.ts'
@@ -94,7 +95,7 @@ export const hostActions = [
     const existing = await ctx.stores.control.lookupSite({ host: host.hostname })
     if (existing && (existing.account_id !== ctx.accountId || existing.newsletter_id !== input.newsletterId)) throw new AppError('host_taken', 'That hostname is already in use.', 409)
     const info = hostInfo(ctx, input.newsletterId)
-    const [cnames, txts] = await Promise.all([ctx.platform.resolveDns(host.hostname, 'CNAME'), ctx.platform.resolveDns(info.txt.name, 'TXT')])
+    const [cnames, txts] = await Promise.all([lookupDns(ctx.platform, host.hostname, 'CNAME'), lookupDns(ctx.platform, info.txt.name, 'TXT')])
     const normalize = (s: string) => s.toLowerCase().replace(/\.$/, '')
     const cnameFound = cnames.some((s) => normalize(s) === normalize(info.cname.value))
     const txtFound = txts.some((s) => s.replace(/"\s*"/g, '').replace(/^"|"$/g, '') === host.token)

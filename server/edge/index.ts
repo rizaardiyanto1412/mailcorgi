@@ -36,6 +36,8 @@ export interface EdgeDeps {
   fetch?: typeof fetch
   /** The client address the platform can vouch for, given the socket peer when it has one. */
   clientIp?(request: Request, peer: string | null): string
+  /** Node: whether the socket peer is a trusted proxy. When it is not, forwarding headers are dropped. */
+  trustsProxy?(peer: string | null): boolean
 }
 
 export interface Edge {
@@ -117,8 +119,10 @@ export function createEdge(deps: EdgeDeps): Edge {
   }
 
   async function forwardSite(site: SiteRow, request: Request, headers: Headers, custom = false) {
+    // The actor only lets the owner's own visits skip page-view counting. Custom hosts serve
+    // anonymous reads and public form posts, and a state-changing method gets no actor anywhere.
     const cookies = parseCookies(request.headers.get('cookie'))
-    if (cookies[SESSION_COOKIE]) {
+    if (!custom && (request.method === 'GET' || request.method === 'HEAD') && cookies[SESSION_COOKIE]) {
       const info = await resolveSession(await sha256Hex(cookies[SESSION_COOKIE]), site.account_id)
       if (info?.accounts.some((a) => a.id === site.account_id && a.owner)) {
         headers.set(ACTOR_HEADER, await signActor(sessionActor(info, site.account_id), site.account_id))
@@ -153,6 +157,7 @@ export function createEdge(deps: EdgeDeps): Edge {
     const url = new URL(request.url)
     const path = url.pathname
     const headers = stripHeaders(request)
+    if (deps.trustsProxy && !deps.trustsProxy(peer)) for (const name of ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'x-real-ip']) headers.delete(name)
     const ip = deps.clientIp?.(request, peer) ?? ''
     if (ip) headers.set(CLIENT_IP_HEADER, ip)
     const method = request.method.toUpperCase()

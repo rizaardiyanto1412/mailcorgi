@@ -8,5 +8,5 @@ export const entries = {
   'contacts.unsubscribe': { role: 'admin' },
   'contacts.delete': { role: 'admin' },
   'contacts.bulk': { role: 'admin' },
-  'contacts.export': { role: 'member' },
+  'contacts.export': { role: 'admin' },
 } satisfies PermissionEntries
