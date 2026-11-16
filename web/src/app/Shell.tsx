@@ -10,7 +10,7 @@ import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { NotificationsBell } from '../features/notifications/index.tsx'
 
 const navItem = (active: boolean) =>
-  cx('flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors [&>svg]:size-4 [&>svg]:shrink-0', active ? 'bg-surface text-accent-fg shadow-card' : 'text-fg-2 hover:bg-hover hover:text-fg [&>svg]:text-fg-3')
+  cx('flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors [&>svg]:size-4 [&>svg]:shrink-0', active ? 'bg-hover text-fg [&>svg]:text-accent-fg' : 'text-fg-2 hover:bg-hover hover:text-fg [&>svg]:text-fg-3')
 
 function NewsletterSwitcher({ onNavigate }: { onNavigate?: () => void }) {
   const { current, setCurrent, account } = useSession()
@@ -153,7 +153,7 @@ function AccountMenu() {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <div className="flex h-full w-[232px] flex-col gap-3 bg-canvas p-3">
+    <div className="flex h-full w-[232px] flex-col gap-3 bg-sidebar p-3">
       <div className="flex h-8 items-center gap-2">
         <NavLink to="/" onClick={onNavigate} aria-label="MailCorgi home" className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5">
           <Logo size={22} />
@@ -210,7 +210,7 @@ export function Shell() {
   }, [drawer])
   return (
     <div className="flex h-full">
-      <aside className="hidden shrink-0 border-r border-line md:block">
+      <aside className="hidden shrink-0 border-r border-line bg-sidebar md:block">
         <Sidebar />
       </aside>
       {drawer && (

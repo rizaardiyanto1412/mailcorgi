@@ -479,11 +479,14 @@ async function visit(context: BrowserContext, s: Seed, v: Visit, label: string, 
       fs.mkdirSync(path.dirname(file), { recursive: true })
       // The app scrolls inside <main>; let the page grow so the capture shows everything.
       await page.addStyleTag({ content: 'html, body, #root, #root > div { height: auto !important; min-height: 100vh } main { overflow: visible !important; min-width: 0 } #root > div > div { min-width: 0 } aside > div { position: sticky; top: 0; height: 100vh }' })
+      // Floating menus follow their anchor on resize; the style above moved the anchor.
+      await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+      await page.waitForTimeout(50)
       const height = await page.evaluate(() => document.documentElement.scrollHeight)
       await page.screenshot({ path: file, fullPage: true, clip: { x: 0, y: 0, width: page.viewportSize()!.width, height } })
     }
   } catch (err) {
-    local.push(`failed: ${err instanceof Error ? err.message.split('\n')[0] : err}`)
+    local.push(`failed: ${err instanceof Error ? (process.env.UI_PASS_DEBUG ? err.stack : err.message.split('\n')[0]) : err}`)
   } finally {
     await page.close()
   }
@@ -500,6 +503,20 @@ function appPages(s: Seed): Visit[] {
     { name: 'overview', path: '/' },
     { name: 'campaigns', path: '/campaigns' },
     { name: 'campaign-write', path: `/campaigns/${c.draft}` },
+    {
+      name: 'campaign-slash-menu', path: `/campaigns/${c.draft}`, then: async (page) => {
+        // Open the "/" menu on an empty line under the first paragraph, as a writer would.
+        await page.getByRole('textbox', { name: 'Campaign content' }).waitFor()
+        await page.evaluate(() => {
+          const editor = (document.querySelector('.ProseMirror') as unknown as { editor: { state: { doc: { child(i: number): { nodeSize: number } } }; chain(): any } }).editor
+          const at = editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize
+          editor.chain().insertContentAt(at, { type: 'paragraph' }).focus(at + 1).run()
+          return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        })
+        await page.keyboard.type('/')
+        await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
+      },
+    },
     { name: 'campaign-review', path: `/campaigns/${c.draft}`, then: tab('Review') },
     { name: 'campaign-send', path: `/campaigns/${c.draft}`, then: tab('Send') },
     { name: 'campaign-scheduled', path: `/campaigns/${c.scheduled}` },
@@ -656,21 +673,70 @@ async function flows(browser: Browser, s: Seed) {
     const editor = page.getByRole('textbox', { name: 'Campaign content' })
     await editor.click()
     await page.keyboard.type('Hello {{first_name|friend}}, autumn is here.')
+    // Blocks come from the "/" menu, which must open at the caret and not at the top of the editor.
     const block = async (label: string) => {
-      await page.getByRole('button', { name: 'Insert block /' }).click()
-      await page.getByRole('menuitem', { name: label, exact: true }).click()
+      await page.keyboard.type(`/${label}`)
+      const menu = page.getByRole('listbox', { name: 'Insert a block' })
+      await menu.getByRole('option', { name: new RegExp(`^${label}`) }).waitFor()
+      const [box, caret] = await Promise.all([menu.boundingBox(), page.evaluate(() => {
+        const range = window.getSelection()?.getRangeAt(0)
+        const rect = range?.getClientRects()[0] ?? range?.startContainer.parentElement?.getBoundingClientRect()
+        return rect ? { top: rect.top, bottom: rect.bottom } : null
+      })])
+      if (!box || !caret) throw new Error('could not measure the slash menu')
+      const below = box.y - caret.bottom
+      const above = caret.top - (box.y + box.height)
+      if (!((below >= 0 && below < 24) || (above >= 0 && above < 24))) throw new Error(`the slash menu for ${label} is not next to the caret (menu y ${Math.round(box.y)}, caret ${Math.round(caret.top)}–${Math.round(caret.bottom)})`)
+      if (box.y < 0 || box.y + box.height > page.viewportSize()!.height) throw new Error(`the slash menu for ${label} runs off the screen`)
+      await page.keyboard.press('Enter')
+      await menu.waitFor({ state: 'detached' })
     }
     // Typing Enter inside lists, quotes and callouts nests the next block, so start each block on
     // a fresh top-level paragraph at the end, as a writer would with the mouse.
     const fresh = () => page.evaluate(() => {
       const editor = (document.querySelector('.ProseMirror') as unknown as { editor: { state: { doc: { content: { size: number } } }; chain(): any } }).editor
       editor.chain().insertContentAt(editor.state.doc.content.size, { type: 'paragraph' }).focus('end').run()
+      // The editor takes focus on the next frame when a toolbar button had it.
+      return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
     })
-    for (const label of ['Heading', 'Bulleted list', 'Numbered list', 'Blockquote', 'Code block', 'Callout', 'Divider', 'Rule', 'Spacer']) {
+    for (const label of ['Heading 2', 'Bulleted list', 'Numbered list', 'Quote', 'Code block', 'Callout', 'Divider']) {
       await fresh()
       await block(label)
-      if (!['Divider', 'Rule', 'Spacer'].includes(label)) await page.keyboard.type(`${label} text`)
+      if (label !== 'Divider') await page.keyboard.type(`${label} text`)
     }
+    // Escape closes the menu and keeps the typed text.
+    await fresh()
+    await page.keyboard.type('/quo')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
+    await page.keyboard.press('Escape')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor({ state: 'detached' })
+    await page.keyboard.type('te kept')
+    if (!(await editor.textContent())?.includes('/quote kept')) throw new Error('Escape did not keep the typed slash text')
+    // Moving the caret back inside a command closes the menu, so Enter cannot act on a stale query.
+    await fresh()
+    await page.keyboard.type('/heading')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
+    await page.keyboard.press('ArrowLeft')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor({ state: 'detached' })
+    // A slash in a sentence is text: "Yes / no" and Enter must not turn into a block.
+    await fresh()
+    await page.keyboard.type('Yes / no')
+    await page.keyboard.press('Enter')
+    if (!(await editor.textContent())?.includes('Yes / no')) throw new Error('a slash inside a sentence was taken as a block command')
+    // The toolbar menus work from the keyboard: open, arrow down, Enter.
+    await fresh()
+    await page.getByRole('button', { name: 'Personalize' }).focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('menuitem', { name: 'First name' }).waitFor()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('{{name|reader}}'))
+    // The markdown shortcut for a rule, and the toolbar's Insert menu, still work.
+    await fresh()
+    await page.keyboard.type('--- ')
+    await fresh()
+    await page.getByRole('button', { name: 'Insert', exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Spacer/ }).click()
     await fresh()
     await block('Button')
     await page.getByRole('dialog').getByLabel('Address').fill('https://example.com/autumn')
@@ -682,23 +748,25 @@ async function flows(browser: Browser, s: Seed) {
     await page.getByRole('dialog').getByLabel('Label').fill('Autumn video')
     await page.getByRole('dialog').getByRole('button', { name: 'Apply' }).click()
     await fresh()
-    await page.getByLabel('Alt text for the next image').fill('Leaves on a trail')
     await page.locator('.mail-editor input[type=file]').setInputFiles({ name: 'leaves.png', mimeType: 'image/png', buffer: Buffer.from(demoPng(), 'base64') })
     await page.locator('.mail-editor img').first().waitFor({ timeout: 15_000 })
+    // A new image is selected, so its settings open with the alt text field ready.
+    await page.getByRole('region', { name: 'Selected block settings' }).getByLabel('Alt text').fill('Leaves on a trail')
     const types = await page.evaluate(() => {
       const editor = (document.querySelector('.ProseMirror') as unknown as { editor: { getJSON(): { content?: { type: string }[] } } }).editor
       return (editor.getJSON().content ?? []).map((n) => n.type)
     })
     const missing = ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock', 'callout', 'divider', 'horizontalRule', 'spacer', 'button', 'embed', 'image'].filter((t) => !types.includes(t))
     if (missing.length) throw new Error(`the editor is missing blocks: ${missing.join(', ')}`)
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
-    await page.getByRole('status').filter({ hasText: 'Saved' }).first().waitFor({ timeout: 10_000 })
+    // The draft saves by itself; ⌘S saves at once.
+    await page.keyboard.press('ControlOrMeta+s')
+    await page.getByRole('status').filter({ hasText: /^Saved$/ }).first().waitFor({ timeout: 10_000 })
   })
 
   await step('image-library', async (page) => {
     if (!campaignUrl) throw new Error('the campaign flow did not create a draft')
     await page.goto(campaignUrl)
-    await page.getByRole('button', { name: 'Images', exact: true }).click()
+    await page.getByRole('button', { name: 'Image library', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Images' })
     await dialog.locator('img').first().waitFor({ timeout: 10_000 })
     await dialog.getByRole('button', { name: 'Delete image' }).first().click()
