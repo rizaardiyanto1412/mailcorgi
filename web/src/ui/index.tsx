@@ -289,7 +289,21 @@ export function Popover({ trigger, children, align = 'start', side = 'bottom', w
         e.stopPropagation()
         setOpen(false)
         anchor.current?.focus()
+        return
       }
+      if (role !== 'menu') return
+      // A menu takes the arrow keys, Home and End; Tab leaves it and closes it.
+      const items = [...(panel.current?.querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled)') ?? [])]
+      const at = items.indexOf(document.activeElement as HTMLElement)
+      if (e.key === 'Tab') {
+        setOpen(false)
+        if (at >= 0) anchor.current?.focus()
+        return
+      }
+      const next = e.key === 'ArrowDown' ? (at + 1) % items.length : e.key === 'ArrowUp' ? (at <= 0 ? items.length - 1 : at - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : -1
+      if (next < 0 || !items.length) return
+      e.preventDefault()
+      items[next]!.focus()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey, true)
@@ -297,7 +311,12 @@ export function Popover({ trigger, children, align = 'start', side = 'bottom', w
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [open])
+  }, [open, role])
+  // Opening a menu moves focus to its first item, so the keyboard can reach what is inside.
+  const placed = pos !== null
+  useEffect(() => {
+    if (open && placed && role === 'menu' && !panel.current?.contains(document.activeElement)) panel.current?.querySelector<HTMLElement>('[role=menuitem]:not(:disabled)')?.focus()
+  }, [open, placed, role])
 
   return (
     <>

@@ -37,18 +37,18 @@ export const filterBlocks = (query: string) => {
   return [...starts, ...rest]
 }
 
-export function BlockRow({ block, active, onPick, onHover, id }: { block: Block; active?: boolean; onPick(): void; onHover?(): void; id?: string }) {
+export function BlockRow({ block, active, onPick, onHover, id, role }: { block: Block; active?: boolean; onPick(): void; onHover?(): void; id?: string; role: 'menuitem' | 'option' }) {
   return (
     <button
       type="button"
-      role="menuitem"
+      role={role}
       id={id}
+      aria-selected={role === 'option' ? !!active : undefined}
+      tabIndex={role === 'option' ? -1 : undefined}
       data-active={active || undefined}
-      // Keep the caret in the editor: a mousedown on the row would blur it first.
-      onMouseDown={(e) => e.preventDefault()}
       onMouseMove={onHover}
       onClick={onPick}
-      className={cx('flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors', active ? 'bg-hover' : 'hover:bg-hover')}
+      className={cx('flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors', active ? 'bg-hover' : 'hover:bg-hover focus-visible:bg-hover')}
     >
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-fg-2 [&>svg]:size-4" aria-hidden>{block.icon}</span>
       <span className="min-w-0 flex-1">
@@ -61,7 +61,10 @@ export function BlockRow({ block, active, onPick, onHover, id }: { block: Block;
 
 const WIDTH = 280
 
-/** The "/" menu. It floats at the caret; the editor keeps focus and drives it with the keyboard. */
+/**
+ * The "/" menu. It floats at the caret; the editor keeps focus and drives it with the keyboard.
+ * A mousedown anywhere on the panel, rows or scrollbar, is cancelled so the caret stays put.
+ */
 export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
   /** Viewport box of the "/" character, read again on every scroll. */
   anchor(): { left: number; top: number; bottom: number } | null
@@ -80,23 +83,27 @@ export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
       if (!a) return
       const gap = 6
       const below = a.bottom + gap
-      const top = below + height > window.innerHeight - 8 && a.top - gap - height > 8 ? a.top - gap - height : below
+      // The visual viewport shrinks when a phone's keyboard opens; the window does not.
+      const viewport = window.visualViewport?.height ?? window.innerHeight
+      const top = below + height > viewport - 8 && a.top - gap - height > 8 ? a.top - gap - height : below
       setPos({ top, left: Math.max(8, Math.min(a.left, window.innerWidth - WIDTH - 8)) })
     }
     place()
     window.addEventListener('resize', place)
     window.addEventListener('scroll', place, true)
+    window.visualViewport?.addEventListener('resize', place)
     return () => {
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
+      window.visualViewport?.removeEventListener('resize', place)
     }
   }, [anchor, blocks.length])
   useLayoutEffect(() => {
     panel.current?.querySelector('[data-active]')?.scrollIntoView({ block: 'nearest' })
   }, [index])
   return createPortal(
-    <div ref={panel} id="slash-menu" role="menu" aria-label="Insert a block" className="fixed z-50 max-h-[min(340px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ width: WIDTH, top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
-      {blocks.length ? blocks.map((block, i) => <BlockRow key={block.id} id={`slash-item-${i}`} block={block} active={i === index} onHover={() => i !== index && onIndex(i)} onPick={() => onPick(block)} />) : <p className="px-2 py-2 text-[13px] text-fg-3">No block matches “{query}”. Press Esc to keep the text.</p>}
+    <div ref={panel} id="slash-menu" role="listbox" aria-label="Insert a block" onMouseDown={(e) => e.preventDefault()} className="fixed z-50 max-h-[min(340px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ width: WIDTH, top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+      {blocks.length ? blocks.map((block, i) => <BlockRow key={block.id} role="option" id={`slash-item-${i}`} block={block} active={i === index} onHover={() => i !== index && onIndex(i)} onPick={() => onPick(block)} />) : <p className="px-2 py-2 text-[13px] text-fg-3">No block matches “{query}”. Press Esc to keep the text.</p>}
     </div>,
     document.body,
   )

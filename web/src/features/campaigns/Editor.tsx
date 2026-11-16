@@ -47,7 +47,7 @@ function slashAt(editor: Editor): Slash | null {
   const { $from } = selection
   if (!selection.empty || !$from.parent.isTextblock || $from.parent.type.spec.code) return null
   const before = $from.parent.textBetween(0, $from.parentOffset, undefined, '\ufffc')
-  const match = /(?:^|\s)\/([^\s/]{0,20}(?: [^\s/]{1,20})?)$/.exec(before)
+  const match = /(?:^|\s)\/((?:[^\s/]{1,20}(?: [^\s/]{1,20})?)?)$/.exec(before)
   return match ? { from: $from.pos - match[1].length - 1, query: match[1] } : null
 }
 const textOf = (node: JSONContent): string => (node.text ?? '') + ' ' + (node.content ?? []).map(textOf).join(' ')
@@ -92,7 +92,16 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
         }
         const open = menu.current.slash
         if (!open) return false
+        // Leave the keys alone while an input method is composing a word.
+        if (e.isComposing) return false
         const blocks = filterBlocks(open.query)
+        if (e.key === 'Escape') {
+          menu.current.dismissed = open.from
+          setSlash(null)
+          return true
+        }
+        // With nothing to pick, the keys go back to the text.
+        if (!blocks.length) return false
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           if (blocks.length) setSlashIndex((menu.current.index + (e.key === 'ArrowDown' ? 1 : blocks.length - 1)) % blocks.length)
           return true
@@ -100,11 +109,6 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
         if ((e.key === 'Enter' || e.key === 'Tab') && blocks[menu.current.index]) {
           e.preventDefault()
           live.current?.pickSlash(blocks[menu.current.index])
-          return true
-        }
-        if (e.key === 'Escape') {
-          menu.current.dismissed = open.from
-          setSlash(null)
           return true
         }
         return false
@@ -233,10 +237,12 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     if (!editor || editor.isDestroyed) return
     const dom = editor.view.dom
     if (slash) {
+      dom.setAttribute('aria-expanded', 'true')
       dom.setAttribute('aria-controls', 'slash-menu')
       dom.setAttribute('aria-activedescendant', `slash-item-${slashIndex}`)
     }
     return () => {
+      dom.removeAttribute('aria-expanded')
       dom.removeAttribute('aria-controls')
       dom.removeAttribute('aria-activedescendant')
     }
@@ -244,7 +250,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
   const stats = { words: countWords(doc) }
   if (!editor) return null
   return <div className="mail-editor rounded-xl border border-line bg-surface">
-    {editable && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-0.5 rounded-t-xl border-b border-line bg-surface px-2 py-1.5" role="toolbar" aria-label="Editor tools">
+    {editable && <div className="sticky top-0 z-10 flex items-center gap-0.5 overflow-x-auto rounded-t-xl border-b border-line bg-surface px-2 py-1.5 sm:flex-wrap sm:overflow-visible" role="toolbar" aria-label="Editor tools">
       <IconButton label="Undo (⌘Z)" onClick={() => editor.chain().focus().undo().run()}><Undo /></IconButton>
       <IconButton label="Redo (⌘⇧Z)" onClick={() => editor.chain().focus().redo().run()}><Redo /></IconButton>
       <Divider />
@@ -256,7 +262,7 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
       <IconButton label="Image library" onClick={() => setLibrary(true)}><Images /></IconButton>
       <Divider />
       <Popover width={280} trigger={({ ref, ...props }) => <Button ref={ref} {...props} size="sm" variant="ghost" icon={<Plus />}>Insert<ChevronDown className="!size-3.5 text-fg-3" aria-hidden /></Button>}>
-        {(close) => BLOCKS.map((block) => <BlockRow key={block.id} block={block} onPick={() => { close(); insert(block.id) }} />)}
+        {(close) => BLOCKS.map((block) => <BlockRow key={block.id} role="menuitem" block={block} onPick={() => { close(); insert(block.id) }} />)}
       </Popover>
       <Popover width={220} trigger={({ ref, ...props }) => <Button ref={ref} {...props} size="sm" variant="ghost" icon={<Braces />}>Personalize<ChevronDown className="!size-3.5 text-fg-3" aria-hidden /></Button>}>
         {(close) => <>

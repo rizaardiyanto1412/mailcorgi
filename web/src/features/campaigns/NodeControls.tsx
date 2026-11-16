@@ -14,7 +14,7 @@ export function NodeControls({ editor }: { editor: Editor }) {
   const { type, attrs } = selected
   const update = (key: string, value: string | number) => editor.commands.updateAttributes(type, { [key]: value })
   const field = (key: string, label: string, inputType = 'text') => <Field key={key} label={label}>{(id) => <Input id={id} type={inputType} value={typeof attrs[key] === 'string' || typeof attrs[key] === 'number' ? attrs[key] : ''} onChange={(e) => update(key, inputType === 'number' ? Number(e.target.value) : e.target.value)} />}</Field>
-  return <section className="sticky bottom-0 z-10 space-y-3 border-t border-line bg-sunken p-4" aria-label="Selected block settings">
+  return <section className="z-10 space-y-3 sm:sticky sm:bottom-0 border-t border-line bg-sunken p-4" aria-label="Selected block settings">
     <h3 className="text-sm font-semibold">{({ image: 'Image', button: 'Button', embed: 'Link card', callout: 'Callout', spacer: 'Spacer' })[type]} settings</h3>
     <div className="grid gap-3 sm:grid-cols-2">
       {type === 'image' && <>{field('alt', 'Alt text')}{field('caption', 'Caption')}{field('width', 'Width in pixels', 'number')}{field('href', 'Link address', 'url')}</>}

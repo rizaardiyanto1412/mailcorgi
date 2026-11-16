@@ -514,7 +514,7 @@ function appPages(s: Seed): Visit[] {
           return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
         })
         await page.keyboard.type('/')
-        await page.getByRole('menu', { name: 'Insert a block' }).waitFor()
+        await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
       },
     },
     { name: 'campaign-review', path: `/campaigns/${c.draft}`, then: tab('Review') },
@@ -676,8 +676,8 @@ async function flows(browser: Browser, s: Seed) {
     // Blocks come from the "/" menu, which must open at the caret and not at the top of the editor.
     const block = async (label: string) => {
       await page.keyboard.type(`/${label}`)
-      const menu = page.getByRole('menu', { name: 'Insert a block' })
-      await menu.getByRole('menuitem', { name: new RegExp(`^${label}`) }).waitFor()
+      const menu = page.getByRole('listbox', { name: 'Insert a block' })
+      await menu.getByRole('option', { name: new RegExp(`^${label}`) }).waitFor()
       const [box, caret] = await Promise.all([menu.boundingBox(), page.evaluate(() => {
         const range = window.getSelection()?.getRangeAt(0)
         const rect = range?.getClientRects()[0] ?? range?.startContainer.parentElement?.getBoundingClientRect()
@@ -706,11 +706,24 @@ async function flows(browser: Browser, s: Seed) {
     // Escape closes the menu and keeps the typed text.
     await fresh()
     await page.keyboard.type('/quo')
-    await page.getByRole('menu', { name: 'Insert a block' }).waitFor()
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
     await page.keyboard.press('Escape')
-    await page.getByRole('menu', { name: 'Insert a block' }).waitFor({ state: 'detached' })
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor({ state: 'detached' })
     await page.keyboard.type('te kept')
     if (!(await editor.textContent())?.includes('/quote kept')) throw new Error('Escape did not keep the typed slash text')
+    // A slash in a sentence is text: "Yes / no" and Enter must not turn into a block.
+    await fresh()
+    await page.keyboard.type('Yes / no')
+    await page.keyboard.press('Enter')
+    if (!(await editor.textContent())?.includes('Yes / no')) throw new Error('a slash inside a sentence was taken as a block command')
+    // The toolbar menus work from the keyboard: open, arrow down, Enter.
+    await fresh()
+    await page.getByRole('button', { name: 'Personalize' }).focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('menuitem', { name: 'First name' }).waitFor()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent?.includes('{{name|reader}}'))
     // The markdown shortcut for a rule, and the toolbar's Insert menu, still work.
     await fresh()
     await page.keyboard.type('--- ')
