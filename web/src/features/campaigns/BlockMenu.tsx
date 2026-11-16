@@ -60,6 +60,7 @@ export function BlockRow({ block, active, onPick, onHover, id, role }: { block: 
 }
 
 const WIDTH = 280
+const MAX_HEIGHT = 340
 
 /**
  * The "/" menu. It floats at the caret; the editor keeps focus and drives it with the keyboard.
@@ -74,19 +75,24 @@ export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
   onPick(block: Block): void
 }) {
   const panel = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
   const blocks = filterBlocks(query)
   useLayoutEffect(() => {
     const place = () => {
       const a = anchor()
-      const height = panel.current?.offsetHeight ?? 0
-      if (!a) return
+      const el = panel.current
+      if (!a || !el) return
       const gap = 6
-      const below = a.bottom + gap
       // The visual viewport shrinks when a phone's keyboard opens; the window does not.
       const viewport = window.visualViewport?.height ?? window.innerHeight
-      const top = below + height > viewport - 8 && a.top - gap - height > 8 ? a.top - gap - height : below
-      setPos({ top, left: Math.max(8, Math.min(a.left, window.innerWidth - WIDTH - 8)) })
+      const natural = Math.min(MAX_HEIGHT, el.scrollHeight)
+      const below = viewport - 8 - (a.bottom + gap)
+      const above = a.top - gap - 8
+      // Below the line when it fits, else on the roomier side, never taller than that side.
+      const up = natural > below && above > below
+      const maxHeight = Math.max(96, Math.min(MAX_HEIGHT, up ? above : below))
+      const height = Math.min(natural, maxHeight)
+      setPos({ top: up ? a.top - gap - height : a.bottom + gap, left: Math.max(8, Math.min(a.left, window.innerWidth - WIDTH - 8)), maxHeight })
     }
     place()
     window.addEventListener('resize', place)
@@ -102,7 +108,7 @@ export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
     panel.current?.querySelector('[data-active]')?.scrollIntoView({ block: 'nearest' })
   }, [index])
   return createPortal(
-    <div ref={panel} id="slash-menu" role="listbox" aria-label="Insert a block" onMouseDown={(e) => e.preventDefault()} className="fixed z-50 max-h-[min(340px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ width: WIDTH, top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+    <div ref={panel} id="slash-menu" role="listbox" aria-label="Insert a block" onMouseDown={(e) => e.preventDefault()} className="fixed z-50 overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ width: WIDTH, maxHeight: pos?.maxHeight ?? MAX_HEIGHT, top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
       {blocks.length ? blocks.map((block, i) => <BlockRow key={block.id} role="option" id={`slash-item-${i}`} block={block} active={i === index} onHover={() => i !== index && onIndex(i)} onPick={() => onPick(block)} />) : <p className="px-2 py-2 text-[13px] text-fg-3">No block matches “{query}”. Press Esc to keep the text.</p>}
     </div>,
     document.body,

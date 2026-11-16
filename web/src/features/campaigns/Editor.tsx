@@ -134,10 +134,13 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
       if (!next) menu.current.dismissed = null
       setSlash(next && next.from !== menu.current.dismissed ? next : null)
     },
-    onSelectionUpdate: ({ editor: e }) => {
-      // Moving the caret never opens the menu; it only closes one whose slash the caret left.
+    onSelectionUpdate: ({ editor: e, transaction }) => {
+      // Typing is handled above. Moving the caret by hand never opens the menu, and it closes one
+      // whose command the caret left or cut short, so Enter cannot act on a stale query.
       const open = menu.current.slash
-      if (open && slashAt(e)?.from !== open.from) setSlash(null)
+      if (!open || transaction.docChanged) return
+      const now = slashAt(e)
+      if (!now || now.from !== open.from || now.query !== open.query) setSlash(null)
     },
     onBlur: () => setSlash(null),
   })
@@ -159,9 +162,12 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
   const placeImage = (attrs: { src: string; width?: number | null; height?: number | null }) => {
     if (!editor) return
     editor.chain().focus().setImage({ src: attrs.src, alt: '', ...(attrs.width && attrs.height ? { width: attrs.width, height: attrs.height } : {}) }).run()
+    // The caret lands just after the new image. Pick the copy nearest before it, not any other
+    // copy of the same file elsewhere in the issue.
+    const caret = editor.state.selection.from
     let at = -1
     editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === 'image' && node.attrs.src === attrs.src && !node.attrs.alt) at = pos
+      if (node.type.name === 'image' && node.attrs.src === attrs.src && pos <= caret) at = pos
     })
     if (at >= 0) editor.commands.setNodeSelection(at)
   }

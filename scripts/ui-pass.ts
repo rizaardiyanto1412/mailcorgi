@@ -687,6 +687,7 @@ async function flows(browser: Browser, s: Seed) {
       const below = box.y - caret.bottom
       const above = caret.top - (box.y + box.height)
       if (!((below >= 0 && below < 24) || (above >= 0 && above < 24))) throw new Error(`the slash menu for ${label} is not next to the caret (menu y ${Math.round(box.y)}, caret ${Math.round(caret.top)}–${Math.round(caret.bottom)})`)
+      if (box.y < 0 || box.y + box.height > page.viewportSize()!.height) throw new Error(`the slash menu for ${label} runs off the screen`)
       await page.keyboard.press('Enter')
       await menu.waitFor({ state: 'detached' })
     }
@@ -711,6 +712,12 @@ async function flows(browser: Browser, s: Seed) {
     await page.getByRole('listbox', { name: 'Insert a block' }).waitFor({ state: 'detached' })
     await page.keyboard.type('te kept')
     if (!(await editor.textContent())?.includes('/quote kept')) throw new Error('Escape did not keep the typed slash text')
+    // Moving the caret back inside a command closes the menu, so Enter cannot act on a stale query.
+    await fresh()
+    await page.keyboard.type('/heading')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor()
+    await page.keyboard.press('ArrowLeft')
+    await page.getByRole('listbox', { name: 'Insert a block' }).waitFor({ state: 'detached' })
     // A slash in a sentence is text: "Yes / no" and Enter must not turn into a block.
     await fresh()
     await page.keyboard.type('Yes / no')
