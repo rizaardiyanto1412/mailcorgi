@@ -83,14 +83,16 @@ export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
       const el = panel.current
       if (!a || !el) return
       const gap = 6
-      // The visual viewport shrinks when a phone's keyboard opens; the window does not.
-      const viewport = window.visualViewport?.height ?? window.innerHeight
+      // A phone's keyboard shrinks and pans the visual viewport; the window does not change.
+      const visual = window.visualViewport
+      const visibleTop = (visual?.offsetTop ?? 0) + 8
+      const visibleBottom = (visual?.offsetTop ?? 0) + (visual?.height ?? window.innerHeight) - 8
       const natural = Math.min(MAX_HEIGHT, el.scrollHeight)
-      const below = viewport - 8 - (a.bottom + gap)
-      const above = a.top - gap - 8
-      // Below the line when it fits, else on the roomier side, never taller than that side.
-      const up = natural > below && above > below
-      const maxHeight = Math.max(96, Math.min(MAX_HEIGHT, up ? above : below))
+      const below = visibleBottom - (a.bottom + gap)
+      const above = a.top - gap - visibleTop
+      // Below the line when most of it fits there (the list scrolls), else on the roomier side.
+      const up = below < Math.min(natural, 200) && above > below
+      const maxHeight = Math.max(0, Math.min(MAX_HEIGHT, up ? above : below))
       const height = Math.min(natural, maxHeight)
       setPos({ top: up ? a.top - gap - height : a.bottom + gap, left: Math.max(8, Math.min(a.left, window.innerWidth - WIDTH - 8)), maxHeight })
     }
@@ -98,12 +100,14 @@ export function SlashMenu({ anchor, query, index, onIndex, onPick }: {
     window.addEventListener('resize', place)
     window.addEventListener('scroll', place, true)
     window.visualViewport?.addEventListener('resize', place)
+    window.visualViewport?.addEventListener('scroll', place)
     return () => {
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
       window.visualViewport?.removeEventListener('resize', place)
+      window.visualViewport?.removeEventListener('scroll', place)
     }
-  }, [anchor, blocks.length])
+  }, [anchor, blocks.length, query])
   useLayoutEffect(() => {
     panel.current?.querySelector('[data-active]')?.scrollIntoView({ block: 'nearest' })
   }, [index])

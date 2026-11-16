@@ -318,12 +318,18 @@ export function Popover({ trigger, children, align = 'start', side = 'bottom', w
     if (open && placed && role === 'menu' && !panel.current?.contains(document.activeElement)) panel.current?.querySelector<HTMLElement>('[role=menuitem]:not(:disabled)')?.focus()
   }, [open, placed, role])
 
+  // Hand focus back to the trigger before a chosen item runs and unmounts, so a dialog the item
+  // opens can return focus there when it closes.
+  const handBack = (e: { target: EventTarget }) => {
+    if (role === 'menu' && e.target instanceof Element && e.target.closest('[role=menuitem]') && panel.current?.contains(document.activeElement)) anchor.current?.focus()
+  }
+
   return (
     <>
       {trigger({ onClick: () => setOpen(!open), 'aria-expanded': open, 'aria-haspopup': role, ref: anchor })}
       {open &&
         createPortal(
-          <div ref={panel} role={role} className="animate-pop fixed z-50 max-h-[min(420px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, minWidth: 180, visibility: pos && open ? 'visible' : 'hidden' }}>
+          <div ref={panel} role={role} onClickCapture={handBack} className="animate-pop fixed z-50 max-h-[min(420px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, minWidth: 180, visibility: pos && open ? 'visible' : 'hidden' }}>
             {children(() => setOpen(false))}
           </div>,
           document.body,

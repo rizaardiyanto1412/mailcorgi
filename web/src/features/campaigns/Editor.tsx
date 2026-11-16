@@ -243,12 +243,10 @@ export function CampaignEditor({ newsletterId, doc, onChange, onSave, editable }
     if (!editor || editor.isDestroyed) return
     const dom = editor.view.dom
     if (slash) {
-      dom.setAttribute('aria-expanded', 'true')
       dom.setAttribute('aria-controls', 'slash-menu')
-      dom.setAttribute('aria-activedescendant', `slash-item-${slashIndex}`)
+      if (filterBlocks(slash.query).length) dom.setAttribute('aria-activedescendant', `slash-item-${slashIndex}`)
     }
     return () => {
-      dom.removeAttribute('aria-expanded')
       dom.removeAttribute('aria-controls')
       dom.removeAttribute('aria-activedescendant')
     }
