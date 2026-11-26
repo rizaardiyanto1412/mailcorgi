@@ -252,7 +252,11 @@ The edge strips every inbound `x-mc-*` header, then routes:
 |---|---|---|
 | `/api/auth/*`, `/api/control/*`, `/api/billing/*`, `/admin` APIs | control store | — |
 | `/api/actions/*` (scope account) | account store | session → `control.resolveSession` → current account |
-| `/api/v1/*`, `/mcp` | account store | API key `mc_<accountId>_<secret>` |
+| `/api/v1/*`, `/mcp` | account store | API key `mc_<accountId>_<secret>`; `/mcp` also takes an OAuth access token `mca_<accountId>_<secret>` |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` | edge | metadata built from the request's public origin (docs/oauth.md) |
+| `/oauth/register` | control store | — |
+| `/oauth/token`, `/oauth/revoke` | account store | code `mcc_`, refresh token `mcr_` or access token `mca_`, each `<prefix>_<accountId>_<secret>` |
+| `/oauth/authorize` | web app | consent page; approval calls `oauth.decide` on the control store, which asks the account store for a code |
 | `/t/o/:token`, `/t/c/:token`, `/u/:token`, `/confirm/:token`, `/keep/:token` | account store | token prefix `<accountId>.` (`/u/` also serves the preferences page for a `p` token) |
 | `/api/public/subscribe/:newsletterKey`, `/embed.js?key=`, `/f/:newsletterKey` | account store | key `nl_<accountId>_<rand>` |
 | `/api/public/tls-check?domain=` | edge | Caddy's on-demand TLS `ask`: 200 for the app host and verified custom hosts |

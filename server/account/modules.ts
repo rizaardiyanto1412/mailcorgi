@@ -19,6 +19,7 @@ import { assertSendingAllowed, hygieneModule } from './hygiene/index.ts'
 import { teamModule } from './team/index.ts'
 import { notificationsModule } from './notifications/index.ts'
 import { apikeysModule } from './apikeys/index.ts'
+import { oauthModule } from './oauth/index.ts'
 import { setupModule } from './setup/index.ts'
 import { devModule } from './dev/index.ts'
 
@@ -57,6 +58,7 @@ const modules = {
   team: teamModule,
   notifications: notificationsModule,
   apikeys: apikeysModule,
+  oauth: oauthModule,
   setup: setupModule,
   dev: devModule,
 }

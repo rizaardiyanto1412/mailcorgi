@@ -1,7 +1,8 @@
 import type { StoreCtx } from '../../core/store.ts'
 import type { Actor } from '../../core/actions.ts'
 import { sha256Hex } from '../../core/crypto.ts'
-import { parseApiKey } from '../../core/ids.ts'
+import { parseApiKey, parseOAuthToken } from '../../core/ids.ts'
+import { authenticateAccessToken } from '../oauth/tokens.ts'
 import { AppError, unauthorized } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 
@@ -13,6 +14,13 @@ export class KeyRateError extends AppError {
 
 export async function authenticateKey(ctx: StoreCtx, request: Request, via: 'api' | 'mcp'): Promise<Actor> {
   const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') ?? '')
+  // /mcp also takes an OAuth access token. The REST API takes API keys only.
+  const oauth = via === 'mcp' && bearer ? parseOAuthToken(bearer[1]) : null
+  if (oauth) {
+    const actor = oauth.kind === 'access' && oauth.accountId === ctx.accountId ? await authenticateAccessToken(ctx, request, bearer![1]) : null
+    if (!actor) throw unauthorized('The access token is invalid or has expired.')
+    return actor
+  }
   const parsed = bearer && parseApiKey(bearer[1])
   if (!parsed || parsed.accountId !== ctx.accountId) throw unauthorized('Send a valid API key.')
   const hash = await sha256Hex(parsed.secret)

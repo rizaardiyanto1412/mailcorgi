@@ -107,3 +107,15 @@ export const appHost = (config: Config) => {
     return ''
   }
 }
+
+/**
+ * The public origin of an app-host request. The APP_URL scheme wins for the APP_URL host and its
+ * aliases, so a Node install behind a TLS proxy still says https. Other hosts keep the request's own.
+ */
+export function publicOrigin(config: Config, url: URL): string {
+  let main: URL | null
+  try { main = config.appUrl ? new URL(config.appUrl) : null } catch { main = null }
+  const host = url.host.toLowerCase()
+  if (main && (host === main.host || config.appHosts.includes(host))) return `${main.protocol}//${host}`
+  return url.origin
+}

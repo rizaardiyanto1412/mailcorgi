@@ -6,7 +6,7 @@ import { useAuth, useDocumentTitle } from '../../lib/session.tsx'
 import { Banner, Button, Field, Input, Logo } from '../../ui/index.tsx'
 import type { Feature } from '../../app/feature.ts'
 
-function AuthCard({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer?: ReactNode }) {
+export function AuthCard({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer?: ReactNode }) {
   return (
     <main className="flex min-h-full items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
@@ -83,10 +83,11 @@ export function SignInPage() {
     } else await api.post('/auth/signin/code', { email, code })
     refresh()
   })
+  const connecting = window.location.pathname === '/oauth/authorize'
   return (
     <AuthCard
       title="Sign in to MailCorgi"
-      subtitle="Your newsletters, lists and archive"
+      subtitle={connecting ? 'Sign in to connect an app to your account' : 'Your newsletters, lists and archive'}
       footer={
         <>
           {boot.signupOpen && (
@@ -235,6 +236,8 @@ export const authFeature: Feature = {
   publicRoutes: [
     { path: '/invite', element: <InvitePage /> },
     { path: '/signin', element: <SignInPage /> },
+    // An MCP client sends the user here to approve it. Signed out, sign in in place; the consent screen follows.
+    { path: '/oauth/authorize', element: <SignInPage /> },
     { path: '/signup', element: <SignUpPage /> },
     { path: '/reset', element: <ResetPage /> },
     { path: '/setup', element: <SetupPage /> },
