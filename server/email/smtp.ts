@@ -8,7 +8,7 @@ export function smtpProvider(_ctx: StoreCtx, settings: Record<string, string>): 
   return {
     name: 'smtp', capabilities: { identities: false, events: false, idempotency: false },
     async send(msg) {
-      if (!('process' in globalThis) || typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return { ok: false, kind: 'permanent', message: 'SMTP needs the Node build. Choose SES or Resend on Workers.' }
+      if (!('process' in globalThis) || typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers') return { ok: false, kind: 'permanent', message: 'SMTP needs the Node build. Choose SES, Resend or PostShiba on Workers.' }
       try {
         const packageName = 'nodemailer'
         const loaded: typeof import('nodemailer') = await import(packageName)
