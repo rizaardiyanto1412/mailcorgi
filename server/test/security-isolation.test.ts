@@ -38,7 +38,8 @@ async function newsletterFixtures(install: Install, client: Client, label: strin
   const field = await client.action('contactFields.create', { newsletterId: nl.id, key: `custom_${label}`, label: 'Custom', type: 'text' })
   const imp = await client.action('imports.create', { newsletterId: nl.id, mapping: { email: 'email' } } as never) as { id: string }
   const post = await client.action('website.publishPost', { newsletterId: nl.id, subject: `Post ${label}`, slug: `post-${label}`, source: 'Body', visible: false })
-  return { theme: JSON.stringify(nl.theme), revision: String(campaign.revision), newsletterId: nl.id, campaignId: campaign.id, sentCampaignId: sent.id, contactId: contact.contact.id, segmentId: segment.id, authorId: author.id, tagId: tag.id, fieldId: field.id, importId: imp.id, postId: post.id }
+  const sequence = await client.action('sequences.create', { newsletterId: nl.id, name: `Sequence ${label}`, entry: { type: 'tag', tagId: tag.id }, exit: { tagIds: [tag.id], segmentId: segment.id }, steps: [{ delayDays: 1, subject: `Step ${label}` }] })
+  return { sequenceId: sequence.id, stepId: sequence.steps[0].id, theme: JSON.stringify(nl.theme), revision: String(campaign.revision), newsletterId: nl.id, campaignId: campaign.id, sentCampaignId: sent.id, contactId: contact.contact.id, segmentId: segment.id, authorId: author.id, tagId: tag.id, fieldId: field.id, importId: imp.id, postId: post.id }
 }
 
 async function accountFixtures(install: Install, client: Client, label: string): Promise<Ids> {
@@ -66,7 +67,8 @@ function baseInput(action: AnyAction, own: Ids, extra: Record<string, unknown>):
     audience: { segmentId: own.segmentId, exclude: { segmentIds: [own.segmentId], tagIds: [own.tagId] } },
     scheduledAt: Date.UTC(2027, 0, 1), theme: own.theme ? JSON.parse(own.theme) : undefined, revision: own.revision ? Number(own.revision) : undefined,
     options: { tagIds: [own.tagId] }, mapping: { email: 'email' }, seq: 0, rows: [{ email: 'row@example.com' }], totalRows: 1,
-    to: ['test@example.com'], hostname: '', enabled: true, doubleOptIn: true, ...extra,
+    to: ['test@example.com'], hostname: '', enabled: true, doubleOptIn: true,
+    addTagIds: [own.tagId], entry: { type: 'tag', tagId: own.tagId }, exit: { tagIds: [own.tagId], segmentId: own.segmentId }, stepIds: [own.stepId], delayDays: 2, ...extra,
   }
   if (action.name === 'website.publishPost') input.slug = 'isolation-post'
   if (action.name === 'newsletters.update') delete input.domainId
@@ -104,6 +106,7 @@ function fixtureKey(path: (string | number)[]): string {
   const names = path.filter((p): p is string => typeof p === 'string')
   const last = names[names.length - 1]
   if (last === 'ids') return 'notificationId'
+  if (last === 'addTagIds' || last === 'removeTagIds') return 'tagId'
   return last.endsWith('Ids') ? last.slice(0, -1) : last
 }
 
@@ -147,7 +150,7 @@ test('no action reaches a resource of another newsletter or another account thro
     const otherActor: Actor = { ...ownerActor, userId: other.session.user.id, email: other.email }
     const victimSessions = control.db.all<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', owner.session.user.id)
 
-    const secrets = (ids: Ids, label: string) => [...Object.entries(ids).filter(([k]) => !['accountId', 'sessionId', 'theme', 'revision'].includes(k)).map(([, v]) => v), `reader-${label}@example.com`, `Draft ${label}`, `Writer ${label}`, `Tag ${label}`, `blocked-${label}@example.com`]
+    const secrets = (ids: Ids, label: string) => [...Object.entries(ids).filter(([k]) => !['accountId', 'sessionId', 'theme', 'revision'].includes(k)).map(([, v]) => v), `reader-${label}@example.com`, `Draft ${label}`, `Writer ${label}`, `Tag ${label}`, `Sequence ${label}`, `Step ${label}`, `blocked-${label}@example.com`]
     const attempt = async (label: string, ctx: typeof accountCtx, action: AnyAction, input: Record<string, unknown>, actor: Actor, watched: Db[], forbidden: string[], substituted: string) => {
       if (!action.input.safeParse(input).success) return
       tried.add(action.name)
@@ -215,7 +218,7 @@ test('no action reaches a resource of another newsletter or another account thro
   }
   assert.deepEqual(failures, [])
   assert.ok(attempts.length > 250, 'the walk must reach every id-shaped input')
-  for (const name of ['contacts.bulk', 'campaigns.create', 'campaigns.update', 'notifications.markRead', 'website.publishPost', 'team.remove', 'billing.portal']) assert.ok(tried.has(name), `${name} was not walked`)
+  for (const name of ['contacts.bulk', 'contacts.update', 'sequences.create', 'sequences.get', 'sequences.update', 'sequences.updateStep', 'sequences.deleteStep', 'sequences.reorderSteps', 'campaigns.create', 'campaigns.update', 'notifications.markRead', 'website.publishPost', 'team.remove', 'billing.portal']) assert.ok(tried.has(name), `${name} was not walked`)
 })
 
 test('the edge drops smuggled x-mc headers on every route', async () => {

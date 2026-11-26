@@ -4,6 +4,7 @@ import { AppError, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
 import { contactLimitError, reserveContacts } from '../usage/index.ts'
 import { emailHash } from './hash.ts'
+import { addContactTags, clearContactTags, type TagSource } from './tags.ts'
 
 export const statusSchema = z.enum(['unconfirmed', 'subscribed', 'unsubscribed', 'bounced', 'complained', 'cleaned'])
 export type ContactStatus = z.infer<typeof statusSchema>
@@ -18,7 +19,7 @@ export interface ContactRow {
 }
 export const serializeContact = (r: ContactRow) => ({ id: r.id, newsletterId: r.newsletter_id, email: r.email, name: r.name, status: r.status, source: r.source, fields: fieldValuesSchema.parse(JSON.parse(r.fields)), subscribedAt: r.subscribed_at, confirmedAt: r.confirmed_at, createdAt: r.created_at, updatedAt: r.updated_at, provider: r.provider, unsubscribedAt: r.unsubscribed_at, unsubscribeReason: r.unsubscribe_reason, lastSentAt: r.last_sent_at, lastOpenedAt: r.last_opened_at, lastClickedAt: r.last_clicked_at })
 export type Contact = ReturnType<typeof serializeContact>
-export interface SubscribeInput { newsletterId: string; email: string; name?: string; fields?: Record<string, unknown>; tags?: string[]; source: string; consent: 'asserted' | 'confirmed' | 'pending'; at?: number }
+export interface SubscribeInput { newsletterId: string; email: string; name?: string; fields?: Record<string, unknown>; tags?: string[]; source: string; consent: 'asserted' | 'confirmed' | 'pending'; at?: number; /** Which write path this is, for tag listeners. `source` is free text the caller chooses, so it is not trusted for this. */ tagSource?: TagSource }
 export type SubscribeOutcome = 'subscribed' | 'pending' | 'suppressed' | 'limit' | 'exists'
 export function contactRow(ctx: StoreCtx, id: string, newsletterId?: string): ContactRow {
   const r = ctx.db.get<ContactRow>('SELECT * FROM contacts WHERE id = ?' + (newsletterId ? ' AND newsletter_id = ?' : ''), ...[id, ...(newsletterId ? [newsletterId] : [])])
@@ -165,9 +166,10 @@ export function subscribe(ctx: StoreCtx, input: SubscribeInput): { contact: Cont
     } else {
       ctx.db.run('UPDATE contacts SET name = ?, fields = ?, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.name ?? existing.name, JSON.stringify({ ...fieldValuesSchema.parse(JSON.parse(existing.fields)), ...fields }), ctx.now(), existing.id, input.newsletterId)
     }
-    for (const tag of input.tags ?? []) ctx.db.run('INSERT OR IGNORE INTO contact_tags (contact_id, tag_id) VALUES (?, ?)', candidate.id, tag)
     if (input.consent !== 'pending' && existing && existing.status !== 'subscribed') setContactStatus(ctx, candidate.id, 'subscribed', { consent: input.consent, at, source: input.source })
     if (input.consent === 'confirmed' && existing?.status === 'subscribed' && !existing.confirmed_at) ctx.db.run('UPDATE contacts SET confirmed_at = ? WHERE id = ? AND newsletter_id = ?', at, candidate.id, input.newsletterId)
+    // Last, so a tag listener reads the contact as this call leaves it. New and existing contacts alike.
+    addContactTags(ctx, { newsletterId: input.newsletterId, contactId: candidate.id, tagIds: input.tags ?? [], source: input.tagSource ?? 'manual' })
     return result(existing?.status === 'subscribed' ? 'exists' : input.consent === 'pending' ? 'pending' : 'subscribed', !existing)
   })
 }
@@ -176,7 +178,7 @@ export function deleteContact(ctx: StoreCtx, contactId: string, newsletterId: st
     const c = contactRow(ctx, contactId, newsletterId)
     ctx.db.run('INSERT INTO deleted_contacts (email_hash, newsletter_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(email_hash, newsletter_id) DO UPDATE SET deleted_at = excluded.deleted_at', emailHash(c.email), newsletterId, ctx.now())
     unsubscribe(ctx, { contactId, reason: 'deleted' })
-    ctx.db.run('DELETE FROM contact_tags WHERE contact_id = ?', c.id)
+    clearContactTags(ctx, c.id)
     ctx.db.run('DELETE FROM contacts WHERE id = ? AND newsletter_id = ?', c.id, newsletterId)
   })
 }

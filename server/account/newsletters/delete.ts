@@ -18,6 +18,7 @@ const ROWS_PER_RUN = 20_000
 /** Rows to remove, in order. Each selects at most `LIMIT ?` rowids of one table for newsletter `?`. */
 const byCampaign = (table: string) => `SELECT t.rowid AS r FROM ${table} t JOIN campaigns c ON c.id = t.campaign_id WHERE c.newsletter_id = ? LIMIT ?`
 const byImport = (table: string) => `SELECT t.rowid AS r FROM ${table} t JOIN imports i ON i.id = t.import_id WHERE i.newsletter_id = ? LIMIT ?`
+const bySequence = (table: string) => `SELECT t.rowid AS r FROM ${table} t JOIN sequences s ON s.id = t.sequence_id WHERE s.newsletter_id = ? LIMIT ?`
 const direct = (table: string) => `SELECT rowid AS r FROM ${table} WHERE newsletter_id = ? LIMIT ?`
 export const DELETE_STEPS: { table: string; select: string }[] = [
   { table: 'provider_events', select: 'SELECT p.rowid AS r FROM provider_events p JOIN deliveries d ON d.id = p.delivery_id JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? LIMIT ?' },
@@ -28,6 +29,9 @@ export const DELETE_STEPS: { table: string; select: string }[] = [
   { table: 'hygiene_requests', select: 'SELECT h.rowid AS r FROM hygiene_requests h JOIN contacts c ON c.id = h.contact_id WHERE c.newsletter_id = ? LIMIT ?' },
   { table: 'contact_tags', select: 'SELECT ct.rowid AS r FROM contact_tags ct JOIN tags t ON t.id = ct.tag_id WHERE t.newsletter_id = ? LIMIT ?' },
   { table: 'contact_tags', select: 'SELECT ct.rowid AS r FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.newsletter_id = ? LIMIT ?' },
+  { table: 'sequence_enrollments', select: bySequence('sequence_enrollments') },
+  { table: 'sequence_steps', select: bySequence('sequence_steps') },
+  { table: 'sequences', select: direct('sequences') },
   { table: 'import_chunks', select: byImport('import_chunks') },
   { table: 'import_seen', select: byImport('import_seen') },
   { table: 'import_skips', select: byImport('import_skips') },
@@ -97,7 +101,7 @@ export function registerNewsletterDelete(reg: AccountRegistrar) {
 
 export const deleteNewsletterAction = defineAction({
   name: 'newsletters.delete',
-  description: 'Permanently delete a newsletter with its contacts, campaigns, stats, imports, website, images and team access. This cannot be undone. Refused while a campaign is sending or scheduled. The removal runs in the background; calling again is safe.',
+  description: 'Permanently delete a newsletter with its contacts, campaigns, sequences, stats, imports, website, images and team access. This cannot be undone. Refused while a campaign is sending or scheduled. The removal runs in the background; calling again is safe.',
   scope: 'account',
   role: 'owner',
   effect: 'write',

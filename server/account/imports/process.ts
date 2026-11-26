@@ -149,7 +149,7 @@ function applyRow(ctx: StoreCtx, imp: ImportRow, mapping: Mapping, options: Opti
   const existing = ctx.db.get<{ id: string; status: string }>('SELECT id, status FROM contacts WHERE newsletter_id = ? AND email = ?', imp.newsletter_id, cleaned.email)
   if (inactive && cleaned.reason !== 'invalid_syntax') {
     // Opt-outs take precedence even when another row in the file already added this address.
-    const result = options.statuses === 'preserve' && !existing && !globallySuppressed ? subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, source: 'import:' + imp.source_preset, consent: 'pending', at: at ?? undefined }) : null
+    const result = options.statuses === 'preserve' && !existing && !globallySuppressed ? subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, source: 'import:' + imp.source_preset, tagSource: 'import', consent: 'pending', at: at ?? undefined }) : null
     const contactId = existing?.id ?? (result?.created ? result.contact.id : null)
     if (contactId && (existing?.status === 'subscribed' || existing?.status === 'unconfirmed' || result?.created)) {
       const target = status === 'bounced' ? 'bounced' : status === 'complained' ? 'complained' : status === 'cleaned' ? 'cleaned' : 'unsubscribed'
@@ -187,7 +187,7 @@ function applyRow(ctx: StoreCtx, imp: ImportRow, mapping: Mapping, options: Opti
           const names = (mapping.tags ? row[mapping.tags] ?? '' : '').split(/[,;]/).map((t) => t.trim()).filter(Boolean)
           if (!existing && !reserveContacts(ctx, 1)) return { created: false, outcome: 'limit' }
           const tagIds = [...options.tagIds, ...ensureTags(ctx, imp.newsletter_id, names)]
-          return subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, name: existing && !name ? undefined : name, fields, tags: tagIds, source: 'import:' + imp.source_preset, consent: options.consent && status === 'subscribed' ? 'asserted' : 'pending', at: at ?? undefined })
+          return subscribe(ctx, { newsletterId: imp.newsletter_id, email: cleaned.email, name: existing && !name ? undefined : name, fields, tags: tagIds, source: 'import:' + imp.source_preset, tagSource: 'import', consent: options.consent && status === 'subscribed' ? 'asserted' : 'pending', at: at ?? undefined })
         }
         const result = insertActive()
         if (result.outcome === 'limit') finalReason = 'contact_limit'

@@ -382,7 +382,7 @@ deleted_contacts(email_hash, newsletter_id, deleted_at)      -- keeps a re-impor
 imports(id, newsletter_id, status, source_preset, mapping JSON, options JSON, total_rows, processed_rows,
         added, updated, skipped JSON (by reason), created_by, created_at, finished_at, error)
 import_chunks(import_id, seq, rows JSON, done INTEGER, PRIMARY KEY(import_id, seq))
-campaigns(id, newsletter_id, author_id NULL, kind 'issue'|'welcome'|'keep', format 'doc'|'markdown'|'html',
+campaigns(id, newsletter_id, author_id NULL, kind 'issue'|'welcome'|'keep'|'sequence', format 'doc'|'markdown'|'html',
           subject, preview_text, doc JSON, source TEXT, html TEXT, text TEXT, slug,
           status 'draft'|'scheduled'|'sending'|'paused'|'sent'|'canceled', pause_reason,
           audience JSON (segment id / tag ids / 'engaged' / all, exclusions),
@@ -438,6 +438,17 @@ Module migrations add to the base tables above (each module owns its own):
   `import_seen` (no longer written: the addresses already met are rebuilt from the stored chunks and
   kept in memory for the run), `import_skips`, `import_dns` (24-hour MX cache). Rows are committed
   50 at a time with one checkpoint per batch.
+- **sequences**: `sequences(id, newsletter_id, name, status 'draft'|'active'|'paused'|'archived',
+  entry JSON {type 'signup'|'tag'|'segment'|'manual', tagId?, segmentId?}, exit JSON {tagIds?,
+  segmentId?}, delay_anchor 'enrolled_at', created_by, created_at, updated_at, archived_at)` with
+  index `(newsletter_id, status)` (the list, and the tag hook's lookup of active sequences);
+  `sequence_steps(id, sequence_id, position, delay_days, campaign_id UNIQUE, created_at, updated_at,
+  UNIQUE(sequence_id, position))`; `sequence_enrollments(id, sequence_id, contact_id, status
+  'active'|'paused'|'completed'|'exited', source, enrolled_at, last_step_id, next_step_id,
+  next_run_at, exit_reason, paused_at, finished_at, UNIQUE(sequence_id, contact_id))` with the
+  partial index `(next_run_at) WHERE status = 'active' AND next_run_at IS NOT NULL` for the
+  scheduler. `paused` and `paused_at` are reserved for per-enrollment pause and resume, which no
+  code writes yet.
 - **sending**: `deliveries.attempts` (a temporary refusal retries at most 3 times).
 - **signup**: `signup_settings`, `signup_mail` (confirmation and welcome attempts).
 - **website**: `website_posts` (web-only Markdown posts), `website_hosts`, `website_cache_versions`
@@ -494,6 +505,12 @@ and rows in chunks, then team grants, invites and the directory entry. Account-w
 delete (writes `deleted_contacts`), bulk tag, bulk delete, bulk unsubscribe. Custom fields. Contact
 page with timeline from `events`. CSV export (formula-safe cells). `subscribe()`, `unsubscribe()`,
 `suppress()` and `isSuppressed()` live here and are the only write paths for subscription state.
+`contacts/tags.ts` is the only writer of `contact_tags`: `addContactTags()` and `removeContactTags()`
+serve `subscribe()` (new and existing contacts, so imports and `contacts.create` too), `contacts.update`
+(`addTagIds`, `removeTagIds`), `contacts.bulk`, `tags.delete` and contact deletion. Other modules
+register with `onContactTagsAdded(listener)`; a listener is called synchronously, inside the writing
+transaction, once per contact with only the tags that contact newly gained and the write path
+(`manual`, `api`, `mcp`, `bulk`, `import`, `signup`). Removals and tags already present emit nothing.
 
 **segments** — saved filters over contacts: status, tags (any/all/none), fields (eq, contains, gt, lt,
 set), signup date, source, engagement (opened/clicked in last N issues or days, never opened), inbox
@@ -522,6 +539,21 @@ text, links resolve to http(s). Test email to up to 5 addresses. Image library: 
 lists campaign uploads (not logos, icons or avatars); `campaigns.deleteImage` refuses with
 `409 image_in_use` while a campaign or the settings mention the image, unless `confirm: true`. A
 deleted image can linger in caches because `/img/` is served immutable.
+
+**sequences** — email sequences (drips): ordered steps a contact receives a set number of whole days
+after entering, counted from enrollment (`delay_anchor = 'enrolled_at'`), not from the previous step.
+Entry is one of `signup` (the public form only; imports and API-created contacts do not enter), `tag`
+(a contact newly gains the tag, by any write path), `segment` or `manual`; exit rules name tags or a
+segment. A contact enters a sequence at most once, and may be in several sequences. Each step owns a
+hidden `campaigns` row (`kind = 'sequence'`, `web_visible = 0`, always `draft`) so rendering,
+deliveries, tracking and stats are the campaign ones; that row is left out of `campaigns.list`, the
+website and issue-based engagement, cannot be sent, scheduled, canceled, duplicated or deleted as a
+campaign (`409 not_issue` / `sequence_step`), and can be saved through `campaigns.update` by admins
+only. Sequences are archived, never deleted. This unit ships the tables and the draft-mode actions
+(`sequences.list|get|create|update|archive|addStep|updateStep|deleteStep|reorderSteps`); a sequence is
+`draft` or `archived` and nothing is enrolled or sent yet. The module listens to the contacts tag hook
+with `syncContactTags`, which resolves the active tag-entry sequences a new tag starts with one
+indexed read; the enrollment unit extends it to create enrollments.
 
 **render** — pure functions, no DOM. `renderEmail(campaign, newsletter, recipient) → { html, text,
 headers }` and `renderWeb(campaign, newsletter) → html`. The doc format is TipTap JSON with these nodes:

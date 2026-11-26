@@ -9,10 +9,10 @@ export type Scope = 'account' | 'control'
 export type AccountRole = 'member' | 'admin' | 'owner'
 export type ControlRole = 'user' | 'installAdmin'
 export type Effect = 'read' | 'write' | 'send'
-export type ResourceType = 'newsletter' | 'contact' | 'segment' | 'campaign' | 'import' | 'author' | 'tag' | 'domain' | 'apiKey' | 'account'
+export type ResourceType = 'newsletter' | 'contact' | 'segment' | 'campaign' | 'import' | 'author' | 'tag' | 'sequence' | 'domain' | 'apiKey' | 'account'
 export type RestMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
-const NEWSLETTER_SCOPED = new Set<ResourceType>(['newsletter', 'contact', 'segment', 'campaign', 'import', 'author', 'tag'])
+const NEWSLETTER_SCOPED = new Set<ResourceType>(['newsletter', 'contact', 'segment', 'campaign', 'import', 'author', 'tag', 'sequence'])
 const RANK: Record<AccountRole, number> = { member: 1, admin: 2, owner: 3 }
 
 /** Who is acting. Built by the edge from a session, or by the account store from an API key. */

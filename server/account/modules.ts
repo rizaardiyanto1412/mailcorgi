@@ -6,6 +6,7 @@ import { usageModule } from './usage/index.ts'
 import { newslettersModule } from './newsletters/index.ts'
 import { contactsModule } from './contacts/index.ts'
 import { segmentsModule } from './segments/index.ts'
+import { sequencesModule } from './sequences/index.ts'
 import { importsModule } from './imports/index.ts'
 import { campaignsModule } from './campaigns/index.ts'
 import { renderModule } from './render/index.ts'
@@ -47,6 +48,7 @@ const modules = {
   segments: segmentsModule,
   imports: importsModule,
   campaigns: campaignsModule,
+  sequences: sequencesModule,
   render: renderModule,
   sending: sendingModule,
   tracking: trackingModule,

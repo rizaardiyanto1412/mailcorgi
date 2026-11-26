@@ -8,7 +8,7 @@ interface Image { id: string; url: string; width: number | null; height: number 
 interface Usage { campaigns: { id: string; subject: string; status: string; kind: string }[]; settings: boolean }
 
 const where = (usage: Usage) => [
-  ...usage.campaigns.map((c) => `“${c.subject || 'Untitled'}” (${c.kind === 'welcome' ? 'welcome email' : c.status})`),
+  ...usage.campaigns.map((c) => `“${c.subject || 'Untitled'}” (${c.kind === 'welcome' ? 'welcome email' : c.kind === 'sequence' ? 'sequence email' : c.status})`),
   ...(usage.settings ? ['the newsletter settings'] : []),
 ].join(', ')
 
