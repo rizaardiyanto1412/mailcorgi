@@ -271,6 +271,53 @@ test('temporary refusals are bounded: after three the delivery fails, and a thro
   assert.equal(state().status, 'completed')
 })
 
+test('due steps over the install hourly cap wait for the window instead of failing, and each goes out once', async (t) => {
+  const { install, owner, nl, ctx, accountId, tag } = await setup()
+  t.after(() => install.close())
+  const HOUR = 3_600_000
+  await owner.action('install.settings.set', { values: { send_rate_per_hour: '3' } })
+  const sequence = await activeSequence(owner, nl.id, { type: 'tag', tagId: tag.id }, [1])
+  const campaignId = sequence.steps[0].campaignId
+  for (let i = 0; i < 7; i++) await owner.action('contacts.create', { newsletterId: nl.id, email: `reader${i}@example.com`, tags: [tag.id] })
+  const active = () => ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM sequence_enrollments WHERE sequence_id = ? AND status = 'active'", sequence.id)!.n
+  const statuses = () => deliveries(ctx, campaignId).map((d) => [d.status, d.attempts])
+  const sentCount = () => mails(install, accountId).length
+
+  await pass(install, DAY)
+  const first = install.clock.now()
+  assert.equal(sentCount(), 3, 'only cap-many go out in the hour')
+  assert.equal(active(), 4, 'the rest keep waiting for the same step')
+  assert.deepEqual(statuses().filter(([status]) => status !== 'sent'), [['queued', 0], ['queued', 0], ['queued', 0], ['queued', 0]], 'waiting for the cap spends no attempt')
+  const wake = tickJob(ctx, nl.id)!.run_at
+  assert.ok(wake >= first + HOUR && wake <= first + HOUR + 60_000, 'the tick sleeps until the window has room')
+  // Waking early (a retried job, an overlapping run) sends nothing more inside the hour.
+  await pass(install, 30 * 60_000)
+  await tick(ctx, nl.id, budget(ctx))
+  install.clock.set(wake - 1)
+  await install.runJobs()
+  assert.equal(sentCount(), 3)
+
+  install.clock.set(wake)
+  await install.runJobs()
+  assert.equal(sentCount(), 6)
+  const second = tickJob(ctx, nl.id)!.run_at
+  assert.ok(second >= wake + HOUR - 60_000 && second <= wake + HOUR + 60_000)
+  install.clock.set(second - 1)
+  await install.runJobs()
+  assert.equal(sentCount(), 6)
+  install.clock.set(second)
+  await install.runJobs()
+
+  const sent = mails(install, accountId)
+  assert.deepEqual([...sent].sort(), Array.from({ length: 7 }, (_, i) => `reader${i}@example.com: Day 1`), 'everyone gets the step exactly once')
+  assert.deepEqual(statuses(), Array.from({ length: 7 }, () => ['sent', 1]))
+  assert.equal(active(), 0)
+  assert.equal(tickJob(ctx, nl.id), undefined, 'nothing is left to wait for')
+  await pass(install, 2 * HOUR)
+  assert.equal(sentCount(), 7)
+  assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs_dead')!.n, 0)
+})
+
 test('exit rules: an exit tag, unsubscribing by link or by hand, suppression, deletion, a bounce and a complaint stop further steps', async (t) => {
   const { install, owner, nl, ctx, accountId, tag, paid } = await setup()
   t.after(() => install.close())
