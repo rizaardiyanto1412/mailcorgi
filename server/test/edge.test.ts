@@ -136,3 +136,63 @@ test('website requests carry an owner actor only for app-host reads, never on cu
     store.fetch = original
   }
 })
+
+test('APP_HOSTS aliases serve the app; other hosts still need a verified website', async () => {
+  const aliased = await createInstall({ env: { APP_URL: 'https://app.example.com', APP_HOSTS: 'App.Example.org, https://old.example.net/' } })
+  try {
+    const main = await aliased.signUp({ email: 'alias-owner@example.com' })
+    for (const host of ['https://app.example.com', 'https://app.example.org', 'https://old.example.net']) {
+      const health = await aliased.fetch(`${host}/healthz`)
+      assert.equal(health.status, 200, `${host}/healthz`)
+      assert.deepEqual(await health.json(), { ok: true })
+      const boot = await aliased.fetch(`${host}/api/auth/bootstrap`)
+      assert.equal(boot.status, 200, `${host} serves the app API`)
+      assert.equal((await boot.json()).appUrl, 'https://app.example.com', 'links keep the canonical APP_URL')
+      assert.equal((await aliased.fetch(`${host}/api/public/tls-check?domain=${new URL(host).hostname}`)).status, 200)
+      assert.equal((await aliased.fetch(`${host}/`)).headers.get('strict-transport-security'), 'max-age=31536000', `${host} over https gets HSTS`)
+    }
+
+    // A session cookie is host-only: signing in on the alias sets a fresh cookie there with no Domain.
+    const signin = await aliased.fetch('https://app.example.org/api/auth/signin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: main.email, password: 'correct horse battery' }) })
+    assert.equal(signin.status, 200)
+    const cookies = signin.headers.getSetCookie()
+    assert.ok(cookies.some((c) => c.startsWith('mc_session=') && /;\s*secure/i.test(c)))
+    assert.ok(cookies.every((c) => !/;\s*domain=/i.test(c)))
+    const jar = cookies.map((c) => c.split(';')[0]).join('; ')
+    const me = await (await aliased.fetch('https://app.example.org/api/auth/bootstrap', { headers: { cookie: jar } })).json()
+    assert.equal(me.session?.user.email, main.email)
+
+    // An unknown host is a 404, and stays one until it is a verified custom website.
+    assert.equal((await aliased.fetch('https://random.example.com/')).status, 404)
+    assert.equal((await aliased.fetch('https://random.example.com/api/auth/bootstrap')).status, 404)
+    assert.equal((await aliased.fetch('/api/public/tls-check?domain=random.example.com')).status, 404)
+    assert.equal((await aliased.fetch('https://random.example.com/healthz')).status, 200, '/healthz stays public on every host')
+    aliased.app.control.ctx.db.run("INSERT INTO sites (newsletter_id, account_id, slug, custom_host, host_verified_at) VALUES ('nl_x', ?, 'hosted', 'random.example.com', 1)", main.accountId)
+    aliased.clock.advance(61_000)
+    assert.equal((await aliased.fetch('/api/public/tls-check?domain=random.example.com')).status, 200)
+    assert.notEqual((await aliased.fetch('https://random.example.com/api/auth/bootstrap')).status, 200, 'a website host never serves the app API')
+
+    // An alias cannot be claimed as a newsletter website host.
+    const nl = await main.action('newsletters.create', { name: 'Alias site', slug: 'alias-site' })
+    const taken = await main.actionRaw('website.setHost', { newsletterId: nl.id, hostname: 'app.example.org' })
+    assert.equal(taken.status, 400)
+    assert.equal((await taken.json()).code, 'invalid_host')
+  } finally {
+    aliased.close()
+  }
+})
+
+test('MCP accepts the origin of an APP_HOSTS alias and refuses others', async () => {
+  const aliased = await createInstall({ env: { APP_URL: 'https://app.example.com', APP_HOSTS: 'app.example.org' } })
+  try {
+    const owner2 = await aliased.signUp({ email: 'mcp-owner@example.com' })
+    const key = `mc_${owner2.accountId}_${'a'.repeat(32)}`
+    const call = (origin: string) => aliased.fetch('https://app.example.org/mcp', { method: 'POST', headers: { authorization: `Bearer ${key}`, origin, 'content-type': 'application/json' }, body: '{}' })
+    const alias = await call('https://app.example.org')
+    assert.notEqual((await alias.json()).error?.code, 'forbidden')
+    const other = await call('https://evil.example.com')
+    assert.equal(other.status, 403)
+  } finally {
+    aliased.close()
+  }
+})

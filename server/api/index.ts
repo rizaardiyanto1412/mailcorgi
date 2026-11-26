@@ -24,8 +24,9 @@ export function mountApi(app: Hono<StoreEnv>) {
       if (c.req.method !== 'POST') return Response.json({ error: { code: 'method_not_allowed', message: 'Use POST for MCP.' } }, { status: 405, headers: { Allow: 'POST' } })
       const ctx = c.get('ctx')
       const origin = c.req.header('origin')
-      const allowed = new URL(ctx.config.appUrl || c.req.url).origin
-      if (origin && origin !== allowed) throw new AppError('forbidden', 'This origin is not allowed.', 403)
+      const appOrigin = new URL(ctx.config.appUrl || c.req.url)
+      const allowed = [appOrigin.origin, ...ctx.config.appHosts.map((h) => `${appOrigin.protocol}//${h}`)]
+      if (origin && !allowed.includes(origin)) throw new AppError('forbidden', 'This origin is not allowed.', 403)
       const actor = await authenticateKey(ctx, c.req.raw, 'mcp')
       return await mcp(c.req.raw, ctx, actor)
     } catch (err) { return apiError(err) }

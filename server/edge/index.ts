@@ -4,7 +4,7 @@
  */
 import { handleEmailHook } from './email-hooks.ts'
 import type { Config } from '../core/config.ts'
-import { appHost } from '../core/config.ts'
+import { appHost, isAppHost } from '../core/config.ts'
 import type { Keys } from '../core/crypto.ts'
 import { sha256Hex, signEnvelope } from '../core/crypto.ts'
 import type { BlobStore, StoreRef } from '../core/platform.ts'
@@ -182,14 +182,15 @@ export function createEdge(deps: EdgeDeps): Edge {
     }
     const host = appHost(deps.config) || learnedHost
 
-    // Caddy's on-demand TLS asks here before it issues a certificate for a custom website host.
+    // Caddy's on-demand TLS asks here before it issues a certificate for an app host or a custom website host.
     if (path === '/api/public/tls-check') {
       const domain = (url.searchParams.get('domain') || '').toLowerCase()
-      const known = domain === host || (domain !== '' && (await deps.stores.control.lookupSite({ host: domain })) !== null)
+      const known = domain !== '' && (isAppHost(deps.config, domain, host) || (await deps.stores.control.lookupSite({ host: domain })) !== null)
       return known ? json({ ok: true }) : notFound()
     }
 
-    if (!host || url.host !== host) {
+    // The APP_URL host and its APP_HOSTS aliases serve the app. Any other host is a customer website or a 404.
+    if (!isAppHost(deps.config, url.host, host)) {
       const site = await lookupSite({ host: url.host.toLowerCase() })
       if (!site) return notFound()
       return forwardSite(site, request, headers, true)
@@ -270,7 +271,10 @@ export function createEdge(deps: EdgeDeps): Edge {
         response = withSecurityHeaders(errorResponse(err))
       }
       const forwardedProto = deps.trustsProxy?.(peer) ? request.headers.get('x-forwarded-proto') : null
-      if (wantsHsts(deps.config.appUrl, new URL(request.url), forwardedProto)) response.headers.set('Strict-Transport-Security', HSTS_VALUE)
+      const requestUrl = new URL(request.url)
+      // An alias host goes by the scheme it was reached on, not by the APP_URL scheme.
+      const alias = requestUrl.host !== appHost(deps.config) && deps.config.appHosts.includes(requestUrl.host.toLowerCase())
+      if (wantsHsts(alias ? '' : deps.config.appUrl, requestUrl, forwardedProto)) response.headers.set('Strict-Transport-Security', HSTS_VALUE)
       return response
     },
   }
