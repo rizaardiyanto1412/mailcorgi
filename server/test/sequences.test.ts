@@ -84,7 +84,7 @@ test('sequences: create, read, update, steps, reorder, archive, with validation,
   assert.deepEqual(created.entry, { type: 'tag', tagId: tag.id })
   assert.deepEqual(created.exit, { tagIds: [paid.id], segmentId: segment.id })
   assert.equal(created.stepCount, 2)
-  assert.deepEqual(created.enrollments, { total: 0, active: 0, completed: 0, exited: 0 })
+  assert.deepEqual(created.enrollments, { total: 0, active: 0, paused: 0, completed: 0, exited: 0 })
   assert.deepEqual(created.steps.map((s) => [s.position, s.delayDays, s.subject, s.revision]), [[1, 1, 'Day 1', 1], [2, 3, 'Day 3', 1]])
   assert.match(created.steps[0].id, /^sst_/)
   assert.deepEqual(created.steps[0].doc, doc('Hello'))
@@ -143,7 +143,7 @@ test('sequences: create, read, update, steps, reorder, archive, with validation,
   const locked = await expectError(() => owner.action('sequences.update', { newsletterId: nl.id, sequenceId: created.id, entry: { type: 'tag', tagId: tag.id } }))
   assert.deepEqual([locked.status, locked.code], [409, 'entry_locked'])
   const same = await owner.action('sequences.update', { newsletterId: nl.id, sequenceId: created.id, name: 'Onboarding v3', entry: { type: 'tag', tagId: paid.id }, exit: { tagIds: [tag.id] } })
-  assert.deepEqual([same.name, same.exit, same.enrollments], ['Onboarding v3', { tagIds: [tag.id] }, { total: 1, active: 0, completed: 1, exited: 0 }])
+  assert.deepEqual([same.name, same.exit, same.enrollments], ['Onboarding v3', { tagIds: [tag.id] }, { total: 1, active: 0, paused: 0, completed: 1, exited: 0 }])
   assert.equal((await owner.action('sequences.list', { newsletterId: nl.id })).sequences.find((s) => s.id === created.id)!.enrollments.total, 1)
 
   // Steps.
@@ -162,13 +162,30 @@ test('sequences: create, read, update, steps, reorder, archive, with validation,
   assert.equal((await expectError(() => owner.action('sequences.updateStep', { newsletterId: nl.id, sequenceId: created.id, stepId: added.id, revision: 3, subject: 'Stale' }))).code, 'revision_conflict')
   assert.equal((await owner.action('campaigns.get', { campaignId: added.campaignId })).subject, 'From the editor')
 
-  // Reorder: every step exactly once.
+  // Steps go out in order, so a delay may never be shorter than the one before it: on add, update, reorder and create.
   const [first, second] = created.steps
-  const reordered = await owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds: [added.id, first.id, second.id] })
-  assert.deepEqual(reordered.steps.map((s) => [s.id, s.position, s.delayDays]), [[added.id, 1, 10], [first.id, 2, 1], [second.id, 3, 3]])
+  const order = () => owner.action('sequences.get', { newsletterId: nl.id, sequenceId: created.id }).then((s) => s.steps.map((step) => [step.id, step.delayDays]))
+  const ordered = await order()
+  for (const attempt of [
+    () => owner.action('sequences.addStep', { newsletterId: nl.id, sequenceId: created.id, delayDays: 9, subject: 'Too early' }),
+    () => owner.action('sequences.updateStep', { newsletterId: nl.id, sequenceId: created.id, stepId: first.id, revision: 1, delayDays: 4 }),
+    () => owner.action('sequences.updateStep', { newsletterId: nl.id, sequenceId: created.id, stepId: added.id, revision: 4, delayDays: 2 }),
+    () => owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds: [added.id, first.id, second.id] }),
+    () => owner.action('sequences.create', { newsletterId: nl.id, name: 'Backwards', entry: { type: 'manual' }, steps: [{ delayDays: 3 }, { delayDays: 1 }] }),
+  ]) {
+    const error = await expectError(attempt)
+    assert.deepEqual([error.status, error.code], [409, 'step_delay_order'])
+  }
+  assert.deepEqual(await order(), ordered, 'a refused change leaves the steps as they were')
+  assert.equal((await owner.action('sequences.list', { newsletterId: nl.id })).sequences.length, 4)
+  // Equal delays are in order, so such steps can swap places.
+  assert.equal((await owner.action('sequences.updateStep', { newsletterId: nl.id, sequenceId: created.id, stepId: added.id, revision: 4, delayDays: 3 })).delayDays, 3)
+  // Reorder: every step exactly once.
+  const reordered = await owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds: [first.id, added.id, second.id] })
+  assert.deepEqual(reordered.steps.map((s) => [s.id, s.position, s.delayDays]), [[first.id, 1, 1], [added.id, 2, 3], [second.id, 3, 3]])
   for (const stepIds of [[first.id, second.id], [first.id, first.id, second.id], [first.id, second.id, added.id, added.id]]) assert.equal((await expectError(() => owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds }))).code, 'invalid_input')
   assert.equal((await expectError(() => owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds: [first.id, second.id, 'sst_missing'] }))).status, 404)
-  assert.deepEqual((await owner.action('sequences.get', { newsletterId: nl.id, sequenceId: created.id })).steps.map((s) => s.id), [added.id, first.id, second.id])
+  assert.deepEqual((await owner.action('sequences.get', { newsletterId: nl.id, sequenceId: created.id })).steps.map((s) => s.id), [first.id, added.id, second.id])
 
   // Delete: refused once the step has a delivery; otherwise the step and its campaign go and the rest closes up.
   ctx.db.run("INSERT INTO deliveries (campaign_id, contact_id, email, status, queued_at) VALUES (?, ?, 'reader@example.com', 'sent', ?)", first.campaignId, contact.id, ctx.now())
@@ -195,8 +212,8 @@ test('sequences: create, read, update, steps, reorder, archive, with validation,
     () => owner.action('sequences.deleteStep', { newsletterId: nl.id, sequenceId: created.id, stepId: second.id }),
     () => owner.action('sequences.reorderSteps', { newsletterId: nl.id, sequenceId: created.id, stepIds: [second.id, first.id] }),
   ]) assert.deepEqual([(await expectError(attempt)).status, (await expectError(attempt)).code], [409, 'sequence_archived'])
-  // This unit has no way to start a sequence.
-  for (const name of ['sequences.activate', 'sequences.delete', 'sequences.enroll']) assert.ok(!accountRegistry.actions.has(name), `${name} must not exist yet`)
+  // Sequences are archived, never deleted.
+  assert.ok(!accountRegistry.actions.has('sequences.delete'))
   assert.deepEqual(ctx.db.all<{ status: string }>('SELECT DISTINCT status FROM sequences ORDER BY status').map((r) => r.status), ['archived', 'draft'])
 })
 
@@ -477,7 +494,7 @@ test('tags added through the REST API and MCP with an API key reach the hook: th
   assert.ok(!(await mcp('sequences_get', { newsletterId: nl.id, sequenceId: body.id })).isError)
 })
 
-test('the sequences module listens to the tag hook and resolves the active tag-entry sequences a new tag starts', async (t) => {
+test('the sequences module listens to the tag hook and enrolls into the active tag-entry sequences a new tag starts', async (t) => {
   const install = await createInstall()
   t.after(() => install.close())
   const { owner, nl, ctx } = await setup(install)
@@ -488,36 +505,40 @@ test('the sequences module listens to the tag hook and resolves the active tag-e
   const tag = await owner.action('tags.create', { newsletterId: nl.id, name: 'new-signup' })
   const paid = await owner.action('tags.create', { newsletterId: nl.id, name: 'paid' })
   const otherTag = await owner.action('tags.create', { newsletterId: other.id, name: 'new-signup' })
-  const create = (newsletterId: string, name: string, entry: { type: 'tag'; tagId: string } | { type: 'signup' }) => owner.action('sequences.create', { newsletterId, name, entry })
+  const create = (newsletterId: string, name: string, entry: { type: 'tag'; tagId: string } | { type: 'signup' }) => owner.action('sequences.create', { newsletterId, name, entry, steps: [{ delayDays: 1, subject: 'Day 1' }] })
   const onTag = await create(nl.id, 'On tag', { type: 'tag', tagId: tag.id })
   const draft = await create(nl.id, 'Draft on tag', { type: 'tag', tagId: tag.id })
   const onPaid = await create(nl.id, 'On paid', { type: 'tag', tagId: paid.id })
   const onSignup = await create(nl.id, 'On signup', { type: 'signup' })
   const elsewhere = await create(other.id, 'Elsewhere', { type: 'tag', tagId: otherTag.id })
-  const event = (tagIds: string[], newsletterId = nl.id): ContactTagsAdded => ({ newsletterId, contactId: 'ct_x', tagIds, source: 'api' })
-  // Nothing can be active through the API yet.
+  const contact = (await owner.action('contacts.create', { newsletterId: nl.id, email: 'reader@example.com' })).contact
+  const foreign = (await owner.action('contacts.create', { newsletterId: other.id, email: 'reader@example.com' })).contact
+  const event = (tagIds: string[], newsletterId = nl.id, contactId = contact.id): ContactTagsAdded => ({ newsletterId, contactId, tagIds, source: 'api' })
+  const enrolled = () => ctx.db.all<{ sequence_id: string }>('SELECT sequence_id FROM sequence_enrollments ORDER BY sequence_id').map((r) => r.sequence_id)
+  // A draft enrolls nobody.
   assert.deepEqual(syncContactTags(ctx, event([tag.id, paid.id])), [])
-  // The enrollment unit will activate sequences; force the state it will produce.
+  // Activation has its own tests (sequences-send.test.ts); force the states here.
   for (const id of [onTag.id, onPaid.id, onSignup.id, elsewhere.id]) ctx.db.run("UPDATE sequences SET status = 'active' WHERE id = ?", id)
-  assert.deepEqual(syncContactTags(ctx, event([tag.id])), [{ sequenceId: onTag.id, tagId: tag.id }])
-  assert.deepEqual(syncContactTags(ctx, event([paid.id, tag.id])).map((m) => m.sequenceId).sort(), [onTag.id, onPaid.id].sort())
+  // A tag that starts nothing, and a tag id named under another newsletter: one small indexed read and no write.
+  const writes = install.writes()
+  const reads = ctx.meter.reads
   assert.deepEqual(syncContactTags(ctx, event(['tag_other'])), [])
-  assert.deepEqual(syncContactTags(ctx, event([tag.id], other.id)), [], 'a tag id never matches a sequence of another newsletter')
-  assert.deepEqual(syncContactTags(ctx, event([otherTag.id], other.id)), [{ sequenceId: elsewhere.id, tagId: otherTag.id }])
+  assert.deepEqual(syncContactTags(ctx, event([tag.id], other.id, foreign.id)), [], 'a tag id never matches a sequence of another newsletter')
+  assert.equal(install.writes(), writes)
+  assert.ok(ctx.meter.reads - reads <= 10, 'the hook must stay one small indexed read')
   for (const status of ['paused', 'archived']) {
     ctx.db.run('UPDATE sequences SET status = ? WHERE id = ?', status, onTag.id)
     assert.deepEqual(syncContactTags(ctx, event([tag.id])), [])
   }
-  assert.ok(!syncContactTags(ctx, event([tag.id])).some((m) => m.sequenceId === draft.id))
-  // The hook reads and does not write: tagging through an action with active sequences creates no enrollment yet.
+  assert.deepEqual(syncContactTags(ctx, event([tag.id], nl.id, 'ct_missing')), [], 'an unknown contact enters nothing')
+  // The active tag-entry sequences the new tags start enroll the contact, once; drafts and other entry types do not.
   ctx.db.run("UPDATE sequences SET status = 'active' WHERE id = ?", onTag.id)
-  const writes = install.writes()
-  const reads = ctx.meter.reads
-  syncContactTags(ctx, event([tag.id]))
-  assert.equal(install.writes(), writes)
-  assert.ok(ctx.meter.reads - reads <= 10, 'the hook must stay one small indexed read')
-  await owner.action('contacts.create', { newsletterId: nl.id, email: 'reader@example.com', tags: [tag.id] })
-  assert.equal(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM sequence_enrollments')!.n, 0)
+  assert.deepEqual(syncContactTags(ctx, event([paid.id, tag.id])).sort(), [onTag.id, onPaid.id].sort())
+  assert.deepEqual(enrolled(), [onTag.id, onPaid.id].sort())
+  assert.ok(!enrolled().includes(draft.id) && !enrolled().includes(onSignup.id))
+  assert.deepEqual(syncContactTags(ctx, event([tag.id])), [], 'a contact enters a sequence once')
+  assert.deepEqual(syncContactTags(ctx, event([otherTag.id], other.id, foreign.id)), [elsewhere.id])
+  assert.equal(enrolled().length, 3)
 })
 
 test('contact_tags is written only by the contacts tag choke point', () => {

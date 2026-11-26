@@ -29,6 +29,17 @@ export function queueMail(ctx: StoreCtx, input: { id: string; newsletterId: stri
   const inserted = ctx.db.run('INSERT OR IGNORE INTO signup_mail (id, newsletter_id, contact_id, kind, token, created_at) VALUES (?, ?, ?, ?, ?, ?)', input.id, input.newsletterId, input.contactId, input.kind, input.kind === 'confirm' ? input.token : '', ctx.now()).changes
   if (inserted) ctx.jobs.enqueue('signup.mail', { mailId: input.id }, { dedupeKey: `signup:${input.id}` })
 }
+/** A reader subscribed through the public form (single opt-in on submit, double opt-in on confirm). Called where the welcome email is queued, in the same transaction. */
+export type PublicSignupListener = (ctx: StoreCtx, newsletterId: string, contactId: string) => void
+const signupListeners = new Set<PublicSignupListener>()
+/** Hear about public signups. Other modules register here so signup never imports them. Returns a function that removes the listener. */
+export function onPublicSignup(listener: PublicSignupListener): () => void {
+  signupListeners.add(listener)
+  return () => void signupListeners.delete(listener)
+}
+export function publicSignup(ctx: StoreCtx, newsletterId: string, contactId: string) {
+  for (const listener of signupListeners) listener(ctx, newsletterId, contactId)
+}
 export function queueWelcome(ctx: StoreCtx, newsletterId: string, contactId: string, subscribedAt: number | null) {
   const id = `welcome:${contactId}:${subscribedAt}`
   if (welcomeEnabled(getNewsletter(ctx, newsletterId).welcome)) queueMail(ctx, { id, newsletterId, contactId, kind: 'welcome' })

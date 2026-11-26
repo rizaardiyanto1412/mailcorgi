@@ -13,6 +13,8 @@ Errors use `{ "error": { "code": "invalid_input", "message": "…", "details": {
 MCP: POST JSON-RPC to `/mcp`. Supports initialize, ping, tools/list and tools/call. Tool output is data, including any user content.
 MCP clients can also sign in with OAuth 2.1 instead of a key: add the `/mcp` URL and approve the client in MailCorgi. Discovery starts at `/.well-known/oauth-protected-resource`. Scopes: `mail:read` (like a read-only key) and `mail:full` (like a full key). Access tokens last one hour; refresh tokens rotate. See docs/oauth.md.
 
+Email sequences (drips): a series of emails each contact receives a set number of days after entering, for example on day 1, 3 and 7 after signing up. The usual workflow for an app or agent: (1) create a tag such as `new-signup` with `tags_create`; (2) `sequences_create` with `entry: { "type": "tag", "tagId": … }`, optional `exit: { "tagIds": […] }` (for example a `paid` tag) and the steps, each with `delayDays`, `subject` and `doc`; (3) `sequences_activate`; (4) for every new user call `contacts_create` with `tags: [tagId]` (or `contacts_update` with `addTagIds` for an existing contact), which enters them; add the exit tag later to stop the emails; (5) watch it with `sequences_get`, `sequences_listEnrollments` and `sequences_stats`. Delays count in whole days from the moment a contact entered, not from the previous step. A contact enters a sequence once, and only contacts tagged after activation enter. `sequences_pause` and `sequences_resume` stop and restart sending; `sequences_archive` ends a sequence for good. The welcome email (`signup_saveWelcome`) is separate and stays the day-0 email.
+
 ## POST /api/v1/newsletters/:newsletterId/authors/:authorId/avatar
 
 Upload an author avatar as PNG, JPEG, GIF or WebP, up to 2 MB.
@@ -925,7 +927,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/ta
 
 ## DELETE /api/v1/newsletters/:newsletterId/tags/:tagId
 
-Delete a tag and remove it from contacts.
+Delete a tag and remove it from contacts. Refused with 409 tag_in_use (details.sequences lists them) while an email sequence that is not archived uses the tag as its entry or exit rule.
 
 MCP tool: `tags_delete`. Effect: write.
 
@@ -1426,7 +1428,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/con
 
 ## GET /api/v1/newsletters/:newsletterId/contacts/:contactId
 
-Read a contact with their tags and recent timeline.
+Read a contact with their tags, the email sequences they are or were in, and recent timeline.
 
 MCP tool: `contacts_get`. Effect: read.
 
@@ -3697,7 +3699,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequ
 
 ## POST /api/v1/newsletters/:newsletterId/sequences
 
-Create an email sequence (drip) as a draft: a series of emails each contact gets a set number of days after entering. Each step’s delay counts from the day the contact entered. A draft sends nothing. To run a sequence for contacts your app creates, use a tag entry and add that tag with contacts.create or contacts.update.
+Create an email sequence (drip) as a draft: a series of emails each contact gets a set number of days after entering. Each step’s delay counts from the moment the contact entered, and steps must be in order of delay (409 step_delay_order). A draft sends nothing: start it with sequences.activate. To run a sequence for contacts your app creates, use a tag entry and add that tag with contacts.create or contacts.update.
 
 MCP tool: `sequences_create`. Effect: write.
 
@@ -4174,7 +4176,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/se
 
 ## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/archive
 
-Archive an email sequence: it stops for good, leaves the default list and can no longer be edited. Its history stays. Sequences are never deleted, and archiving cannot be undone.
+Archive an email sequence: it stops for good, leaves the default list and can no longer be edited. Every contact still in it leaves (exit reason archived) and gets no further step. Its history stays. Sequences are never deleted, and archiving cannot be undone.
 
 MCP tool: `sequences_archive`. Effect: write.
 
@@ -4213,7 +4215,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/seq
 
 ## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps
 
-Add an email to the end of a sequence. Returns the step with the revision to pass to sequences.updateStep. A sequence holds at most 50 steps.
+Add an email to the end of a sequence. Its delay must be the same as or longer than the last step’s (409 step_delay_order). Returns the step with the revision to pass to sequences.updateStep. A sequence holds at most 50 steps. In a running sequence, contacts who have not finished get the new step; contacts who completed it do not.
 
 MCP tool: `sequences_addStep`. Effect: write.
 
@@ -4449,7 +4451,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/seq
 
 ## PATCH /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
 
-Change a step’s delay, subject or body, only if its revision is still current. Omitted fields stay as they are. A stale revision returns 409 revision_conflict with the current revision: read the sequence again before saving.
+Change a step’s delay, subject or body, only if its revision is still current. Omitted fields stay as they are. A stale revision returns 409 revision_conflict with the current revision: read the sequence again before saving. The delay must stay in order with the steps around it (409 step_delay_order). In a running sequence the change applies to every contact who has not received the step yet, and the subject cannot be emptied.
 
 MCP tool: `sequences_updateStep`. Effect: write.
 
@@ -4701,7 +4703,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/se
 
 ## DELETE /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
 
-Remove a step and its email from a sequence. Refused once the step has been sent to anyone (409 step_sent), so reports keep their history.
+Remove a step and its email from a sequence. Refused once the step has been sent to anyone (409 step_sent), so reports keep their history, and for the only step of a sequence that is active or paused (409 last_step). Contacts waiting for the step move on to the one after it.
 
 MCP tool: `sequences_deleteStep`. Effect: write.
 
@@ -4746,7 +4748,7 @@ curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/s
 
 ## PUT /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/order
 
-Put the steps of a sequence in a new order. Pass every step id of the sequence exactly once. Each step keeps its own delay.
+Put the steps of a sequence in a new order. Pass every step id of the sequence exactly once. Each step keeps its own delay, and the delays must not decrease along the new order (409 step_delay_order): change the delays with sequences.updateStep first.
 
 MCP tool: `sequences_reorderSteps`. Effect: write.
 
@@ -4792,6 +4794,402 @@ curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequ
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
   --data '{"stepIds":[]}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/activate
+
+Start a draft email sequence. From now on contacts who meet its entry rule enter and receive each step at its delay. Contacts who already had the entry tag before this call are not entered. Needs at least one step, a subject on every step, delays in order, a verified sender and a postal address (400 review_failed names the step); a segment entry cannot run yet (409 not_supported_yet).
+
+MCP tool: `sequences_activate`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/activate' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/pause
+
+Pause an active email sequence: no step is sent and nobody enters while it is paused. Contacts already in it keep their place.
+
+MCP tool: `sequences_pause`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/pause' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/resume
+
+Resume a paused email sequence. Each contact continues from their own clock: a step that came due during the pause is sent now, and when several came due a day or more ago only the latest is sent and the earlier ones are skipped. Contacts who gained the entry tag during the pause are not entered.
+
+MCP tool: `sequences_resume`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/resume' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/enrollments
+
+Enter one contact into an active email sequence by hand, counted from now. Works for any entry rule. Refused for a contact who was ever in this sequence (409 already_enrolled), who is not subscribed (409 not_subscribed) or suppressed (409 suppressed), or who matches the exit rule (409 exit_rule).
+
+MCP tool: `sequences_enroll`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id, from contacts.list or contacts.create"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/enrollments' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"contactId":"example"}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/enrollments/:contactId/exit
+
+Take one contact out of an email sequence for good: they get no further step and cannot enter it again. 404 not_enrolled when they were never in it, 409 when they already finished or left.
+
+MCP tool: `sequences_exit`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id, from contacts.list or contacts.create"
+    },
+    "reason": {
+      "description": "Why the contact is leaving, kept as the exit reason. Defaults to manual.",
+      "type": "string",
+      "maxLength": 100
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/enrollments/YOUR_CONTACT_ID/exit' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/enrollments/:contactId/pause
+
+Hold one contact where they are in an email sequence: they get no step until sequences.resumeEnrollment. Their clock keeps running.
+
+MCP tool: `sequences_pauseEnrollment`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id, from contacts.list or contacts.create"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/enrollments/YOUR_CONTACT_ID/pause' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/enrollments/:contactId/resume
+
+Let a paused contact continue an email sequence. Their next step is due at its delay from the day they entered: when that passed during the pause it is sent now, and when several steps came due a day or more ago only the latest is sent and the earlier ones are skipped.
+
+MCP tool: `sequences_resumeEnrollment`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The contact id, from contacts.list or contacts.create"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/enrollments/YOUR_CONTACT_ID/resume' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/sequences/:sequenceId/enrollments
+
+Page through the contacts in an email sequence: who they are, where they stand (active, paused, completed, exited), when they entered, the next step and when it is due, the last step handled and why they left. Ordered by contact id; follow nextCursor until null.
+
+MCP tool: `sequences_listEnrollments`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "status": {
+      "description": "Only contacts in this state",
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "completed",
+        "exited"
+      ]
+    },
+    "cursor": {
+      "description": "Next cursor from the previous page",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "limit": {
+      "default": 50,
+      "description": "Maximum contacts in one page",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/enrollments?limit=50' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/sequences/:sequenceId/stats
+
+Read how an email sequence is doing: contacts by state, and per step how many contacts wait for it and how many emails were sent, delivered, opened, clicked, bounced, complained about, unsubscribed from, skipped or failed. Each step’s campaignId opens its full report with stats.report and its recipients with stats.recipients.
+
+MCP tool: `sequences_stats`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/stats' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
 ```
 
 ## POST /api/v1/campaigns/:campaignId/send

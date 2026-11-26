@@ -53,6 +53,19 @@ export function removeTagFromContacts(ctx: StoreCtx, input: { newsletterId: stri
   return ctx.db.run('DELETE FROM contact_tags WHERE tag_id IN (SELECT id FROM tags WHERE id = ? AND newsletter_id = ?)', input.tagId, input.newsletterId).changes
 }
 
+/** Refuses the deletion of a tag by throwing. It runs before anything is removed. */
+export type TagDeleteGuard = (ctx: StoreCtx, tag: { newsletterId: string; tagId: string }) => void
+const deleteGuards = new Set<TagDeleteGuard>()
+
+/** Let another module refuse the deletion of a tag it depends on, so contacts never imports it. Returns a function that removes the guard. */
+export function onTagDelete(guard: TagDeleteGuard): () => void {
+  deleteGuards.add(guard)
+  return () => void deleteGuards.delete(guard)
+}
+export function assertTagDeletable(ctx: StoreCtx, tag: { newsletterId: string; tagId: string }) {
+  for (const guard of deleteGuards) guard(ctx, tag)
+}
+
 /** A contact is being deleted: drop all of its tags. */
 export function clearContactTags(ctx: StoreCtx, contactId: string): number {
   return ctx.db.run('DELETE FROM contact_tags WHERE contact_id = ?', contactId).changes

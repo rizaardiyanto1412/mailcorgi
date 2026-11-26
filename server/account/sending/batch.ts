@@ -1,12 +1,12 @@
 import type { Budget, JobResult } from '../../core/jobs.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { randomToken } from '../../core/crypto.ts'
-import type { SendResult } from '../../email/index.ts'
+import type { EmailProvider, SendResult } from '../../email/index.ts'
 import { checkProtection, globalSuppressions, hygieneEpoch, keepDeliveryAllowed, recordHygieneSend, protectionState, queueHygiene } from '../hygiene/index.ts'
 import { isSuppressed } from '../contacts/index.ts'
 import { getCampaignRow, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { countEmails, getPolicy } from '../usage/index.ts'
-import { buildMessage, recordLinks, sendContext } from './message.ts'
+import { buildMessage, recordLinks, sendContext, type SendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats, stepGate } from './stats.ts'
 import { replayPending, unsubscribePending } from '../tracking/pending.ts'
@@ -119,7 +119,7 @@ function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: num
 }
 
 /** Store a send result against the attempt that made it. Returns when the batch must stop and resume. */
-function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, result: SendResult, idempotent: boolean, now: number, tally: SentTally): number | null {
+function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, result: SendResult, idempotent: boolean, now: number, tally?: SentTally): number | null {
   return ctx.db.tx(() => {
     const own = (sql: string, ...params: (string | number | null)[]) => ctx.db.run(`${sql} WHERE id = ? AND status = 'sending' AND attempt_token = ?`, ...params, d.id, d.attempt_token).changes
     if (result.ok) {
@@ -153,6 +153,26 @@ function recordResult(ctx: StoreCtx, d: DeliveryRow, newsletterId: string, resul
         return null
     }
   })
+}
+
+/**
+ * Send one queued delivery, per architecture 11.5: claim it (which checks again that the contact is
+ * subscribed and not suppressed), render, hand it to the provider and store the result against the
+ * attempt. Campaign batches and sequence steps both send through here. Returns when the caller must
+ * stop and resume (the provider throttled), or null. A row that is no longer queued is left alone.
+ * Without a tally the counters are written with the result, in its transaction.
+ */
+export async function sendDelivery(ctx: StoreCtx, send: SendContext, provider: EmailProvider, id: number, tally?: SentTally): Promise<number | null> {
+  const newsletterId = send.row.newsletter_id
+  const d = claimDelivery(ctx, id, newsletterId, ctx.now())
+  if (!d) return null
+  let result: SendResult
+  try {
+    result = await provider.send(await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } }))
+  } catch (err) {
+    result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) }
+  }
+  return recordResult(ctx, d, newsletterId, result, provider.capabilities.idempotency, ctx.now(), tally)
 }
 
 /** One run of the send loop for a campaign, per architecture 11.5. Idempotent: every write is conditional on row state. */
@@ -227,15 +247,7 @@ export async function sendBatch(ctx: StoreCtx, campaignId: string, budget: Budge
   try {
     for (const id of ids) {
       if (budget.expired() || protectionState(ctx) || getPolicy(ctx).status !== 'active') break
-      const d = claimDelivery(ctx, id, row.newsletter_id, ctx.now())
-      if (!d) continue
-      let result: SendResult
-      try {
-        result = await provider.send(await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } }))
-      } catch (err) {
-        result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) }
-      }
-      const resumeAt = recordResult(ctx, d, row.newsletter_id, result, idempotent, ctx.now(), tally)
+      const resumeAt = await sendDelivery(ctx, send, provider, id, tally)
       if (resumeAt !== null) return { again: resumeAt }
     }
   } finally {

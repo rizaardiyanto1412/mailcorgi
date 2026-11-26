@@ -16,13 +16,30 @@ const DEFAULT_POLICY: Policy = { version: 0, status: 'active', plan: 'selfhosted
 
 export const getPolicy = (ctx: StoreCtx): Policy => parseJson<Policy>(getMeta(ctx, 'policy'), DEFAULT_POLICY)
 
+export type PolicyListener = (ctx: StoreCtx, policy: Policy) => void
+const policyListeners = new Set<PolicyListener>()
+/**
+ * Hear when the account may send more than it could a moment ago: the plan or its limits changed, or a
+ * blocked account is active again. Listeners run synchronously inside the transaction that wrote the
+ * policy, like the contact listeners. Other modules register here so usage never imports them.
+ * Returns a function that removes the listener.
+ */
+export function onPolicyChanged(listener: PolicyListener): () => void {
+  policyListeners.add(listener)
+  return () => void policyListeners.delete(listener)
+}
+const LIMIT_KEYS = ['maxContacts', 'maxEmailsPerMonth', 'maxNewsletters', 'maxTeamPerNewsletter'] as const
+
 /** Writes a newer policy. An older or equal version is ignored, so pushes may repeat or cross. */
 export function applyPolicy(ctx: StoreCtx, policy: Policy): boolean {
   return ctx.db.tx(() => {
-    if (policy.version <= getPolicy(ctx).version) return false
-    if (policy.status === 'blocked' && getPolicy(ctx).status !== 'blocked') notify(ctx, { kind: 'account_blocked', title: 'Your account is blocked', body: 'Sending is paused. Contact the install administrator.', href: '/settings/account' })
+    const before = getPolicy(ctx)
+    if (policy.version <= before.version) return false
+    if (policy.status === 'blocked' && before.status !== 'blocked') notify(ctx, { kind: 'account_blocked', title: 'Your account is blocked', body: 'Sending is paused. Contact the install administrator.', href: '/settings/account' })
     setMeta(ctx, 'policy', JSON.stringify(policy))
     observeProtectionPolicy(ctx, policy)
+    const changed = before.status !== 'active' || before.plan !== policy.plan || LIMIT_KEYS.some((k) => before.limits[k] !== policy.limits[k])
+    if (policy.status === 'active' && changed) for (const listener of policyListeners) listener(ctx, policy)
     return true
   })
 }
@@ -72,12 +89,15 @@ export function reserveContacts(ctx: StoreCtx, n: number): boolean {
   return count + n <= max
 }
 
-/** Campaign emails sent in a `YYYY-MM` period, from the delivery rows of the campaigns that sent in it. */
+/**
+ * Campaign emails sent in a `YYYY-MM` period, from the delivery rows of the campaigns that sent in it.
+ * A sequence step's campaign stays a draft for as long as it sends, so it is named by kind.
+ */
 export function countSentInPeriod(ctx: StoreCtx, period: string): number {
   const [year, month] = period.split('-').map(Number)
   const start = Date.UTC(year, month - 1, 1)
   const end = Date.UTC(year, month, 1)
-  return ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM deliveries d WHERE d.sent_at >= ? AND d.sent_at < ? AND d.campaign_id IN (SELECT id FROM campaigns WHERE status IN ('sending', 'paused') OR sent_at >= ? OR send_started_at >= ?)`, start, end, start, start)!.n
+  return ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM deliveries d WHERE d.sent_at >= ? AND d.sent_at < ? AND d.campaign_id IN (SELECT id FROM campaigns WHERE status IN ('sending', 'paused') OR kind = 'sequence' OR sent_at >= ? OR send_started_at >= ?)`, start, end, start, start)!.n
 }
 
 export function countEmails(ctx: StoreCtx, n: number): void {

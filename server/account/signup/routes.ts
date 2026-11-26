@@ -10,7 +10,7 @@ import { parseTheme, escapeHtml, safeUrl } from '../render/index.ts'
 import { customFields, getSettings, publicNewsletter, getNewsletter, redirectSchema } from './settings.ts'
 import { confirmationSchema, formTokenSchema, formToken } from './tokens.ts'
 import { signToken, verifyToken } from '../tracking/index.ts'
-import { deliverMail, queueMail, queueWelcome } from './mail.ts'
+import { deliverMail, publicSignup, queueMail, queueWelcome } from './mail.ts'
 import { hostedForm, page } from './pages.ts'
 import { embedScript } from './embed.ts'
 
@@ -101,7 +101,10 @@ export function registerRoutes(reg: AccountRegistrar) {
       let mailId = ''
       const result = ctx.db.tx(() => {
         const result = subscribe(ctx, { newsletterId: nl.id, email: input.email, name: settings.showName ? input.name : undefined, fields, source: 'signup', tagSource: 'signup', consent: nl.double_opt_in ? 'pending' : 'confirmed' })
-        if (!nl.double_opt_in && result.outcome === 'subscribed') mailId = queueWelcome(ctx, nl.id, result.contact.id, result.contact.subscribedAt)
+        if (!nl.double_opt_in && result.outcome === 'subscribed') {
+          mailId = queueWelcome(ctx, nl.id, result.contact.id, result.contact.subscribedAt)
+          publicSignup(ctx, nl.id, result.contact.id)
+        }
         if (result.outcome === 'limit') notifySignupsRefused(ctx)
         return result
       })
@@ -132,7 +135,10 @@ export function registerRoutes(reg: AccountRegistrar) {
         if (request.consumed_at !== null) return
         ctx.db.run("UPDATE signup_mail SET consumed_at = ? WHERE newsletter_id = ? AND contact_id = ? AND kind = 'confirm'", ctx.now(), nl.id, contact.id)
         const result = subscribe(ctx, { newsletterId: nl.id, email: contact.email, source: 'signup', tagSource: 'signup', consent: 'confirmed' })
-        if (result.outcome === 'subscribed') mailId = queueWelcome(ctx, nl.id, contact.id, result.contact.subscribedAt)
+        if (result.outcome === 'subscribed') {
+          mailId = queueWelcome(ctx, nl.id, contact.id, result.contact.subscribedAt)
+          publicSignup(ctx, nl.id, contact.id)
+        }
       })
       if (mailId) { try { await deliverMail(ctx, mailId) } catch { /* The durable job retries safe failures. */ } }
       c.header('Cache-Control', 'no-store')
