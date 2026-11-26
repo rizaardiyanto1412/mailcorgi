@@ -799,9 +799,11 @@ These are the seams between modules. Build to them exactly. Change one only toge
   account store hashes the secret, finds the key, and builds the actor itself
   (`owner: true, access: key.access`). A wrong secret is a 401 from the store.
 - API transports discover both registries. Account actions run locally; control actions use
-  `control.runApiAction({ name, input, actor: { userId, access, via, keyId? } })`. The control store
-  rebuilds the actor with `installAdmin: false`, empty grants and `owner: false`, checks that the action
-  is exposed on that transport, then calls `runAction`. An account API key never gains install-admin access.
+  `control.runApiAction({ name, input, actor: { userId, access, via, keyId?, oauth? } })`. The control store
+  rebuilds the actor with empty grants and `owner: false`, checks that the action is exposed on that
+  transport, then calls `runAction`. An account API key never gains install-admin access
+  (`installAdmin: false`). An OAuth MCP session (`oauth: true`) acts as the signed-in user: the control
+  store looks the user up and sets `installAdmin` with `isInstallAdmin`, as it does for a web session.
 - REST write/send idempotency records are scoped to the authenticated key and retained for 24 hours.
   A synchronous reservation precedes execution; overlapping requests and uncertain failures return 409
   instead of risking a duplicate send. Completed results and application errors are replayed.

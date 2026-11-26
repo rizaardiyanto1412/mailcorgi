@@ -64,7 +64,7 @@ export function markdown(registry: Registry, baseUrl: string) {
   for (const endpoint of reference(registry, baseUrl).endpoints) {
     lines.push(`## ${endpoint.method} ${endpoint.path}`, '', endpoint.description, '', `MCP tool: ${endpoint.tool ? '`' + endpoint.tool + '`' : 'None'}. Effect: ${endpoint.effect}.`, '', 'Input JSON Schema:', '', '```json', JSON.stringify(endpoint.input, null, 2), '```', '', '```sh', curlExample(endpoint, baseUrl), '```', '')
   }
-  for (const tool of reference(registry, baseUrl).mcpOnlyTools) lines.push(`## MCP ${tool.name}`, '', tool.description, '', `Required role: ${tool.role}. Effect: ${tool.effect}. Account API keys never have install-admin access.`, '', '```json', JSON.stringify(tool.input, null, 2), '```', '')
+  for (const tool of reference(registry, baseUrl).mcpOnlyTools) lines.push(`## MCP ${tool.name}`, '', tool.description, '', `Required role: ${tool.role}. Effect: ${tool.effect}. Account API keys never have install-admin access; an OAuth session acts as the signed-in user, install admin included.`, '', '```json', JSON.stringify(tool.input, null, 2), '```', '')
   return lines.join('\n')
 }
 
