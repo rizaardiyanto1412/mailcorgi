@@ -54,6 +54,16 @@ written in `wrangler.jsonc` itself win over the dashboard.
 
 Without `APP_URL`, MailCorgi uses the address of the first sign-in.
 
+To serve the app on a second domain, add it as another custom domain and list it in `APP_HOSTS`, for
+example `APP_HOSTS=news.example.org`. Both hosts then show the app. Links in emails keep using
+`APP_URL`, and you sign in on each host separately. A host that is in neither variable and is not a
+verified newsletter website answers 404.
+
+To move to a new domain, set `APP_URL` to the new one and put the old host in `APP_HOSTS`. Then update
+the webhook addresses at your providers, because they use `APP_URL`: `/hooks/ses` (the SNS
+subscription), `/hooks/resend`, and `/hooks/stripe` or `/hooks/polar` in cloud mode. The old addresses
+keep working while the old host is in `APP_HOSTS`.
+
 ### Workers Free limits
 
 Workers Free costs nothing and fits a small newsletter. These limits apply per Cloudflare account:
@@ -461,6 +471,7 @@ a variable that is missing here.
 | Variable | Platform | Default | Description |
 |---|---|---|---|
 | `APP_URL` | Both | learned from the first sign-in | Public address of the install, for example `https://news.example.com`. Links in emails and secure cookies use it. |
+| `APP_HOSTS` | Both |  | Comma-separated extra host names that serve the same app as `APP_URL`, for example `news.example.org`. Use it to add a second domain or move to a new one without breaking the old one. Links in emails, webhook addresses and billing return pages keep using `APP_URL`. Each host has its own sign-in: cookies are not shared between hosts. Serve every alias over the same scheme as `APP_URL`. Not for newsletter website domains: set those in **Website → Custom domain**. |
 | `CLOUD` | Both | off | `true` turns on cloud mode: open sign-up with emailed codes, plans, limits and billing. |
 | `ADMIN_EMAILS` | Both |  | Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. Admin rights start only after the address is confirmed with an emailed code or an invite link. |
 | `ALLOWED_EMAILS` | Both |  | Comma-separated addresses that may sign up on a self-hosted install with an emailed code. Adds to the list in **Admin → Settings**. |

@@ -23,6 +23,7 @@ export interface EnvVar {
 
 export const ENV_VARS: EnvVar[] = [
   { name: 'APP_URL', group: 'Core', platform: 'both', default: 'learned from the first sign-in', description: 'Public address of the install, for example `https://news.example.com`. Links in emails and secure cookies use it.' },
+  { name: 'APP_HOSTS', group: 'Core', platform: 'both', description: 'Comma-separated extra host names that serve the same app as `APP_URL`, for example `news.example.org`. Use it to add a second domain or move to a new one without breaking the old one. Links in emails, webhook addresses and billing return pages keep using `APP_URL`. Each host has its own sign-in: cookies are not shared between hosts. Serve every alias over the same scheme as `APP_URL`. Not for newsletter website domains: set those in **Website → Custom domain**.' },
   { name: 'CLOUD', group: 'Core', platform: 'both', default: 'off', description: '`true` turns on cloud mode: open sign-up with emailed codes, plans, limits and billing.' },
   { name: 'ADMIN_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated install admins. They may always sign up, see `/admin` and get admin alerts by email. Admin rights start only after the address is confirmed with an emailed code or an invite link.' },
   { name: 'ALLOWED_EMAILS', group: 'Core', platform: 'both', description: 'Comma-separated addresses that may sign up on a self-hosted install with an emailed code. Adds to the list in **Admin → Settings**.' },

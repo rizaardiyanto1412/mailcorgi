@@ -67,7 +67,7 @@ export const hostActions = [
   defineAction({ name: 'website.setHost', description: 'Set or remove a custom website hostname and get the DNS verification records.', scope: 'account', role: 'admin', effect: 'write', resource, input: z.object({ newsletterId, hostname: hostnameSchema.or(z.literal('')).describe('Custom hostname, or empty to remove it') }), rest: { method: 'PUT', path: '/newsletters/:newsletterId/website/host' }, mcp: { title: 'Set website host', destructive: false }, handler: async (ctx, input) => {
     await ensureAppUrl(ctx)
     const nl = newsletter(ctx, input.newsletterId)
-    if (input.hostname && input.hostname === new URL(ctx.config.appUrl).hostname) throw new AppError('invalid_host', 'Use a hostname different from the app host.')
+    if (input.hostname && [new URL(ctx.config.appUrl).hostname, ...ctx.config.appHosts.map((h) => h.replace(/:\d+$/, ''))].includes(input.hostname)) throw new AppError('invalid_host', 'Use a hostname different from the app host.')
     if (input.hostname) {
       const existing = await ctx.stores.control.lookupSite({ host: input.hostname })
       if (existing && (existing.account_id !== ctx.accountId || existing.newsletter_id !== nl.id)) throw new AppError('host_taken', 'That hostname is already in use.', 409)

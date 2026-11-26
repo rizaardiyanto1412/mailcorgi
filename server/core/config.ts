@@ -5,6 +5,11 @@ export interface Config {
   appUrl: string
   /** True when APP_URL was set, so nothing may guess it. */
   appUrlFixed: boolean
+  /**
+   * More hosts that serve the app itself (`APP_HOSTS`), lower case, port kept when given. Links still
+   * use `appUrl`; these hosts only answer like it. Customer website hosts never belong here.
+   */
+  appHosts: string[]
   adminEmails: string[]
   allowedEmails: string[]
   dataDir: string
@@ -43,6 +48,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     cloud: env.CLOUD === 'true' || env.CLOUD === '1',
     appUrl,
     appUrlFixed: appUrl !== '',
+    appHosts: list(env.APP_HOSTS).map(hostOf).filter(Boolean),
     adminEmails: list(env.ADMIN_EMAILS),
     allowedEmails: list(env.ALLOWED_EMAILS),
     dataDir: env.DATA_DIR || './data',
@@ -75,6 +81,22 @@ function parseTestDns(raw: string | undefined): Record<string, string[]> | null 
     out[key.toUpperCase().split(':')[0] + ':' + key.slice(key.indexOf(':') + 1).toLowerCase()] = value as string[]
   }
   return out
+}
+
+/** `news.example.com`, `news.example.com:8443` or `https://news.example.com/` → the host, or empty. */
+function hostOf(value: string): string {
+  try {
+    return new URL(value.includes('://') ? value : `https://${value}`).host
+  } catch {
+    return ''
+  }
+}
+
+/** True when `host` serves the app: the APP_URL host (or `learned`, before APP_URL is known) or an `APP_HOSTS` alias. */
+export const isAppHost = (config: Config, host: string, learned = '') => {
+  const h = host.toLowerCase()
+  const main = appHost(config) || learned
+  return (main !== '' && h === main) || config.appHosts.includes(h)
 }
 
 /** The host part of the app URL, or empty when not known yet. */
