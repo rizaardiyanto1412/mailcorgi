@@ -56,3 +56,14 @@ export function accountIdOfToken(token: string): string | null {
 }
 
 export const isAccountId = (value: string) => /^acc_[a-z2-7]{16}$/.test(value)
+
+/** OAuth credentials route like API keys: `mcc_` code, `mca_` access token, `mcr_` refresh token, each `<prefix>_<accountId>_<secret>`. */
+export type OAuthTokenKind = 'code' | 'access' | 'refresh'
+const OAUTH_PREFIX: Record<OAuthTokenKind, string> = { code: 'mcc', access: 'mca', refresh: 'mcr' }
+export function parseOAuthToken(value: string): { kind: OAuthTokenKind; accountId: string; secret: string } | null {
+  const match = /^(mcc|mca|mcr)_(acc_[a-z2-7]{16})_([A-Za-z0-9_-]{20,})$/.exec(value)
+  if (!match) return null
+  const kind = (Object.keys(OAUTH_PREFIX) as OAuthTokenKind[]).find((k) => OAUTH_PREFIX[k] === match[1])!
+  return { kind, accountId: match[2], secret: match[3] }
+}
+export const formatOAuthToken = (kind: OAuthTokenKind, accountId: string, secret: string) => `${OAUTH_PREFIX[kind]}_${accountId}_${secret}`

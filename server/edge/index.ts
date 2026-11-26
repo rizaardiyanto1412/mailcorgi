@@ -4,7 +4,8 @@
  */
 import { handleEmailHook } from './email-hooks.ts'
 import type { Config } from '../core/config.ts'
-import { appHost, isAppHost } from '../core/config.ts'
+import { appHost, isAppHost, publicOrigin } from '../core/config.ts'
+import { authorizationServerMetadata, protectedResourceMetadata, resourceMetadataUrl } from '../core/oauth.ts'
 import type { Keys } from '../core/crypto.ts'
 import { sha256Hex, signEnvelope } from '../core/crypto.ts'
 import type { BlobStore, StoreRef } from '../core/platform.ts'
@@ -12,7 +13,7 @@ import type { Meter } from '../core/db.ts'
 import { storeId } from '../core/platform.ts'
 import { ACTOR_HEADER, ACTOR_TTL_MS, type ActorEnvelope, type Stores } from '../core/store.ts'
 import type { Actor } from '../core/actions.ts'
-import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey } from '../core/ids.ts'
+import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey, parseOAuthToken } from '../core/ids.ts'
 import { CLIENT_IP_HEADER, errorResponse, withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
@@ -52,6 +53,14 @@ const CONTROL_PREFIXES = ['/api/auth/', '/api/control/', '/api/billing/', '/api/
 const TOKEN_PREFIXES = ['/t/o/', '/t/c/', '/u/', '/confirm/', '/keep/']
 
 const json = (body: unknown, status = 200) => Response.json(body, { status })
+/** CORS for OAuth discovery and the token, registration and revocation endpoints. Bearer tokens only, no cookies. */
+const OAUTH_CORS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, MCP-Protocol-Version', 'Access-Control-Max-Age': '86400' }
+const OAUTH_PATHS = new Set(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-authorization-server', '/oauth/register', '/oauth/token', '/oauth/revoke'])
+const withCors = (response: Response) => {
+  const out = new Response(response.body, response)
+  for (const [k, v] of Object.entries(OAUTH_CORS)) out.headers.set(k, v)
+  return out
+}
 const notFound = () => json({ error: 'Not found.', code: 'not_found' }, 404)
 const unauthorized = (message = 'Sign in to continue.') => json({ error: message, code: 'unauthorized' }, 401)
 
@@ -157,6 +166,18 @@ export function createEdge(deps: EdgeDeps): Edge {
     return new Response(bytes as BodyInit, { headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } })
   }
 
+  /** The form fields of a token or revocation request, read from a copy so the store still gets the body. */
+  async function oauthForm(request: Request): Promise<URLSearchParams> {
+    const text = (await request.clone().text()).slice(0, 20_000)
+    if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'application/json') {
+      try {
+        const body = JSON.parse(text) as Record<string, unknown>
+        return new URLSearchParams(Object.entries(body ?? {}).filter(([, v]) => typeof v === 'string') as [string, string][])
+      } catch { return new URLSearchParams() }
+    }
+    return new URLSearchParams(text)
+  }
+
   async function handle(request: Request, peer: string | null): Promise<Response> {
     const url = new URL(request.url)
     const path = url.pathname
@@ -207,11 +228,44 @@ export function createEdge(deps: EdgeDeps): Edge {
     if (path === '/api/dev/code' && deps.config.testDns) return forward({ kind: 'control' }, request, headers)
     if (path === '/hooks/ses' || path === '/hooks/resend') return handleEmailHook(deps, request, accountExists)
 
+    // OAuth 2.1 for MCP clients (docs/api.md). The issuer is this host's public origin.
+    if (OAUTH_PATHS.has(path)) {
+      const origin = publicOrigin(deps.config, url)
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: OAUTH_CORS })
+      if (path.startsWith('/.well-known/')) {
+        if (method !== 'GET' && method !== 'HEAD') return withCors(json({ error: 'Use GET.', code: 'method_not_allowed' }, 405))
+        const body = path === '/.well-known/oauth-authorization-server' ? authorizationServerMetadata(origin) : protectedResourceMetadata(origin)
+        return withCors(Response.json(body, { headers: { 'Cache-Control': 'public, max-age=3600' } }))
+      }
+      if (method !== 'POST') return withCors(json({ error: 'invalid_request', error_description: 'Use POST.' }, 405))
+      if (path === '/oauth/register') return withCors(await forward({ kind: 'control' }, request, headers))
+      // The code, refresh token or token to revoke names its account, like an API key does.
+      const form = await oauthForm(request)
+      const value = path === '/oauth/revoke' ? form.get('token') : form.get('grant_type') === 'refresh_token' ? form.get('refresh_token') : form.get('code')
+      const token = value ? parseOAuthToken(value) : null
+      if (!token || !(await accountExists(token.accountId))) {
+        if (path === '/oauth/revoke') return new Response(null, { status: 200, headers: OAUTH_CORS })
+        const unsupported = !['authorization_code', 'refresh_token'].includes(form.get('grant_type') ?? '')
+        return withCors(Response.json(unsupported ? { error: 'unsupported_grant_type', error_description: 'Use authorization_code or refresh_token.' } : { error: 'invalid_grant', error_description: 'The code or refresh token is invalid or has expired.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } }))
+      }
+      return withCors(await forward({ kind: 'account', accountId: token.accountId }, request, headers))
+    }
+
     if (path.startsWith('/api/v1/') || path === '/mcp') {
       const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('authorization') || '')
       const key = bearer ? parseApiKey(bearer[1]) : null
-      if (!key) return json({ error: { code: 'unauthorized', message: 'Send an API key as "Authorization: Bearer mc_…".' } }, 401)
-      return forward({ kind: 'account', accountId: key.accountId }, request, headers)
+      const oauth = path === '/mcp' && bearer && !key ? parseOAuthToken(bearer[1]) : null
+      const accountId = key?.accountId ?? (oauth?.kind === 'access' ? oauth.accountId : null)
+      const response = accountId && (!oauth || (await accountExists(accountId)))
+        ? await forward({ kind: 'account', accountId }, request, headers)
+        : json({ error: { code: 'unauthorized', message: path === '/mcp' ? 'Sign in with OAuth, or send an API key as "Authorization: Bearer mc_…".' : 'Send an API key as "Authorization: Bearer mc_…".' } }, 401)
+      // MCP clients find the authorization server from this challenge (RFC 9728 §5.1).
+      if (path === '/mcp' && response.status === 401) {
+        const challenge = new Response(response.body, response)
+        challenge.headers.set('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(publicOrigin(deps.config, url))}"${bearer ? ', error="invalid_token"' : ''}`)
+        return challenge
+      }
+      return response
     }
 
     for (const prefix of TOKEN_PREFIXES) {

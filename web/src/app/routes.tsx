@@ -11,6 +11,7 @@ import { signupFeature } from '../features/signup/index.tsx'
 import { domainsFeature } from '../features/domains/index.tsx'
 import { teamFeature } from '../features/team/index.tsx'
 import { apikeysFeature } from '../features/apikeys/index.tsx'
+import { oauthFeature } from '../features/oauth/index.tsx'
 import { accountsFeature } from '../features/accounts/index.tsx'
 import { billingFeature } from '../features/billing/index.tsx'
 import { adminFeature } from '../features/admin/index.tsx'
@@ -40,6 +41,7 @@ export const features: Feature[] = [
   domainsFeature,
   teamFeature,
   apikeysFeature,
+  oauthFeature,
   accountsFeature,
   billingFeature,
   adminFeature,

@@ -27,7 +27,8 @@
     "docs:api": "tsx scripts/docs-api.ts",
     "test:slow": "tsx --test server/test/*.slow.ts",
     "ui:pass": "tsx scripts/ui-pass.ts",
-    "budget": "tsx scripts/write-budget.ts"
+    "budget": "tsx scripts/write-budget.ts",
+    "oauth:e2e": "tsx scripts/oauth-e2e.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.8",

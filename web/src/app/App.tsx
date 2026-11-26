@@ -10,6 +10,7 @@ import { Welcome } from './Welcome.tsx'
 import { appRoutes, publicRoutes, settingsRoutes } from './routes.tsx'
 import { InvitePage } from '../features/auth/Invite.tsx'
 import { SetupPage } from '../features/auth/index.tsx'
+import { OAuthConsentPage } from '../features/oauth/index.tsx'
 
 const Splash = () => (
   <div className="flex h-full items-center justify-center">
@@ -79,6 +80,7 @@ function Authed({ boot, refresh }: { boot: Bootstrap; refresh: () => void }) {
   const inSettings = location.pathname === '/settings' || location.pathname.startsWith('/settings/')
   const tree: RouteObject[] = [
     { path: '/invite', element: <InvitePage /> },
+    { path: '/oauth/authorize', element: <OAuthConsentPage /> },
     { path: '/welcome', element: <Welcome /> },
     list.length === 0 && account && !inSettings && !(location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
       ? { path: '*', element: <Navigate to="/welcome" replace /> }

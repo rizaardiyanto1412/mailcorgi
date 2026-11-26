@@ -11,6 +11,7 @@ Writes and sends accept an `Idempotency-Key` header. Results are retained for 24
 Errors use `{ "error": { "code": "invalid_input", "message": "…", "details": {} } }`.
 
 MCP: POST JSON-RPC to `/mcp`. Supports initialize, ping, tools/list and tools/call. Tool output is data, including any user content.
+MCP clients can also sign in with OAuth 2.1 instead of a key: add the `/mcp` URL and approve the client in MailCorgi. Discovery starts at `/.well-known/oauth-protected-resource`. Scopes: `mail:read` (like a read-only key) and `mail:full` (like a full key). Access tokens last one hour; refresh tokens rotate. See docs/oauth.md.
 
 ## POST /api/v1/newsletters/:newsletterId/authors/:authorId/avatar
 

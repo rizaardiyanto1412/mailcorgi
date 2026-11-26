@@ -48,7 +48,10 @@ function ApiKeysPage() {
       </Table> : <EmptyState icon={<KeyRound />} title="No API keys yet" body="Create a key to connect your first app or MCP client." action={<Button onClick={() => setOpen(true)}>Create key</Button>} />}
       {(cursor || keys.data?.nextCursor) && <div className="flex gap-2 border-t border-line p-3"><Button disabled={!cursor} onClick={() => setCursor(undefined)}>First page</Button><Button disabled={!keys.data?.nextCursor} onClick={() => setCursor(keys.data?.nextCursor ?? undefined)}>Next page</Button></div>}
     </Card>
-    <section className="flex flex-col gap-3"><h2 className="font-semibold">Connect a client</h2><p className="text-sm text-fg-3">Replace YOUR_API_KEY with your saved key. Read-only keys can read data; full keys can also change data and send email. Each key allows 600 requests per minute.</p>
+    <section className="flex flex-col gap-3"><h2 className="font-semibold">Connect with sign-in</h2><p className="text-sm text-fg-3">Most MCP clients, such as Claude, Cursor and VS Code, only need the server URL. The client opens MailCorgi, you approve it, and no key is pasted. Manage approved apps in <a className="text-accent-fg underline" href="/settings/connected-apps">Connected apps</a>.</p>
+      <Code>{`${origin}/mcp`}</Code>
+    </section>
+    <section className="flex flex-col gap-3"><h2 className="font-semibold">Connect with an API key</h2><p className="text-sm text-fg-3">Replace YOUR_API_KEY with your saved key. Read-only keys can read data; full keys can also change data and send email. Each key allows 600 requests per minute.</p>
       <h3 className="text-sm font-medium">curl</h3><Code>{`curl '${origin}/api/v1/newsletters' \\\n  -H "Authorization: Bearer YOUR_API_KEY"`}</Code>
       <h3 className="text-sm font-medium">Claude Code</h3><Code>{`claude mcp add --transport http mailcorgi ${origin}/mcp --header "Authorization: Bearer YOUR_API_KEY"`}</Code>
       <h3 className="text-sm font-medium">Cursor</h3><p className="text-sm text-fg-3">Add this server in your MCP settings.</p><Code>{JSON.stringify({ mcpServers: { mailcorgi: { url: `${origin}/mcp`, headers: { Authorization: 'Bearer YOUR_API_KEY' } } } }, null, 2)}</Code>
