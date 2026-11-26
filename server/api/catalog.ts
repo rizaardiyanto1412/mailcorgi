@@ -8,5 +8,5 @@ export function exposedActions(registry: Registry) {
 
 export function runExposedAction(ctx: StoreCtx, action: AnyAction, input: unknown, actor: Actor) {
   if (action.scope === 'account') return runAction(ctx, action.name, input, actor)
-  return ctx.stores.control.runApiAction({ name: action.name, input, actor: { userId: actor.userId, access: actor.access, via: actor.via, keyId: actor.keyId } })
+  return ctx.stores.control.runApiAction({ name: action.name, input, actor: { userId: actor.userId, access: actor.access, via: actor.via, keyId: actor.keyId, oauth: actor.oauth } })
 }

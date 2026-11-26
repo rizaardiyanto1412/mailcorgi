@@ -5269,11 +5269,25 @@ curl -X DELETE 'https://mail.example.com/api/v1/keys/YOUR_KEY_ID' \
   --data '{}'
 ```
 
+## MCP install_settings_get
+
+Read the install settings. Secrets come back as a flag that says whether one is set.
+
+Required role: installAdmin. Effect: read. Account API keys never have install-admin access; an OAuth session acts as the signed-in user, install admin included.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {}
+}
+```
+
 ## MCP install_settings_set
 
 Change install settings. An empty string clears a setting. The result is checked as a whole: choosing an email provider needs its credentials (saved, sent in the same call, or set by environment).
 
-Required role: installAdmin. Effect: write. Account API keys never have install-admin access.
+Required role: installAdmin. Effect: write. Account API keys never have install-admin access; an OAuth session acts as the signed-in user, install admin included.
 
 ```json
 {

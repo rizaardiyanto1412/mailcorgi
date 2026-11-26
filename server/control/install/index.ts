@@ -151,6 +151,7 @@ export const installModule = {
         role: 'installAdmin',
         effect: 'read',
         input: z.object({}),
+        mcp: { title: 'Read install settings', destructive: false },
         handler: async (ctx) => {
           const values: Record<string, string> = {}
           const secretsSet: Record<string, boolean> = {}

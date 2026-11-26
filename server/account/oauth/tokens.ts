@@ -166,6 +166,7 @@ export async function revoke(ctx: StoreCtx, form: URLSearchParams) {
 /**
  * The actor for an OAuth access token on /mcp. Same shape as an API key's actor: the token's scope
  * sets read or full access, and the audience must be the /mcp URL of the host it was issued on.
+ * `oauth` marks it as the signed-in user, so the control store works out install admin itself.
  */
 export async function authenticateAccessToken(ctx: StoreCtx, request: Request, value: string): Promise<Actor | null> {
   const found = await findToken(ctx, value, 'access')
@@ -176,5 +177,5 @@ export async function authenticateAccessToken(ctx: StoreCtx, request: Request, v
   if (!allowRate(ctx.db, `oauth:${grant.id}`, 600, 60_000, now)) throw new OAuthRateError(Math.ceil((60_000 - now % 60_000) / 1000))
   ctx.db.run('UPDATE oauth_grants SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at <= ?)', now, grant.id, now - 60_000)
   const email = ctx.db.get<{ value: string }>("SELECT value FROM account_meta WHERE key = 'owner_email'")?.value ?? ''
-  return { userId: grant.user_id, email, owner: true, grants: {}, access: scopeAccess(grant.scope), via: 'mcp', keyId: grant.id, installAdmin: false }
+  return { userId: grant.user_id, email, owner: true, grants: {}, access: scopeAccess(grant.scope), via: 'mcp', keyId: grant.id, oauth: true, installAdmin: false }
 }

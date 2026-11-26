@@ -24,6 +24,8 @@ export interface Actor {
   access: 'full' | 'read'
   via: 'web' | 'api' | 'mcp'
   keyId?: string
+  /** Set only for an OAuth access token: the session acts as the signed-in user, unlike an API key. */
+  oauth?: boolean
   installAdmin: boolean
 }
 
