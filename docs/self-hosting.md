@@ -61,7 +61,7 @@ verified newsletter website answers 404.
 
 To move to a new domain, set `APP_URL` to the new one and put the old host in `APP_HOSTS`. Then update
 the webhook addresses at your providers, because they use `APP_URL`: `/hooks/ses` (the SNS
-subscription), `/hooks/resend`, and `/hooks/stripe` or `/hooks/polar` in cloud mode. The old addresses
+subscription), `/hooks/resend`, `/hooks/postshiba`, and `/hooks/stripe` or `/hooks/polar` in cloud mode. The old addresses
 keep working while the old host is in `APP_HOSTS`.
 
 ### Workers Free limits
@@ -188,7 +188,7 @@ directly is never taken for the proxy.
    password. No email is sent, so this works before you set up a provider.
 2. Create your first newsletter.
 3. Open **Admin → Setup**. The checklist reads the live state of your install:
-   - **Email provider configured**: Amazon SES, Resend or SMTP, with its keys.
+   - **Email provider configured**: Amazon SES, Resend, PostShiba or SMTP, with its keys.
    - **Test email sent**: a test through that provider succeeded.
    - **Delivery events received**: the provider's webhook reached MailCorgi. Not needed for SMTP.
    - **Sending turned on**: outbound email is not paused.
@@ -259,6 +259,7 @@ The check cannot test these on a live install:
 |---|---|---|---|---|
 | Amazon SES | About $0.10 per 1,000 emails | Yes, through SNS | Both | Most steps, and AWS reviews your account before you can send to anyone |
 | Resend | Free for 3,000 emails a month, then a monthly plan | Yes, through a webhook | Both | A few minutes |
+| PostShiba | A monthly plan with an hourly and a 24-hour cap | Yes, through a webhook | Both | A few minutes |
 | SMTP | Depends on the server | No | Docker and Node only | A few minutes |
 
 Without bounce and complaint tracking, MailCorgi cannot remove bad addresses on its own, and your
@@ -320,6 +321,44 @@ The SNS subscription needs a public HTTPS address. An install on `localhost` get
 4. Copy the webhook's signing secret into **Webhook signing secret** in **Admin → Email** and save.
 5. Send a test email.
 
+### PostShiba setup
+
+MailCorgi sends through PostShiba's HTTP inject address with an SMTP credential, so it works on
+Cloudflare Workers too.
+
+1. In PostShiba, create a cluster and wait until it shows `sending_ready`. Add your sending domain and
+   verify its DNS records.
+2. On the cluster, issue an SMTP credential. Copy the user name (`smtp_…`) and the password. PostShiba
+   shows the password once.
+3. In **Admin → Email**, choose **PostShiba**, enter the user name and the password, and save. Leave
+   **HTTP endpoint** blank unless your cluster has its own `http_endpoint`.
+4. In PostShiba, open **Webhooks** and add an endpoint with the PostShiba URL shown in
+   **Admin → Email**, for example `https://news.example.com/hooks/postshiba`. Keep all event types.
+5. Copy the endpoint's **Signing secret** into **Webhook signing secret** in **Admin → Email** and save.
+6. Set **Emails per hour** a little under your plan's hourly cap, for example `90` on a plan that
+   allows 100 an hour. See [Turn sending on](#turn-sending-on).
+7. Send a test email.
+
+The same settings through the API or an MCP client, with `install_settings_set`:
+
+```json
+{
+  "values": {
+    "email_provider": "postshiba",
+    "postshiba_user": "smtp_<id>",
+    "postshiba_password": "<password>",
+    "postshiba_webhook_secret": "<signing secret>",
+    "send_rate_per_hour": "90"
+  }
+}
+```
+
+How MailCorgi reads PostShiba's events: a hard `bounce` marks the contact bounced. A `blocked` bounce
+and a `dropped` message (PostShiba did not send it, for example because the address is on PostShiba's
+own suppression list) count as soft bounces, and three of them mark the contact bounced. A
+`spamreport` marks the contact as complained. PostShiba's **Send test event** is acknowledged and
+changes nothing.
+
 ### SMTP
 
 In **Admin → Email**, choose **SMTP** and enter the host, port, security mode (`tls` for port 465,
@@ -327,7 +366,7 @@ In **Admin → Email**, choose **SMTP** and enter the host, port, security mode 
 Workers.
 
 MailCorgi does not save a provider without the settings it needs to send: the region, access key ID
-and secret access key for Amazon SES, the API key for Resend, and the host for SMTP (plus the password
+and secret access key for Amazon SES, the API key for Resend, the SMTP user name and password for PostShiba, and the host for SMTP (plus the password
 when you enter a user name). A value set by an environment variable counts. **Admin → Email** marks
 each missing field, and nothing is saved until they are filled in.
 
@@ -346,6 +385,8 @@ Newsletters send only from a verified domain.
    - **Amazon SES**: three DKIM CNAME records, and an MX and an SPF TXT record for `mail.example.com`,
      the bounce domain.
    - **Resend**: the DKIM, SPF and return-path records Resend asks for.
+   - **PostShiba**: an SPF TXT record and a DMARC TXT record. MailCorgi does not create the domain in
+     PostShiba: add and verify it there too, with the DKIM and return-path records PostShiba lists.
    - **SMTP**: an SPF TXT record and a DMARC TXT record.
 
    MailCorgi also suggests a DMARC record when the domain has none. Publish it: Gmail and Yahoo expect
@@ -363,6 +404,14 @@ Sending is on by default. **Admin → Email** has a **Sending enabled** switch t
 outbound email for the install, and **Emails per second**, which sets the pace for the whole install.
 Set it at or below your provider's limit. A new SES account allows 1 email per second until AWS
 raises it.
+
+**Emails per hour** caps how many campaign emails the whole install sends in any 60 minutes, across
+all accounts and with any provider. Leave it blank for no cap. A send that reaches the cap is not
+failed: it waits and continues as room frees up, so a large issue goes out over several hours. Use it
+when your provider plan has an hourly cap, as PostShiba plans do. Sign-in codes, invitations and test
+emails are not held back and are not counted, so set the cap a little under the plan's limit. If
+PostShiba still answers that its hourly or 24-hour limit is reached, MailCorgi keeps the email queued
+and tries again after about 10 minutes or an hour.
 
 ## Custom website domains
 
@@ -486,11 +535,12 @@ a variable that is missing here.
 
 | Variable | Platform | Default | Description |
 |---|---|---|---|
-| `EMAIL_PROVIDER` | Both | test | `ses`, `resend`, `smtp` or `test`. `test` keeps every email in a local outbox. `smtp` works on Node only. |
+| `EMAIL_PROVIDER` | Both | test | `ses`, `resend`, `postshiba`, `smtp` or `test`. `test` keeps every email in a local outbox. `smtp` works on Node only. |
 | `EMAIL_FROM` | Both | `mailcorgi@` + the app host | Sender address for system emails: sign-in codes, invitations, alerts and test emails. |
 | `EMAIL_FROM_NAME` | Both | MailCorgi | Sender name for system emails. |
 | `SENDING_ENABLED` | Both | true | `false` pauses all outbound email for the install. |
 | `SEND_RATE_PER_SECOND` | Both | 10 | Install-wide sending rate. Match it to your provider quota. |
+| `SEND_RATE_PER_HOUR` | Both | no cap | Most campaign emails the install sends in any 60 minutes, across all accounts. A send that reaches it waits for room. Set it a little under your provider plan's hourly cap. |
 | `SES_REGION` | Both |  | AWS region of your SES account, for example `eu-west-1`. |
 | `SES_ACCESS_KEY_ID` (secret) | Both |  | Access key ID of the IAM user that sends through SES. |
 | `SES_SECRET_ACCESS_KEY` (secret) | Both |  | Secret access key of that IAM user. |
@@ -498,6 +548,10 @@ a variable that is missing here.
 | `SES_SNS_TOPIC_ARN` | Both |  | The only SNS topic whose notifications `/hooks/ses` accepts. |
 | `RESEND_API_KEY` (secret) | Both |  | Resend API key with sending and domain access. |
 | `RESEND_WEBHOOK_SECRET` (secret) | Both |  | Signing secret of the Resend webhook that points at `/hooks/resend`. |
+| `POSTSHIBA_USER` | Both |  | User name of the PostShiba SMTP credential, shown as `smtp_…`. |
+| `POSTSHIBA_PASSWORD` (secret) | Both |  | Password of that SMTP credential. |
+| `POSTSHIBA_WEBHOOK_SECRET` (secret) | Both |  | Signing secret of the PostShiba webhook that points at `/hooks/postshiba`. |
+| `POSTSHIBA_ENDPOINT` | Both | `https://inject.postshiba.com` | HTTP inject address of your PostShiba cluster, when it has its own. |
 | `SMTP_HOST` | Node |  | SMTP server host name. |
 | `SMTP_PORT` | Node |  | SMTP port, usually 465 (`tls`) or 587 (`starttls`). |
 | `SMTP_SECURITY` | Node |  | `tls`, `starttls` or `none`. |

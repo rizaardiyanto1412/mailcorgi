@@ -15,7 +15,7 @@ export interface ChecklistItem {
 /** Account stores asked per check. Self-hosted installs have a handful; cloud installs stop at the first hit. */
 const ACCOUNTS_SCANNED = 50
 
-const WEBHOOK_SETTING: Record<string, string> = { ses: 'ses_sns_topic_arn', resend: 'resend_webhook_secret' }
+const WEBHOOK_SETTING: Record<string, string> = { ses: 'ses_sns_topic_arn', resend: 'resend_webhook_secret', postshiba: 'postshiba_webhook_secret' }
 
 async function accountFacts(ctx: StoreCtx) {
   const ids = ctx.db.all<{ id: string }>("SELECT id FROM accounts WHERE deleted_at IS NULL AND status != 'deleting' ORDER BY created_at, id LIMIT ?", ACCOUNTS_SCANNED)
@@ -56,7 +56,7 @@ export async function setupChecklist(ctx: StoreCtx): Promise<{ provider: string;
     {
       id: 'provider',
       state: configured ? 'done' : 'todo',
-      detail: configured ? `${name} is configured.` : name ? `${name} is selected but ${missing.join(', ')} is not set.` : 'Emails go to the local test outbox. Choose Amazon SES, Resend or SMTP.',
+      detail: configured ? `${name} is configured.` : name ? `${name} is selected but ${missing.join(', ')} is not set.` : 'Emails go to the local test outbox. Choose Amazon SES, Resend, PostShiba or SMTP.',
       href: '/admin/email',
     },
     {
@@ -72,7 +72,7 @@ export async function setupChecklist(ctx: StoreCtx): Promise<{ provider: string;
           state: facts.providerEvents > 0 ? 'done' : 'todo',
           detail: facts.providerEvents > 0
             ? `${facts.providerEvents} delivery events received.`
-            : !name ? 'Configure Amazon SES or Resend first.' : webhookConfigured ? `Waiting for the first event from ${name}. Send a campaign to see one.` : `Add the ${name} webhook and save ${webhookSetting}.`,
+            : !name ? 'Configure Amazon SES, Resend or PostShiba first.' : webhookConfigured ? `Waiting for the first event from ${name}. Send a campaign to see one.` : `Add the ${name} webhook and save ${webhookSetting}.`,
           href: '/admin/email',
         },
     {

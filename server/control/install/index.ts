@@ -59,6 +59,7 @@ export const SETTING_KEYS = [
   'email_from_name',
   'sending_enabled',
   'send_rate_per_second',
+  'send_rate_per_hour',
   'signup_mode',
   'ses_region',
   'ses_access_key_id',
@@ -67,6 +68,10 @@ export const SETTING_KEYS = [
   'ses_sns_topic_arn',
   'resend_api_key',
   'resend_webhook_secret',
+  'postshiba_endpoint',
+  'postshiba_user',
+  'postshiba_password',
+  'postshiba_webhook_secret',
   'smtp_host',
   'smtp_port',
   'smtp_security',
@@ -89,11 +94,12 @@ declare module '../rpc.ts' {
   }
 }
 
-export const PROVIDER_NAMES: Record<string, string> = { ses: 'Amazon SES', resend: 'Resend', smtp: 'SMTP' }
+export const PROVIDER_NAMES: Record<string, string> = { ses: 'Amazon SES', resend: 'Resend', postshiba: 'PostShiba', smtp: 'SMTP' }
 /** Settings a provider cannot send without. */
 export const PROVIDER_CREDENTIALS: Record<string, readonly string[]> = {
   ses: ['ses_region', 'ses_access_key_id', 'ses_secret_access_key'],
   resend: ['resend_api_key'],
+  postshiba: ['postshiba_user', 'postshiba_password'],
   smtp: ['smtp_host'],
 }
 
@@ -111,14 +117,25 @@ export async function missingCredentials(ctx: StoreCtx, pending: Record<string, 
   return { provider, missing }
 }
 
+function httpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
+  } catch {
+    return false
+  }
+}
+
 function validateSettings(values: Record<string, string>) {
   for (const [key, value] of Object.entries(values)) {
     if (/[\r\n\0]/.test(value)) throw new AppError('invalid_setting', 'Settings must fit on one line.', 400)
     if (value === '') continue
-    if (key === 'email_provider' && !['test', 'ses', 'resend', 'smtp'].includes(value)) throw new AppError('invalid_setting', 'Choose a supported email provider.', 400)
+    if (key === 'email_provider' && !['test', 'ses', 'resend', 'postshiba', 'smtp'].includes(value)) throw new AppError('invalid_setting', 'Choose a supported email provider.', 400)
     if (key === 'email_from' && !z.email().safeParse(value).success) throw new AppError('invalid_setting', 'Enter a valid system sender address.', 400)
     if (key === 'sending_enabled' && !['true', 'false'].includes(value)) throw new AppError('invalid_setting', 'Sending enabled must be true or false.', 400)
     if (key === 'send_rate_per_second' && (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 10000)) throw new AppError('invalid_setting', 'Send rate must be between 0 and 10000.', 400)
+    if (key === 'send_rate_per_hour' && (!/^\d+$/.test(value) || Number(value) > 10_000_000)) throw new AppError('invalid_setting', 'Emails per hour must be a whole number up to 10000000. Use 0 for no cap.', 400)
+    if (key === 'postshiba_endpoint' && !httpsOrigin(value)) throw new AppError('invalid_setting', 'Enter the PostShiba endpoint as an https URL, such as https://inject.postshiba.com.', 400)
     if (key === 'smtp_port' && (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535)) throw new AppError('invalid_setting', 'Enter a valid SMTP port.', 400)
     if (key === 'smtp_security' && !['tls', 'starttls', 'none'].includes(value)) throw new AppError('invalid_setting', 'Choose a supported SMTP security mode.', 400)
     if (key === 'ses_region' && !/^[a-z]{2}(?:-[a-z]+)+-\d$/.test(value)) throw new AppError('invalid_setting', 'Enter a valid SES region.', 400)
@@ -163,7 +180,7 @@ export const installModule = {
             else values[key] = value
           }
           const { missing } = await missingCredentials(ctx)
-          return { values, secretsSet, fromEnv, missing, webhookUrls: { ses: `${appUrl(ctx)}/hooks/ses`, resend: `${appUrl(ctx)}/hooks/resend` } }
+          return { values, secretsSet, fromEnv, missing, webhookUrls: { ses: `${appUrl(ctx)}/hooks/ses`, resend: `${appUrl(ctx)}/hooks/resend`, postshiba: `${appUrl(ctx)}/hooks/postshiba` } }
         },
       }),
       defineAction({
@@ -174,8 +191,9 @@ export const installModule = {
         effect: 'write',
         input: z.object({ values: z.partialRecord(settingKey, z.string().max(4000)).describe('Setting values by key') }),
         mcp: { title: 'Change install settings', destructive: true },
-        handler: async (ctx, { values }) => {
-          validateSettings(values)
+        handler: async (ctx, input) => {
+          validateSettings(input.values)
+          const values = { ...input.values, ...(input.values.postshiba_endpoint ? { postshiba_endpoint: input.values.postshiba_endpoint.replace(/\/+$/, '') } : {}) }
           const { provider, missing } = await missingCredentials(ctx, values)
           if (missing.length) throw new AppError('missing_credentials', `${PROVIDER_NAMES[provider]} needs ${missing.join(', ')}. Nothing was saved.`, 400, { provider, missing })
           const stored = await Promise.all(Object.entries(values).map(async ([key, value]) => [key, isSecretSetting(key) ? await encrypt(ctx.keys.credentials, value) : value] as const))

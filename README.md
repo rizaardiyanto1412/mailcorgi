@@ -5,7 +5,7 @@ your own website. It runs on Cloudflare Workers with one click, or on any server
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/rizaardiyanto1412/mailcorgi)
 
-You bring the email provider (Amazon SES, Resend or any SMTP server) and pay it directly. MailCorgi
+You bring the email provider (Amazon SES, Resend, PostShiba or any SMTP server) and pay it directly. MailCorgi
 keeps your list, your issues and your stats in SQLite databases that you own.
 
 ## Features
@@ -42,7 +42,7 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 
 - Sending domains with the DNS records to publish and a daily recheck. SES and Resend identities are
   created for you.
-- Bounce and complaint webhooks from SES and Resend update contacts and suppressions on their own.
+- Bounce and complaint webhooks from SES, Resend and PostShiba update contacts and suppressions on their own.
 - Open and click tracking that leaves out link scanners and security bots.
 - Campaign reports and an overview of subscribers over time, growth by source and website views.
 - Notifications in the app, and alerts for install admins.

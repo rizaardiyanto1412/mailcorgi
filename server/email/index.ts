@@ -35,7 +35,7 @@ export interface ProviderEvent {
   occurredAt: number
 }
 
-export type ProviderName = 'ses' | 'resend' | 'smtp' | 'test'
+export type ProviderName = 'ses' | 'resend' | 'postshiba' | 'smtp' | 'test'
 
 export interface EmailProvider {
   name: ProviderName
@@ -54,6 +54,7 @@ export const PROVIDER_SETTING_KEYS = [
   'email_from',
   'email_from_name',
   'send_rate_per_second',
+  'send_rate_per_hour',
   'ses_region',
   'ses_access_key_id',
   'ses_secret_access_key',
@@ -61,6 +62,10 @@ export const PROVIDER_SETTING_KEYS = [
   'ses_sns_topic_arn',
   'resend_api_key',
   'resend_webhook_secret',
+  'postshiba_endpoint',
+  'postshiba_user',
+  'postshiba_password',
+  'postshiba_webhook_secret',
   'smtp_host',
   'smtp_port',
   'smtp_security',
@@ -78,6 +83,8 @@ export async function providerFromSettings(ctx: StoreCtx, settings: Record<strin
       return (await import('./ses.ts')).sesProvider(ctx, settings)
     case 'resend':
       return (await import('./resend.ts')).resendProvider(ctx, settings)
+    case 'postshiba':
+      return (await import('./postshiba.ts')).postshibaProvider(ctx, settings)
     case 'smtp':
       return (await import('./smtp.ts')).smtpProvider(ctx, settings)
     default:
@@ -87,4 +94,5 @@ export async function providerFromSettings(ctx: StoreCtx, settings: Record<strin
 
 export { parseSesWebhook } from './ses-webhook.ts'
 export { parseResendWebhook } from './resend-webhook.ts'
+export { parsePostshibaWebhook } from './postshiba-webhook.ts'
 export { providerSettings, sendSystemEmail, simpleEmail } from './platform-email.ts'

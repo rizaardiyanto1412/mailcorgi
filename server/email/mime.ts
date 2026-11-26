@@ -8,7 +8,7 @@ export function safeHeader(value: string): string {
   return value
 }
 
-function encoded(value: string): string {
+export function encoded(value: string): string {
   safeHeader(value)
   if (/^[\x20-\x7e]*$/.test(value) && !value.includes('=?')) return value
   const chunks: string[] = []
@@ -24,7 +24,7 @@ function encoded(value: string): string {
   return chunks.join(' ')
 }
 
-function mailbox(value: string): string {
+export function mailbox(value: string): string {
   safeHeader(value)
   const match = /^(.*?)\s*<([^<>]+)>$/.exec(value)
   if (!match) return value

@@ -60,7 +60,7 @@ server/
     newsletters/ contacts/ segments/ imports/ campaigns/ render/ sending/
     tracking/ signup/ website/ domains/ stats/ hygiene/ team/ notifications/
     apikeys/ usage/ setup/ dev/
-  email/           EmailProvider interface + ses.ts resend.ts smtp.ts test.ts, platform-email.ts
+  email/           EmailProvider interface + ses.ts resend.ts postshiba.ts smtp.ts test.ts, platform-email.ts
   api/             REST v1 router, OpenAPI, MCP server (all generated from the action registry)
   platform-node.ts Node platform + entry (index.ts)
   test/            node --test suites and the test harness (harness.ts)
@@ -261,7 +261,7 @@ The edge strips every inbound `x-mc-*` header, then routes:
 | `/api/public/subscribe/:newsletterKey`, `/embed.js?key=`, `/f/:newsletterKey` | account store | key `nl_<accountId>_<rand>` |
 | `/api/public/tls-check?domain=` | edge | Caddy's on-demand TLS `ask`: 200 for the app host and verified custom hosts |
 | `/n/:slug/*` and any request on a custom website host | account store | `control.lookupSite(slug or host)`, cached 60 s |
-| `/hooks/ses`, `/hooks/resend` | account store(s) | signature checked at the edge, account from message tags |
+| `/hooks/ses`, `/hooks/resend`, `/hooks/postshiba` | account store(s) | signature checked at the edge, account from message tags |
 | `/hooks/stripe`, `/hooks/polar` | control store | — |
 | `/img/:accountId/:key` | blobs directly | path |
 | `/healthz` | edge | — |
@@ -300,7 +300,7 @@ Environment: `APP_URL` (optional; learned from the first sign-in when unset), `C
 images), `SEND_BATCH_SIZE`, `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` (optional), `WORKERS_PLAN`,
 `WEBSITE_CNAME_TARGET`, `CF_API_TOKEN` / `CF_ZONE_ID`. The full list is generated into
 `docs/self-hosting.md` from `scripts/env-reference.ts`, and a test fails when code and list differ.
-Provider credentials (SES, Resend, SMTP, Stripe, Polar, Cloudflare) are entered in the install settings
+Provider credentials (SES, Resend, PostShiba, SMTP, Stripe, Polar, Cloudflare) are entered in the install settings
 page and stored encrypted in the control store; matching env vars (`SES_ACCESS_KEY_ID`,
 `STRIPE_SECRET_KEY`, …) take precedence when set. Saving a provider choice that lacks its credentials
 (after merging saved values and env) is refused with `400 missing_credentials`. Never log a secret or
@@ -590,7 +590,7 @@ HMAC-signed with the account's token key. Opens and clicks from link scanners ar
 scanner user agents, opens within 2 seconds and clicks within 3 seconds of the send (neither platform
 can detect data-center IPs), and every link of an issue clicked within 10 seconds (undone). Opens
 through recognized privacy proxies (Apple Mail, Google image proxy) are flagged. Provider webhooks (SES via SNS,
-Resend via Svix) become one event shape (`delivered`, `bounce` hard/soft, `complaint`, `deferred`) and
+Resend via Svix, PostShiba via an HMAC-signed batch) become one event shape (`delivered`, `bounce` hard/soft, `complaint`, `deferred`) and
 update deliveries, contacts, suppressions and, for hard bounces to nonexistent mailboxes, the global
 suppression list in the control store.
 
@@ -622,7 +622,7 @@ bundled Caddy config uses on-demand TLS with `/api/public/tls-check` as its `ask
 **domains** — sending domains. Adding one creates the provider identity (SES `CreateEmailIdentity` with
 Easy DKIM and a custom MAIL FROM; Resend domains API), stores the DNS records to add (DKIM CNAMEs or
 TXT, return-path MX + SPF TXT, DMARC TXT suggestion when the root has none), and checks them on demand
-and daily. A newsletter can only send from a verified domain. SMTP installs skip provider identities
+and daily. A newsletter can only send from a verified domain. SMTP and PostShiba installs skip provider identities
 and only check SPF/DMARC presence.
 
 **stats** — overview (subscribers over time, growth, last campaigns), campaign report (sent, delivered,
@@ -741,7 +741,7 @@ other explicit permanent reports have no expiry.
 
 **email** — `EmailProvider`: `send(message) → { id }`, `createIdentity(domain)`, `getIdentity(domain)`,
 `deleteIdentity(domain)`, `parseWebhook(request) → ProviderEvent[]`, `capabilities`. Providers: `ses`
-(SES v2 over `aws4fetch`), `resend`, `smtp` (Node only), `test` (writes to `outbox`; the default until
+(SES v2 over `aws4fetch`), `resend`, `postshiba` (HTTP inject with the SMTP credential), `smtp` (Node only), `test` (writes to `outbox`; the default until
 an admin configures a real one, and the provider every test uses). `platform-email.ts` sends system
 emails (codes, invites, alerts) through the same provider.
 
@@ -880,7 +880,7 @@ signing and verification; signup uses its exports.
 
 ```ts
 interface EmailProvider {
-  name: 'ses' | 'resend' | 'smtp' | 'test'
+  name: 'ses' | 'resend' | 'postshiba' | 'smtp' | 'test'
   capabilities: { identities: boolean; events: boolean; idempotency: boolean }
   send(msg: { from, to, replyTo?, subject, html, text, headers: Record<string,string>,
               meta: { accountId: string; deliveryId: string | null; kind: 'campaign'|'system' },
@@ -894,7 +894,7 @@ type SendResult =
 ```
 
 - `meta` travels with the message so events can be routed back: SES `EmailTags` (`mc_account`,
-  `mc_delivery`) and the install's configuration set; Resend `tags`. Also as `X-MC-Account` and
+  `mc_delivery`) and the install's configuration set; Resend `tags`; PostShiba `X-Capsule-Unique-Args`. Also as `X-MC-Account` and
   `X-MC-Delivery` headers.
 - Per delivery: set `status='sending', attempt_token, attempt_at` and commit, call the provider, then
   record the result. `unknown` (timeout, connection lost, or a crash that leaves a row in `sending` for
@@ -903,7 +903,8 @@ type SendResult =
   later provider event for that delivery still updates it.
 - Pace is install-wide. Before each batch the account store calls
   `control.takeSendPermits({ accountId, want }) → { granted, retryAt }` (token bucket at
-  `send_rate_per_second`). Monthly email limits are reserved in the same call in cloud mode.
+  `send_rate_per_second`, and a rolling 60-minute count against `send_rate_per_hour` when one is set;
+  at the hourly cap `retryAt` is when the oldest minute leaves the window). Monthly email limits are reserved in the same call in cloud mode.
 - Block and plan changes: the control store bumps `accounts.policy_version`, and in the same transaction
   enqueues a `policy.push` job that calls `account.applyPolicy({ version, status, plan, limits })`. The
   account store ignores a version it already has or passed. A limit of `null` means unlimited (JSON has
