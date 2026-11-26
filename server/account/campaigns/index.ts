@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { defineAction, meetsRole } from '../../core/actions.ts'
-import { forbidden, notFound } from '../../core/http.ts'
+import { AppError, forbidden, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
@@ -90,6 +90,8 @@ export const campaignsModule = {
           assertEditable(row)
           assertRevision(row, input.revision)
           if (input.audience) validateAudience(ctx, row.newsletter_id, input.audience)
+          // The same rule as sequences.updateStep: a running sequence keeps a subject on every step.
+          if (row.kind === 'sequence' && !(input.subject ?? row.subject).trim() && ctx.db.get("SELECT 1 FROM sequence_steps st JOIN sequences s ON s.id = st.sequence_id WHERE st.campaign_id = ? AND s.status IN ('active', 'paused')", row.id)) throw new AppError('review_failed', 'A step of a running sequence needs a subject.', 400)
           ctx.db.run('UPDATE campaigns SET subject = ?, preview_text = ?, format = ?, doc = ?, source = ?, html = ?, text = ?, audience = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?',
             input.subject ?? row.subject, input.previewText ?? row.preview_text, input.format ?? row.format, input.doc ? JSON.stringify(input.doc) : row.doc, input.source ?? row.source, input.html ?? row.html, input.text ?? row.text, input.audience ? JSON.stringify(input.audience) : row.audience, ctx.now(), row.id, row.newsletter_id, input.revision)
           return getCampaign(ctx, row.id)

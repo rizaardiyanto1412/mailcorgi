@@ -10,6 +10,7 @@ import { getNewsletter, getSettings, settingsSchema, customFields, welcomeCampai
 import { deliverMail } from './mail.ts'
 import { registerRoutes } from './routes.ts'
 export { formToken } from './tokens.ts'
+export { onPublicSignup } from './mail.ts'
 
 const newsletterId = z.string().min(1).describe('The newsletter id')
 const resource = { type: 'newsletter', param: 'newsletterId' } as const

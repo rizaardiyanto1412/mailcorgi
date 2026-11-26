@@ -3,7 +3,6 @@ import type { StoreCtx } from '../../core/store.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { ID_PREFIX, newId } from '../../core/ids.ts'
 import { draftFields, type CampaignRow } from '../campaigns/index.ts'
-import type { ContactTagsAdded } from '../contacts/index.ts'
 import { emptyDoc, parseDoc, type DocNode } from '../render/index.ts'
 
 export const MAX_STEPS = 50
@@ -87,7 +86,7 @@ export function serializeSequence(ctx: StoreCtx, r: SequenceRow) {
     id: r.id, newsletterId: r.newsletter_id, name: r.name, status: r.status,
     entry: entrySchema.parse(JSON.parse(r.entry)), exit: exitSchema.parse(JSON.parse(r.exit)), delayAnchor: r.delay_anchor,
     stepCount: ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM sequence_steps WHERE sequence_id = ?', r.id)!.n,
-    enrollments: { total: byStatus.reduce((n, s) => n + s.n, 0), active: count('active'), completed: count('completed'), exited: count('exited') },
+    enrollments: { total: byStatus.reduce((n, s) => n + s.n, 0), active: count('active'), paused: count('paused'), completed: count('completed'), exited: count('exited') },
     createdAt: r.created_at, updatedAt: r.updated_at, archivedAt: r.archived_at,
   }
 }
@@ -117,24 +116,11 @@ export function renumberSteps(ctx: StoreCtx, sequenceId: string, orderedStepIds:
 export const touchSequence = (ctx: StoreCtx, sequenceId: string) => void ctx.db.run('UPDATE sequences SET updated_at = ? WHERE id = ?', ctx.now(), sequenceId)
 
 /**
- * The tag hook: the contacts module calls this, inside the transaction that wrote the tags, for every
- * tag a contact newly gains, on every write path (contacts.create for new and existing contacts,
- * contacts.update, contacts.bulk, imports). It never hears about a tag the contact already had.
- *
- * It runs on every tag write, so it stays one indexed read (`sequences_newsletter`) and filters the
- * few active rows in memory.
- *
- * SEAM: today it only resolves the active tag-entry sequences that the new tags start, and no
- * sequence can be active yet. The enrollment unit extends this function to create the
- * `sequence_enrollments` rows for the returned sequences (once per contact and sequence, measured
- * from now) in this same transaction.
+ * Steps go out in position order, each at its own delay from enrollment, so a later step may never
+ * have a shorter delay than the one before it. Call after changing steps, inside the transaction.
  */
-export function syncContactTags(ctx: StoreCtx, event: ContactTagsAdded): { sequenceId: string; tagId: string }[] {
-  const active = ctx.db.all<{ id: string; entry: string }>("SELECT id, entry FROM sequences WHERE newsletter_id = ? AND status = 'active'", event.newsletterId)
-  const matches: { sequenceId: string; tagId: string }[] = []
-  for (const row of active) {
-    const entry = entrySchema.safeParse(JSON.parse(row.entry))
-    if (entry.success && entry.data.type === 'tag' && event.tagIds.includes(entry.data.tagId)) matches.push({ sequenceId: row.id, tagId: entry.data.tagId })
-  }
-  return matches
+export function assertDelayOrder(ctx: StoreCtx, sequenceId: string) {
+  const steps = ctx.db.all<StepRow>('SELECT * FROM sequence_steps WHERE sequence_id = ? ORDER BY position', sequenceId)
+  const bad = steps.find((step, index) => index > 0 && step.delay_days < steps[index - 1].delay_days)
+  if (bad) throw new AppError('step_delay_order', `Step ${bad.position} is set to day ${bad.delay_days}, earlier than the step before it. Steps are sent in order, so each delay must be the same as or longer than the one before.`, 409, { stepId: bad.id, position: bad.position, delayDays: bad.delay_days })
 }

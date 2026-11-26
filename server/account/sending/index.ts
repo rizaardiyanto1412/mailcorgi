@@ -19,7 +19,10 @@ import { PAUSE_MESSAGES, bumpStat, notify, pauseCampaign, readStats, resetRateBa
 import { OPEN_ROWS } from './batch.ts'
 export { sendHooks } from './provider.ts'
 export { EMPTY_STATS, readStats, recountStats, bumpStat, daily, notify, pauseCampaign, rateBreach, resetRateBaseline, AUTO_PAUSE_MIN_SENT } from './stats.ts'
-export { markSentEffects, OPEN_ROWS } from './batch.ts'
+export { markSentEffects, sendDelivery, OPEN_ROWS, STUCK_AFTER_MS } from './batch.ts'
+export { recordLinks, sendContext } from './message.ts'
+export { sendProvider, sendSettings } from './provider.ts'
+export type { SendContext } from './message.ts'
 export type { CampaignStats } from './stats.ts'
 
 const campaignId = z.string().min(1).describe('The campaign id')

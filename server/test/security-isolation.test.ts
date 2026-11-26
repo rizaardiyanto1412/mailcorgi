@@ -218,7 +218,7 @@ test('no action reaches a resource of another newsletter or another account thro
   }
   assert.deepEqual(failures, [])
   assert.ok(attempts.length > 250, 'the walk must reach every id-shaped input')
-  for (const name of ['contacts.bulk', 'contacts.update', 'sequences.create', 'sequences.get', 'sequences.update', 'sequences.updateStep', 'sequences.deleteStep', 'sequences.reorderSteps', 'campaigns.create', 'campaigns.update', 'notifications.markRead', 'website.publishPost', 'team.remove', 'billing.portal']) assert.ok(tried.has(name), `${name} was not walked`)
+  for (const name of ['contacts.bulk', 'contacts.update', 'sequences.create', 'sequences.get', 'sequences.update', 'sequences.updateStep', 'sequences.deleteStep', 'sequences.reorderSteps', 'sequences.activate', 'sequences.pause', 'sequences.resume', 'sequences.enroll', 'sequences.exit', 'sequences.pauseEnrollment', 'sequences.resumeEnrollment', 'sequences.listEnrollments', 'sequences.stats', 'campaigns.create', 'campaigns.update', 'notifications.markRead', 'website.publishPost', 'team.remove', 'billing.portal']) assert.ok(tried.has(name), `${name} was not walked`)
 })
 
 test('the edge drops smuggled x-mc headers on every route', async () => {

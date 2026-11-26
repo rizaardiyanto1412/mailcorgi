@@ -21,6 +21,20 @@ export const serializeContact = (r: ContactRow) => ({ id: r.id, newsletterId: r.
 export type Contact = ReturnType<typeof serializeContact>
 export interface SubscribeInput { newsletterId: string; email: string; name?: string; fields?: Record<string, unknown>; tags?: string[]; source: string; consent: 'asserted' | 'confirmed' | 'pending'; at?: number; /** Which write path this is, for tag listeners. `source` is free text the caller chooses, so it is not trusted for this. */ tagSource?: TagSource }
 export type SubscribeOutcome = 'subscribed' | 'pending' | 'suppressed' | 'limit' | 'exists'
+/**
+ * A contact's status changed, or the contact was deleted (`to: 'deleted'`). Listeners run synchronously
+ * inside the transaction that made the change, like the tag listeners (tags.ts), so what they write
+ * commits or rolls back with it. A new contact inserted already subscribed emits nothing: it had no
+ * earlier status.
+ */
+export interface ContactStatusChanged { newsletterId: string; contactId: string; from: ContactStatus; to: ContactStatus | 'deleted' }
+export type ContactStatusListener = (ctx: StoreCtx, event: ContactStatusChanged) => void
+const statusListeners = new Set<ContactStatusListener>()
+/** Hear about status changes and deletions. Other modules register here so contacts never imports them. Returns a function that removes the listener. */
+export function onContactStatusChanged(listener: ContactStatusListener): () => void {
+  statusListeners.add(listener)
+  return () => void statusListeners.delete(listener)
+}
 export function contactRow(ctx: StoreCtx, id: string, newsletterId?: string): ContactRow {
   const r = ctx.db.get<ContactRow>('SELECT * FROM contacts WHERE id = ?' + (newsletterId ? ' AND newsletter_id = ?' : ''), ...[id, ...(newsletterId ? [newsletterId] : [])])
   if (!r) throw notFound('That contact')
@@ -114,6 +128,7 @@ export function setContactStatus(ctx: StoreCtx, contactId: string, status: Conta
     ctx.db.run(`UPDATE contacts SET status = ?, ${timeColumn} = ?, updated_at = ?, confirmed_at = CASE WHEN ? THEN ? ELSE confirmed_at END, unsubscribe_reason = CASE WHEN ? THEN ? ELSE unsubscribe_reason END${streaks} WHERE id = ? AND newsletter_id = ?`, status, at, ctx.now(), confirmed, at, status === 'unsubscribed', typeof detail.reason === 'string' ? detail.reason : '', c.id, c.newsletter_id)
     recordStatusChange(ctx, c, status, detail, at)
     if (status === 'unsubscribed' || status === 'cleaned') addSuppression(ctx, c.email, c.newsletter_id, status)
+    for (const listener of statusListeners) listener(ctx, { newsletterId: c.newsletter_id, contactId: c.id, from: c.status, to: status })
     if (status === 'bounced' || status === 'complained') {
       addSuppression(ctx, c.email, null, status === 'bounced' ? 'hard_bounce' : 'complaint')
       for (const other of ctx.db.all<{ id: string }>("SELECT id FROM contacts WHERE email = ? AND id != ? AND status IN ('subscribed', 'unconfirmed')", c.email, c.id)) setContactStatus(ctx, other.id, status, detail)
@@ -178,7 +193,9 @@ export function deleteContact(ctx: StoreCtx, contactId: string, newsletterId: st
     const c = contactRow(ctx, contactId, newsletterId)
     ctx.db.run('INSERT INTO deleted_contacts (email_hash, newsletter_id, deleted_at) VALUES (?, ?, ?) ON CONFLICT(email_hash, newsletter_id) DO UPDATE SET deleted_at = excluded.deleted_at', emailHash(c.email), newsletterId, ctx.now())
     unsubscribe(ctx, { contactId, reason: 'deleted' })
+    const from = contactRow(ctx, contactId, newsletterId).status
     clearContactTags(ctx, c.id)
     ctx.db.run('DELETE FROM contacts WHERE id = ? AND newsletter_id = ?', c.id, newsletterId)
+    for (const listener of statusListeners) listener(ctx, { newsletterId, contactId: c.id, from, to: 'deleted' })
   })
 }

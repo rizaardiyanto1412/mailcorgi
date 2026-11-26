@@ -447,8 +447,9 @@ Module migrations add to the base tables above (each module owns its own):
   'active'|'paused'|'completed'|'exited', source, enrolled_at, last_step_id, next_step_id,
   next_run_at, exit_reason, paused_at, finished_at, UNIQUE(sequence_id, contact_id))` with the
   partial index `(next_run_at) WHERE status = 'active' AND next_run_at IS NOT NULL` for the
-  scheduler. `paused` and `paused_at` are reserved for per-enrollment pause and resume, which no
-  code writes yet.
+  scheduler. There is no index on `contact_id`: a contact's enrollments are read through the
+  newsletter's few sequences and the unique key. A step's send is a `deliveries` row for the step's
+  campaign, so no table records sends separately.
 - **sending**: `deliveries.attempts` (a temporary refusal retries at most 3 times).
 - **signup**: `signup_settings`, `signup_mail` (confirmation and welcome attempts).
 - **website**: `website_posts` (web-only Markdown posts), `website_hosts`, `website_cache_versions`
@@ -478,6 +479,16 @@ Module migrations add to the base tables above (each module owns its own):
   `sent|delivered → complained`; `queued → skipped`; `sending → failed` (definite refusal), back to
   `queued` (definite temporary refusal), or `unknown` (the outcome was never learned). Provider events can
   arrive early, late, twice and out of order (11.6).
+- **Sequence**: `draft → active` (`sequences.activate`, after the review checks); `active ⇄ paused`;
+  any state `→ archived`, which is final and exits every enrollment still running. Only an `active`
+  sequence enrolls and sends.
+- **Enrollment** (one contact in one sequence, at most once ever): `active → completed` after the last
+  step; `active ⇄ paused` (one contact held by hand; `next_run_at` is null while paused);
+  `active | paused → exited` with `exit_reason` `tag`, `segment`, the contact's new status
+  (`unsubscribed`, `bounced`, `complained`, `cleaned`), `suppressed`, `archived` or `manual`.
+  `completed` and `exited` are final; a deleted contact's rows are removed. `next_step_id` and
+  `next_run_at` name the next unsent step and when it is due (`enrolled_at + delay_days` days). Every
+  move is an update conditional on the state it expects, so a tick that runs twice moves it once.
 - **Domain**: `pending → verified`; `verified → failed` when a daily recheck finds records gone;
   `failed → verified` on recovery.
 
@@ -511,6 +522,13 @@ serve `subscribe()` (new and existing contacts, so imports and `contacts.create`
 register with `onContactTagsAdded(listener)`; a listener is called synchronously, inside the writing
 transaction, once per contact with only the tags that contact newly gained and the write path
 (`manual`, `api`, `mcp`, `bulk`, `import`, `signup`). Removals and tags already present emit nothing.
+Two more seams work the same way, so contacts never imports the modules that depend on it:
+`onContactStatusChanged(listener)` hears every status change made by `setContactStatus` and a
+deletion (`to: 'deleted'`), inside the changing transaction; `onTagDelete(guard)` lets a module
+refuse `tags.delete` by throwing (sequences answers `409 tag_in_use`). The usage module has the same
+kind of seam, `onPolicyChanged(listener)`, called inside `applyPolicy`'s transaction when the plan or
+limits change or a blocked account is active again (sequences re-arms its ticks). `contacts.get` also lists the
+contact's sequence enrollments.
 
 **segments** — saved filters over contacts: status, tags (any/all/none), fields (eq, contains, gt, lt,
 set), signup date, source, engagement (opened/clicked in last N issues or days, never opened), inbox
@@ -549,11 +567,45 @@ hidden `campaigns` row (`kind = 'sequence'`, `web_visible = 0`, always `draft`) 
 deliveries, tracking and stats are the campaign ones; that row is left out of `campaigns.list`, the
 website and issue-based engagement, cannot be sent, scheduled, canceled, duplicated or deleted as a
 campaign (`409 not_issue` / `sequence_step`), and can be saved through `campaigns.update` by admins
-only. Sequences are archived, never deleted. This unit ships the tables and the draft-mode actions
-(`sequences.list|get|create|update|archive|addStep|updateStep|deleteStep|reorderSteps`); a sequence is
-`draft` or `archived` and nothing is enrolled or sent yet. The module listens to the contacts tag hook
-with `syncContactTags`, which resolves the active tag-entry sequences a new tag starts with one
-indexed read; the enrollment unit extends it to create enrollments.
+only. Sequences are archived, never deleted. Steps are sent in position order, so their delays may
+not decrease (`409 step_delay_order` on create, add, update and reorder; activation refuses older
+data that breaks the rule). The decisions behind what follows are in
+`docs/decisions/sequences-send.md`.
+
+*Running.* `sequences.activate` (draft → active) needs at least one step, every step passing the
+campaign review errors (subject, postal address, verified sender), delays in order, a sending account
+and install, and an entry that can run: a `segment` entry is refused with `409 not_supported_yet`.
+`sequences.pause` and `sequences.resume` stop and restart it; `sequences.archive` exits everyone.
+Activation never enrolls contacts who already match (no backfill), and nobody enters a paused sequence.
+
+*Entering and leaving.* The module listens to three contacts seams. `syncContactTags` (tag hook, one
+indexed read per tag write): a new exit tag exits the contact; a new entry tag of an active sequence
+enrolls them when they are subscribed, not suppressed, hold no exit tag and were never in it.
+`syncContactStatus` (status hook): any change away from `subscribed` exits the contact's enrollments
+with the new status as the reason, a deletion removes them, and `unconfirmed → subscribed` enrolls
+the contact into active tag sequences whose tag they already hold. `assertTagUnused` refuses
+`tags.delete` for a tag a non-archived sequence enters or exits by. The public signup form calls
+`enrollSignup` where it queues the welcome email, so `signup` sequences start from the form and its
+confirm link only. `sequences.enroll|exit|pauseEnrollment|resumeEnrollment` do the same by hand, and
+`sequences.listEnrollments` (keyset by contact id) and `sequences.stats` (per step: contacts waiting
+and the step campaign's counters) report on it.
+
+*Sending.* One job kind, `sequences.tick`, payload `{ newsletterId }`, dedupe key
+`sequences.tick:<newsletterId>`, armed to the earliest `next_run_at` among active enrollments of
+active sequences and re-armed when an enrollment starts or resumes, a sequence resumes, and at the end
+of every run. There is no cron and no scan. A run takes the due enrollments, checks each again (still
+active, contact subscribed and not suppressed, no exit tag, not in the exit segment), inserts the
+`deliveries` row for `(step campaign, contact)` and sends it through `sendDelivery`, the single-delivery
+helper `send.batch` also uses: same claim, tracking, `List-Unsubscribe`, idempotency key, permits,
+monthly limit and counters. The step campaign stays `draft`; its `stats` and `stats.report` are the
+step's report. The delivery's unique key makes a step idempotent: a delivery that already exists is
+never sent again, whatever its outcome. A temporary refusal retries with the campaign backoff (three
+attempts, then `failed`), a permanent one fails at once, an unknown outcome is retried only when the
+provider deduplicates (at most five claims), and in each case the enrollment then moves to the next
+step. When a step is a day or more overdue (a pause, sending switched off), only the latest due step
+is sent and the earlier ones get a `skipped` delivery. While the account is blocked or protected,
+sending is switched off or the sender is unverified, the tick sleeps an hour at a time instead of
+failing.
 
 **render** — pure functions, no DOM. `renderEmail(campaign, newsletter, recipient) → { html, text,
 headers }` and `renderWeb(campaign, newsletter) → html`. The doc format is TipTap JSON with these nodes:
