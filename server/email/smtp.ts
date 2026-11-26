@@ -1,7 +1,7 @@
 import type { StoreCtx } from '../core/store.ts'
 import type { EmailProvider } from './index.ts'
 import { buildMime, InvalidMessageError } from './mime.ts'
-import { unknownSend, invalidSend } from './http.ts'
+import { invalidSend, failedSend } from './http.ts'
 import { z } from 'zod'
 
 export function smtpProvider(_ctx: StoreCtx, settings: Record<string, string>): EmailProvider {
@@ -24,7 +24,7 @@ export function smtpProvider(_ctx: StoreCtx, settings: Record<string, string>): 
         const parsed = z.object({ responseCode: z.number().optional(), code: z.string().optional() }).safeParse(error)
         if (parsed.success && parsed.data.responseCode) return { ok: false, kind: parsed.data.responseCode >= 500 ? 'permanent' : parsed.data.responseCode === 421 || parsed.data.responseCode === 450 ? 'throttled' : 'temporary', message: `SMTP refused the message (${parsed.data.responseCode}).` }
         if (parsed.success && parsed.data.code === 'EAUTH') return { ok: false, kind: 'permanent', message: 'SMTP authentication failed.' }
-        return unknownSend()
+        return failedSend('smtp', error, [settings.smtp_password, settings.smtp_user])
       }
     },
   }

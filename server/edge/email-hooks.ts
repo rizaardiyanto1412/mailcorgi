@@ -1,5 +1,6 @@
 import type { EdgeDeps } from './index.ts'
 import { parsePostshibaWebhook, parseResendWebhook, parseSesWebhook } from '../email/index.ts'
+import { noRedirect, isRedirect } from '../email/http.ts'
 import { AppError } from '../core/http.ts'
 
 export async function handleEmailHook(deps: EdgeDeps, request: Request, accountExists: (accountId: string) => Promise<boolean>): Promise<Response> {
@@ -22,8 +23,8 @@ export async function handleEmailHook(deps: EdgeDeps, request: Request, accountE
           : await parseResendWebhook({ now: deps.now }, verifiedRequest, settings)
     } catch (error) { await deps.stores.control.raiseAlert({ kind: 'webhook_verification', title: 'Email webhook verification failed', body: 'Check the provider signing configuration.' }).catch(() => {}); throw new AppError('invalid_webhook', 'Webhook verification failed.', error instanceof AppError ? error.status : 400) }
     if (result.confirmUrl) {
-      const response = await networkFetch(result.confirmUrl, { redirect: 'error', signal: AbortSignal.timeout(10_000) })
-      if (!response.ok || response.redirected) throw new Error('Subscription confirmation failed.')
+      const response = await networkFetch(result.confirmUrl, { ...noRedirect, signal: AbortSignal.timeout(10_000) })
+      if (isRedirect(response) || !response.ok || response.redirected) throw new Error('Subscription confirmation failed.')
     }
     const groups = new Map<string, typeof result.events>()
     let dropped = 0

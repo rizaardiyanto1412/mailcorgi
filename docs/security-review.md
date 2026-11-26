@@ -135,7 +135,8 @@ None of these were changed.
   `https://inject.postshiba.com`. Only an install admin can change install settings. Saving it
   requires https with no embedded credentials, query or hash, and strips a trailing slash. When
   the email provider is `postshiba`, the server POSTs to `{endpoint}/api/inject/v1` and does not
-  follow redirects. The host itself is not restricted, so an install admin can point sends at any
+  follow redirects: every provider and SNS call asks for a manual redirect and treats a 3xx answer
+  as a refusal, which also works on Workers. The host itself is not restricted, so an install admin can point sends at any
   https host.
 - **Injection.** A generic test puts markup and `javascript:` URLs into every user-controlled field.
   It covers newsletter identity and theme, author, website settings, signup settings, custom

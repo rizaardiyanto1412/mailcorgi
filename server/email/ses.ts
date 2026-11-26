@@ -3,8 +3,8 @@ import { z } from 'zod'
 import type { StoreCtx } from '../core/store.ts'
 import { toBase64 } from '../core/crypto.ts'
 import type { EmailProvider, Identity } from './index.ts'
-import { buildMime, InvalidMessageError } from './mime.ts'
-import { identityError, sendError, unknownSend, invalidSend } from './http.ts'
+import { buildMime } from './mime.ts'
+import { identityError, sendError, noRedirect, isRedirect, redirectedSend, failedSend, unparsedSend, logSendFailure, parseJson } from './http.ts'
 import { parseSesWebhook } from './ses-webhook.ts'
 
 const identitySchema = z.object({ VerifiedForSendingStatus: z.boolean().optional(), DkimAttributes: z.object({ Status: z.string().optional(), Tokens: z.array(z.string()).optional() }).optional() })
@@ -16,7 +16,7 @@ export function sesProvider(ctx: StoreCtx, settings: Record<string, string>): Em
   const client = new AwsClient({ accessKeyId: settings.ses_access_key_id || '', secretAccessKey: settings.ses_secret_access_key || '', region, service: 'ses' })
   async function request(path: string, method: string, body?: unknown) {
     const signed = await client.sign(`https://${host}/v2/email/${path}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
-    return ctx.platform.fetch(signed, { redirect: 'error', signal: AbortSignal.timeout(30_000) })
+    return ctx.platform.fetch(signed, { ...noRedirect, signal: AbortSignal.timeout(30_000) })
   }
   function identity(domain: string, data: z.infer<typeof identitySchema>): Identity {
     const records: Identity['records'] = (data.DkimAttributes?.Tokens ?? []).map((token) => ({ name: `${token}._domainkey.${domain}`, type: 'CNAME', value: `${token}.dkim.amazonses.com`, purpose: 'DKIM' }))
@@ -40,10 +40,15 @@ export function sesProvider(ctx: StoreCtx, settings: Record<string, string>): Em
           EmailTags: [{ Name: 'mc_account', Value: msg.meta.accountId }, ...(msg.meta.deliveryId ? [{ Name: 'mc_delivery', Value: msg.meta.deliveryId }] : [])],
           ...(settings.ses_configuration_set ? { ConfigurationSetName: settings.ses_configuration_set } : {}),
         })
-        if (!response.ok) return sendError(response.status, response.headers.get('retry-after'), response.headers.get('x-amzn-errortype') || '')
-        const parsed = z.object({ MessageId: z.string().min(1) }).safeParse(await response.json())
-        return parsed.success ? { ok: true, id: parsed.data.MessageId } : unknownSend()
-      } catch (error) { return error instanceof InvalidMessageError ? invalidSend() : unknownSend() }
+        if (isRedirect(response)) return redirectedSend('ses', response.status)
+        const text = await response.text()
+        if (!response.ok) {
+          logSendFailure('ses', 'status', { status: response.status, body: text, redact: [settings.ses_secret_access_key, settings.ses_access_key_id] })
+          return sendError(response.status, response.headers.get('retry-after'), response.headers.get('x-amzn-errortype') || '')
+        }
+        const parsed = z.object({ MessageId: z.string().min(1) }).safeParse(parseJson(text))
+        return parsed.success ? { ok: true, id: parsed.data.MessageId } : unparsedSend('ses', response.status)
+      } catch (error) { return failedSend('ses', error, [settings.ses_secret_access_key, settings.ses_access_key_id]) }
     },
     async createIdentity(domain) {
       try {
