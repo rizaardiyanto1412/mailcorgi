@@ -127,9 +127,16 @@ None of these were changed.
 - **Webhooks.** SNS pins the certificate host to the topic region, allows no redirects and checks the
   topic ARN. Resend (Svix), Stripe and Polar check signatures with a timestamp tolerance, and
   billing events are idempotent. Billing events map to accounts through server-set metadata.
-- **SSRF.** The server never fetches a URL a user supplies. It calls SNS hosts that are checked
-  before use, and fixed hosts for Stripe, Polar, Resend, SES, Cloudflare, Turnstile and
-  DNS over HTTPS.
+  `/hooks/postshiba` checks `X-Capsule-Signature`, an HMAC-SHA256 over `{timestamp}.{body}`, with
+  a 5 minute timestamp tolerance.
+- **SSRF.** The server never fetches a URL an account user supplies. It calls SNS hosts that are
+  checked before use, and fixed hosts for Stripe, Polar, Resend, SES, Cloudflare, Turnstile and
+  DNS over HTTPS. One URL is admin-supplied: the install setting `postshiba_endpoint`, default
+  `https://inject.postshiba.com`. Only an install admin can change install settings. Saving it
+  requires https with no embedded credentials, query or hash, and strips a trailing slash. When
+  the email provider is `postshiba`, the server POSTs to `{endpoint}/api/inject/v1` and does not
+  follow redirects. The host itself is not restricted, so an install admin can point sends at any
+  https host.
 - **Injection.** A generic test puts markup and `javascript:` URLs into every user-controlled field.
   It covers newsletter identity and theme, author, website settings, signup settings, custom
   fields, contact names and fields, the doc, markdown and html formats, and web-only posts. None of
