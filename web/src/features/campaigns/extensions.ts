@@ -45,5 +45,5 @@ const NewsletterImage = Image.extend({
   },
 })
 export function campaignExtensions() {
-  return [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, protocols: ['http', 'https'], HTMLAttributes: { rel: 'noopener noreferrer' } } }), Placeholder.configure({ placeholder: 'Start writing, or type / for a block…' }), Highlight, NewsletterImage, ButtonNode, Callout, Divider, Spacer, Embed]
+  return [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, protocols: ['http', 'https'], HTMLAttributes: { rel: 'noopener noreferrer' } } }), Placeholder.configure({ placeholder: ({ editor }) => editor.isEmpty ? 'Start writing, or type / for blocks…' : 'Type / for blocks' }), Highlight, NewsletterImage, ButtonNode, Callout, Divider, Spacer, Embed]
 }

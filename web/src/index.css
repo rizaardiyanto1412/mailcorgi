@@ -3,44 +3,44 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 :root {
-  --canvas: #f7f5f2;
+  --canvas: #ffffff;
+  --sidebar: #fafafa;
   --surface: #ffffff;
-  --sunken: #f1eee9;
-  --hover: #ebe7e1;
-  --line: #e6e1da;
-  --line-strong: #d3ccc2;
-  --fg: #1d1915;
-  --fg-2: #5a534c;
-  --fg-3: #77706a;
-  --nav: #2a1d14;
+  --sunken: #f6f6f7;
+  --hover: #f0f0f2;
+  --line: #e9e9ec;
+  --line-strong: #d7d7dc;
+  --fg: #18181b;
+  --fg-2: #52525b;
+  --fg-3: #6b6b74;
   --accent: #c2410c;
   --accent-hover: #9a3412;
-  --accent-soft: #fdeee4;
+  --accent-soft: #fff1e8;
   --accent-fg: #b23a0a;
   --on-accent: #ffffff;
   --on-danger: #ffffff;
   --ok: #17803d;
-  --ok-soft: #e4f6ea;
+  --ok-soft: #e7f6ec;
   --warn: #a15c00;
-  --warn-soft: #fdf1dc;
+  --warn-soft: #fdf3e0;
   --danger: #c9302c;
-  --danger-soft: #fdecec;
-  --shadow-pop: 0 0 0 1px rgb(30 20 10 / 0.06), 0 8px 28px -6px rgb(30 20 10 / 0.18), 0 2px 6px -2px rgb(30 20 10 / 0.08);
-  --shadow-card: 0 1px 2px rgb(30 20 10 / 0.05);
+  --danger-soft: #fdeeee;
+  --shadow-pop: 0 0 0 1px rgb(24 24 27 / 0.07), 0 10px 30px -8px rgb(24 24 27 / 0.2), 0 2px 6px -2px rgb(24 24 27 / 0.08);
+  --shadow-card: 0 1px 2px rgb(24 24 27 / 0.04);
   color-scheme: light;
 }
 
 [data-theme='dark'] {
-  --canvas: #121010;
-  --surface: #1a1716;
-  --sunken: #221e1c;
-  --hover: #2a2522;
-  --line: #2b2623;
-  --line-strong: #3b3430;
-  --fg: #f0ebe6;
-  --fg-2: #b8b0a8;
-  --fg-3: #8f8880;
-  --nav: #1b1512;
+  --canvas: #0f0f10;
+  --sidebar: #131314;
+  --surface: #171718;
+  --sunken: #1e1e20;
+  --hover: #262629;
+  --line: #29292c;
+  --line-strong: #3b3b40;
+  --fg: #ededee;
+  --fg-2: #b6b6bc;
+  --fg-3: #8e8e96;
   --accent: #f97316;
   --accent-hover: #fb923c;
   --accent-soft: #3a2316;
@@ -70,7 +70,7 @@
   --color-fg: var(--fg);
   --color-fg-2: var(--fg-2);
   --color-fg-3: var(--fg-3);
-  --color-nav: var(--nav);
+  --color-sidebar: var(--sidebar);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-soft: var(--accent-soft);

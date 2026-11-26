@@ -1,13 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChartColumn, Plus, Send } from 'lucide-react'
+import { ChartColumn, Copy, Ellipsis, Eye, EyeOff, Plus, Send, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Feature } from '../../app/feature.ts'
 import type { Campaign, CampaignStatus } from '../../../../server/account/campaigns/index.ts'
 import { nodeSchema } from '../../../../server/account/render/doc.ts'
 import { useSession, useDocumentTitle } from '../../lib/session.tsx'
 import { callAction, useAction, useActionQuery, actionKey, ApiError } from '../../lib/api.ts'
-import { BackLink, Banner, Button, EmptyState, Field, Input, LinkButton, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Textarea, useFeedback } from '../../ui/index.tsx'
+import { BackLink, Banner, Button, EmptyState, IconButton, MenuItem, Popover, Field, Input, LinkButton, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Textarea, useFeedback } from '../../ui/index.tsx'
 import { Preview } from './Preview.tsx'
 import { AudiencePicker } from './Audience.tsx'
 import { Progress, SendStep, TestSend } from './SendStep.tsx'
@@ -105,12 +105,38 @@ function Draft({ initial, reload }: {
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [serialized, saved])
+  // ⌘S saves from anywhere on the page, not only while the caret is in the editor.
+  useEffect(() => {
+    if (!editable) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's' || e.defaultPrevented) return
+      e.preventDefault()
+      void save()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editable, save])
   const [actionError, setActionError] = useState('')
   const duplicate = useAction('campaigns.duplicate', { onSuccess: (c) => navigate(`/campaigns/${c.id}`) })
   const remove = useAction('campaigns.delete', { onSuccess: () => navigate('/campaigns') })
   return <div className="flex flex-col gap-5">
     <BackLink to="/campaigns">Campaigns</BackLink>
-    <PageHeader title={draft.subject || 'Untitled issue'} description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={initial.status} /><span role="status">{editable ? (serialized !== saved && saveState === 'Saved' ? 'Unsaved changes' : saveState) : initial.status === 'sent' ? 'Sent to your audience.' : 'This issue can no longer be edited.'}</span></span>} action={<div className="flex gap-2">{initial.status === 'sent' && <LinkButton to={`/campaigns/${initial.id}/report`} icon={<ChartColumn />}>View report</LinkButton>}{editable && <Button onClick={() => void save()}>Save</Button>}</div>} />
+    <PageHeader title={draft.subject || 'Untitled issue'} description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={initial.status} /><span role="status">{editable ? (serialized !== saved && saveState === 'Saved' ? 'Unsaved changes' : saveState) : initial.status === 'sent' ? 'Sent to your audience.' : 'This issue can no longer be edited.'}</span></span>} action={<div className="flex items-center gap-2">{initial.status === 'sent' && <LinkButton to={`/campaigns/${initial.id}/report`} icon={<ChartColumn />}>View report</LinkButton>}{editable && step === 'write' && <Button icon={showPreview ? <EyeOff /> : <Eye />} onClick={() => {
+      setShowPreview(!showPreview)
+      void preview.refetch()
+    }}>{showPreview ? 'Hide preview' : 'Preview'}</Button>}{editable && <Button variant={serialized === saved ? 'secondary' : 'primary'} disabled={serialized === saved} onClick={() => void save()}>Save</Button>}<Popover align="end" width={200} trigger={({ ref, ...props }) => <IconButton ref={ref} {...props} label="More actions" className="border border-line-strong"><Ellipsis /></IconButton>}>{(close) => <>
+      <MenuItem icon={<Copy />} onSelect={async () => {
+        close()
+        try {
+          if (!await save()) return
+          duplicate.mutate({ campaignId: initial.id })
+        } catch (e) { setActionError(e instanceof Error ? e.message : 'Could not duplicate.') }
+      }}>Duplicate</MenuItem>
+      {editable && <MenuItem danger icon={<Trash2 />} onSelect={async () => {
+        close()
+        if (await confirm({ title: 'Delete this draft?', body: 'This cannot be undone.', confirmLabel: 'Delete draft', danger: true })) remove.mutate({ campaignId: initial.id, revision })
+      }}>Delete draft</MenuItem>}
+    </>}</Popover></div>} />
     <Tabs value={step} onChange={(value) => {
       setStep(value)
       if (serialized !== saved) void save()
@@ -120,13 +146,13 @@ function Draft({ initial, reload }: {
     {(actionError || duplicate.error || remove.error) && <Banner kind="danger">{actionError || duplicate.error?.message || remove.error?.message}</Banner>}
     {step === 'write' ? <>
       <div className="grid gap-4 sm:grid-cols-2"><Field label="Subject">{(id) => <Input id={id} disabled={!editable} maxLength={500} value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} placeholder="Give your issue a subject" />}</Field><Field label="Preview text">{(id) => <Input id={id} disabled={!editable} maxLength={1000} value={draft.previewText} onChange={(e) => setDraft({ ...draft, previewText: e.target.value })} placeholder="A little more reason to open" />}</Field></div>
-      <div className="flex flex-wrap items-center justify-between gap-3"><Select aria-label="Content format" disabled={!editable} className="!w-48" value={draft.format} onChange={(e) => {
+      <div className="flex flex-wrap items-center gap-3"><Select aria-label="Content format" disabled={!editable} className="!w-44" value={draft.format} onChange={(e) => {
         const format = e.target.value
         if (format === 'doc' || format === 'markdown' || format === 'html') setDraft({ ...draft, format })
-      }}><option value="doc">Visual editor</option><option value="markdown">Markdown</option><option value="html">HTML</option></Select><Button onClick={() => {
+      }}><option value="doc">Visual editor</option><option value="markdown">Markdown</option><option value="html">HTML</option></Select>{!editable && <Button onClick={() => {
         setShowPreview(!showPreview)
         void preview.refetch()
-      }}>{showPreview ? 'Hide preview' : 'Show preview'}</Button></div>
+      }}>{showPreview ? 'Hide preview' : 'Show preview'}</Button>}</div>
       <div className={showPreview ? 'grid items-start gap-5 lg:grid-cols-2' : ''}><div className="space-y-5">
         {draft.format === 'doc' ? <Suspense fallback={<Spinner />}><CampaignEditor newsletterId={initial.newsletterId} doc={draft.doc} editable={editable && !conflict} onSave={() => void save()} onChange={(doc) => {
           const parsed = nodeSchema.safeParse(doc)
@@ -135,12 +161,6 @@ function Draft({ initial, reload }: {
         {draft.format === 'html' && <Field label="Plain text alternative">{(id) => <Textarea id={id} disabled={!editable} value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} />}</Field>}
         <AudiencePicker newsletterId={initial.newsletterId} value={draft.audience} disabled={!editable || conflict} onChange={(audience) => setDraft({ ...draft, audience })} />
       </div>{showPreview && (preview.error ? <Banner kind="danger">{preview.error.message}</Banner> : preview.data ? <Preview email={preview.data.email.html} web={preview.data.web.html} /> : <Spinner />)}</div>
-      <div className="flex flex-wrap gap-2"><Button onClick={async () => {
-        try {
-          if (!await save()) return
-          duplicate.mutate({ campaignId: initial.id })
-        } catch (e) { setActionError(e instanceof Error ? e.message : 'Could not duplicate.') }
-      }}>Duplicate</Button>{editable && <Button variant="danger" onClick={async () => { if (await confirm({ title: 'Delete this draft?', body: 'This cannot be undone.', confirmLabel: 'Delete draft', danger: true })) remove.mutate({ campaignId: initial.id, revision }) }}>Delete draft</Button>}</div>
     </> : <>
       {serialized !== saved && <Banner kind="warn">Save your changes before reviewing or sending.</Banner>}
       {preview.error && <Banner kind="danger">{preview.error.message}</Banner>}

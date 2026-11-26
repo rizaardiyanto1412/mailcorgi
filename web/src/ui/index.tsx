@@ -120,7 +120,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, ...rest }, ref) {
   return <textarea ref={ref} className={cx(CONTROL, 'min-h-20 py-2 leading-relaxed', className)} {...rest} />
 })
-const CHEVRON = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2377706a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`
+const CHEVRON = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...rest }, ref) {
   return (
     <select ref={ref} className={cx(CONTROL, 'h-9 appearance-none bg-[length:16px] bg-[right_8px_center] bg-no-repeat pr-8', className)} style={{ backgroundImage: CHEVRON }} {...rest}>
@@ -289,7 +289,21 @@ export function Popover({ trigger, children, align = 'start', side = 'bottom', w
         e.stopPropagation()
         setOpen(false)
         anchor.current?.focus()
+        return
       }
+      if (role !== 'menu') return
+      // A menu takes the arrow keys, Home and End; Tab leaves it and closes it.
+      const items = [...(panel.current?.querySelectorAll<HTMLElement>('[role=menuitem]:not(:disabled)') ?? [])]
+      const at = items.indexOf(document.activeElement as HTMLElement)
+      if (e.key === 'Tab') {
+        setOpen(false)
+        if (at >= 0) anchor.current?.focus()
+        return
+      }
+      const next = e.key === 'ArrowDown' ? (at + 1) % items.length : e.key === 'ArrowUp' ? (at <= 0 ? items.length - 1 : at - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : -1
+      if (next < 0 || !items.length) return
+      e.preventDefault()
+      items[next]!.focus()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey, true)
@@ -297,14 +311,25 @@ export function Popover({ trigger, children, align = 'start', side = 'bottom', w
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [open])
+  }, [open, role])
+  // Opening a menu moves focus to its first item, so the keyboard can reach what is inside.
+  const placed = pos !== null
+  useEffect(() => {
+    if (open && placed && role === 'menu' && !panel.current?.contains(document.activeElement)) panel.current?.querySelector<HTMLElement>('[role=menuitem]:not(:disabled)')?.focus()
+  }, [open, placed, role])
+
+  // Hand focus back to the trigger before a chosen item runs and unmounts, so a dialog the item
+  // opens can return focus there when it closes.
+  const handBack = (e: { target: EventTarget }) => {
+    if (role === 'menu' && e.target instanceof Element && e.target.closest('[role=menuitem]') && panel.current?.contains(document.activeElement)) anchor.current?.focus()
+  }
 
   return (
     <>
       {trigger({ onClick: () => setOpen(!open), 'aria-expanded': open, 'aria-haspopup': role, ref: anchor })}
       {open &&
         createPortal(
-          <div ref={panel} role={role} className="animate-pop fixed z-50 max-h-[min(420px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, minWidth: 180, visibility: pos && open ? 'visible' : 'hidden' }}>
+          <div ref={panel} role={role} onClickCapture={handBack} className="animate-pop fixed z-50 max-h-[min(420px,calc(100vh-16px))] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop" style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width, minWidth: 180, visibility: pos && open ? 'visible' : 'hidden' }}>
             {children(() => setOpen(false))}
           </div>,
           document.body,

@@ -37,7 +37,7 @@ export function SettingsLayout() {
         <ul ref={strip} className="relative -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 md:mx-0 md:flex-col md:overflow-visible md:px-0 md:pb-0">
           {nav.map((item) => (
             <li key={item.to} className="shrink-0">
-              <NavLink to={item.to} className={({ isActive }) => cx('block rounded-md px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors', isActive ? 'bg-surface text-accent-fg shadow-card' : 'text-fg-2 hover:bg-hover hover:text-fg')}>
+              <NavLink to={item.to} className={({ isActive }) => cx('block rounded-md px-2.5 py-1.5 text-[13px] font-medium whitespace-nowrap transition-colors', isActive ? 'bg-hover text-fg' : 'text-fg-2 hover:bg-hover hover:text-fg')}>
                 {item.label}
               </NavLink>
             </li>
