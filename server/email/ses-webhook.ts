@@ -3,6 +3,7 @@ import type { Platform } from '../core/platform.ts'
 import { AppError } from '../core/http.ts'
 import { fromBase64, sha256Hex } from '../core/crypto.ts'
 import type { ProviderEvent } from './index.ts'
+import { noRedirect, isRedirect } from './http.ts'
 
 const envelopeSchema = z.object({ Type: z.enum(['Notification', 'SubscriptionConfirmation']), Message: z.string(), MessageId: z.string(), Timestamp: z.string().datetime(), TopicArn: z.string(), SignatureVersion: z.enum(['1', '2']), Signature: z.string(), SigningCertURL: z.string(), Subject: z.string().optional(), Token: z.string().optional(), SubscribeURL: z.string().optional() })
 const sesEventSchema = z.object({ eventType: z.string().optional(), notificationType: z.string().optional(), mail: z.object({ messageId: z.string(), timestamp: z.string(), destination: z.array(z.string()).default([]), tags: z.record(z.string(), z.array(z.string())).default({}) }), delivery: z.object({ timestamp: z.string(), recipients: z.array(z.string()) }).optional(), bounce: z.object({ timestamp: z.string(), bounceType: z.string(), bounceSubType: z.string().optional(), bouncedRecipients: z.array(z.object({ emailAddress: z.string(), diagnosticCode: z.string().optional() })) }).optional(), complaint: z.object({ timestamp: z.string(), complainedRecipients: z.array(z.object({ emailAddress: z.string() })) }).optional(), deliveryDelay: z.object({ timestamp: z.string(), delayedRecipients: z.array(z.object({ emailAddress: z.string() })).optional() }).optional() })
@@ -58,8 +59,8 @@ export async function parseSesWebhook(ctx: { platform: Pick<Platform, 'fetch'> }
       if (value === undefined) throw rejected()
       canonical += `${key}\n${value}\n`
     }
-    const response = await ctx.platform.fetch(certUrl.href, { redirect: 'error', signal: AbortSignal.timeout(10_000) })
-    if (!response.ok || response.redirected || response.url && response.url !== certUrl.href) throw rejected()
+    const response = await ctx.platform.fetch(certUrl.href, { ...noRedirect, signal: AbortSignal.timeout(10_000) })
+    if (isRedirect(response) || !response.ok || response.redirected || response.url && response.url !== certUrl.href) throw rejected()
     const pem = await response.text()
     if (pem.length > 32_768) throw rejected()
     const key = await crypto.subtle.importKey('spki', certificateSpki(pem), { name: 'RSASSA-PKCS1-v1_5', hash: message.SignatureVersion === '2' ? 'SHA-256' : 'SHA-1' }, false, ['verify'])

@@ -331,7 +331,10 @@ Cloudflare Workers too.
 2. On the cluster, issue an SMTP credential. Copy the user name (`smtp_…`) and the password. PostShiba
    shows the password once.
 3. In **Admin → Email**, choose **PostShiba**, enter the user name and the password, and save. Leave
-   **HTTP endpoint** blank unless your cluster has its own `http_endpoint`.
+   **HTTP endpoint** blank when your cluster uses the shared inject host: a blank value means
+   `https://inject.postshiba.com`. If the cluster page (the Sending Guide, or `http_endpoint` in the
+   cluster API) shows a different HTTP inject host, set `postshiba_endpoint` to `https://<that host>`.
+   The value must be an https URL without a path.
 4. In PostShiba, open **Webhooks** and add an endpoint with the PostShiba URL shown in
    **Admin → Email**, for example `https://news.example.com/hooks/postshiba`. Keep all event types.
 5. Copy the endpoint's **Signing secret** into **Webhook signing secret** in **Admin → Email** and save.
@@ -352,6 +355,13 @@ The same settings through the API or an MCP client, with `install_settings_set`:
   }
 }
 ```
+
+If a send fails, the app shows a short message, and the cause goes to the server log (Workers Logs
+on Cloudflare) as one line that starts with `email provider failed`. The line names the provider and
+the stage (`fetch`, `timeout`, `redirect`, `status` or `parse`), with the HTTP status when there is
+one. It never contains credentials, the message or email addresses. A `redirect` stage means the
+endpoint answered with a redirect, which MailCorgi never follows: check `postshiba_endpoint`. SES,
+Resend and SMTP sends are logged the same way.
 
 How MailCorgi reads PostShiba's events: a hard `bounce` marks the contact bounced. A `blocked` bounce
 and a `dropped` message (PostShiba did not send it, for example because the address is on PostShiba's

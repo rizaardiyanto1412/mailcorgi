@@ -1,14 +1,14 @@
 import { z } from 'zod'
 import type { StoreCtx } from '../core/store.ts'
 import type { EmailProvider, Identity } from './index.ts'
-import { messageHeaders, safeHeader, InvalidMessageError } from './mime.ts'
-import { identityError, sendError, unknownSend, invalidSend } from './http.ts'
+import { messageHeaders, safeHeader } from './mime.ts'
+import { identityError, sendError, noRedirect, isRedirect, redirectedSend, failedSend, unparsedSend, logSendFailure, parseJson } from './http.ts'
 import { parseResendWebhook } from './resend-webhook.ts'
 
 const domainSchema = z.object({ id: z.string(), name: z.string(), status: z.string(), records: z.array(z.object({ name: z.string(), type: z.string(), value: z.string(), record: z.string().optional(), priority: z.number().optional() })).default([]) })
 
 export function resendProvider(ctx: StoreCtx, settings: Record<string, string>): EmailProvider {
-  const request = (path: string, method: string, body?: unknown, idempotencyKey?: string) => ctx.platform.fetch(`https://api.resend.com/${path}`, { method, headers: { authorization: `Bearer ${settings.resend_api_key || ''}`, 'content-type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': safeHeader(idempotencyKey) } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(30_000) })
+  const request = (path: string, method: string, body?: unknown, idempotencyKey?: string) => ctx.platform.fetch(`https://api.resend.com/${path}`, { method, headers: { authorization: `Bearer ${settings.resend_api_key || ''}`, 'content-type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': safeHeader(idempotencyKey) } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), ...noRedirect, signal: AbortSignal.timeout(30_000) })
   async function readDomain(response: Response): Promise<Identity> {
     if (!response.ok) return identityError()
     const data = domainSchema.parse(await response.json())
@@ -34,10 +34,15 @@ export function resendProvider(ctx: StoreCtx, settings: Record<string, string>):
     async send(msg) {
       try {
         const response = await request('emails', 'POST', { from: safeHeader(msg.from), to: [safeHeader(msg.to)], ...(msg.replyTo ? { reply_to: safeHeader(msg.replyTo) } : {}), subject: safeHeader(msg.subject), html: msg.html, text: msg.text, headers: messageHeaders(msg), tags: [{ name: 'mc_account', value: msg.meta.accountId }, ...(msg.meta.deliveryId ? [{ name: 'mc_delivery', value: msg.meta.deliveryId }] : [])] }, msg.idempotencyKey)
-        if (!response.ok) return sendError(response.status, response.headers.get('retry-after'))
-        const data = z.object({ id: z.string().min(1) }).safeParse(await response.json())
-        return data.success ? { ok: true, id: data.data.id } : unknownSend()
-      } catch (error) { return error instanceof InvalidMessageError ? invalidSend() : unknownSend() }
+        if (isRedirect(response)) return redirectedSend('resend', response.status)
+        const text = await response.text()
+        if (!response.ok) {
+          logSendFailure('resend', 'status', { status: response.status, body: text, redact: [settings.resend_api_key] })
+          return sendError(response.status, response.headers.get('retry-after'))
+        }
+        const data = z.object({ id: z.string().min(1) }).safeParse(parseJson(text))
+        return data.success ? { ok: true, id: data.data.id } : unparsedSend('resend', response.status)
+      } catch (error) { return failedSend('resend', error, [settings.resend_api_key]) }
     },
     async createIdentity(domain) {
       try { return await readDomain(await request('domains', 'POST', { name: domain, region: settings.resend_region || 'us-east-1' })) } catch { return identityError() }

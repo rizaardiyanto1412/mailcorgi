@@ -8,6 +8,8 @@ import { createInstall } from './harness.ts'
 import { parseSesWebhook, parseResendWebhook, type ProviderEvent } from '../email/index.ts'
 import { fromBase64, hmac, toBase64 } from '../core/crypto.ts'
 import { setSetting } from '../control/install/index.ts'
+import { handleEmailHook } from '../edge/email-hooks.ts'
+import type { EdgeDeps } from '../edge/index.ts'
 
 const topic = 'arn:aws:sns:us-east-1:123456789012:newsletter-events'
 const certUrl = 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-fixture.pem'
@@ -41,7 +43,7 @@ test('SNS accepts a certificate-signed event and rejects wrong hosts, topics, si
   ctx.platform.fetch = async (input, init) => {
     calls++
     assert.equal(String(input), certUrl)
-    assert.equal(init?.redirect, 'error')
+    assert.equal(init?.redirect, 'manual')
     return new Response(fixture.cert)
   }
   const signed = await fixture.sign(fixture.base)
@@ -71,6 +73,26 @@ test('SNS only confirms a signed subscription URL on the same SNS host', async (
   assert.equal(result.confirmUrl, base.SubscribeURL)
   assert.deepEqual(result.events, [])
   await assert.rejects(parseSesWebhook(ctx, snsRequest(await fixture.sign({ ...base, SubscribeURL: 'https://sns.eu-west-1.amazonaws.com/?Action=ConfirmSubscription' })), settings), /verification failed/)
+})
+
+test('the edge confirms an SNS subscription without following a redirect, on a runtime that refuses the error redirect mode', async () => {
+  const fixture = await snsFixture()
+  const subscribeUrl = 'https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&Token=fixture-token'
+  const body = await fixture.sign({ ...fixture.base, Type: 'SubscriptionConfirmation', Message: 'Confirm subscription', Token: 'fixture-token', SubscribeURL: subscribeUrl })
+  const modes: unknown[] = []
+  const run = async (confirm: () => Response) => {
+    const networkFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.redirect === 'error') throw new TypeError('Invalid redirect value, must be one of "follow" or "manual" ("error" won\'t be implemented since it does not make sense at the edge; use "manual" and check the response status code).')
+      modes.push(init?.redirect)
+      return String(input) === certUrl ? new Response(fixture.cert) : confirm()
+    }) as typeof fetch
+    const deps = { fetch: networkFetch, now: () => Date.now(), stores: { control: { getInstallSettings: async () => settings, raiseAlert: async () => {} } } } as unknown as EdgeDeps
+    return handleEmailHook(deps, snsRequest(body), async () => true)
+  }
+  assert.equal((await run(() => new Response('ok'))).status, 200)
+  assert.deepEqual(modes, ['manual', 'manual'])
+  assert.equal((await run(() => new Response(null, { status: 302, headers: { location: 'https://evil.example.com/' } }))).status, 503)
+  assert.equal((await run(() => new Response('no', { status: 500 }))).status, 503)
 })
 
 const resendSecret = toBase64(new TextEncoder().encode('throwaway-test-signing-material'))
