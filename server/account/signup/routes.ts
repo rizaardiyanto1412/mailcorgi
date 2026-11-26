@@ -100,7 +100,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       const targetHash = await sha256Hex(input.email)
       let mailId = ''
       const result = ctx.db.tx(() => {
-        const result = subscribe(ctx, { newsletterId: nl.id, email: input.email, name: settings.showName ? input.name : undefined, fields, source: 'signup', consent: nl.double_opt_in ? 'pending' : 'confirmed' })
+        const result = subscribe(ctx, { newsletterId: nl.id, email: input.email, name: settings.showName ? input.name : undefined, fields, source: 'signup', tagSource: 'signup', consent: nl.double_opt_in ? 'pending' : 'confirmed' })
         if (!nl.double_opt_in && result.outcome === 'subscribed') mailId = queueWelcome(ctx, nl.id, result.contact.id, result.contact.subscribedAt)
         if (result.outcome === 'limit') notifySignupsRefused(ctx)
         return result
@@ -131,7 +131,7 @@ export function registerRoutes(reg: AccountRegistrar) {
       ctx.db.tx(() => {
         if (request.consumed_at !== null) return
         ctx.db.run("UPDATE signup_mail SET consumed_at = ? WHERE newsletter_id = ? AND contact_id = ? AND kind = 'confirm'", ctx.now(), nl.id, contact.id)
-        const result = subscribe(ctx, { newsletterId: nl.id, email: contact.email, source: 'signup', consent: 'confirmed' })
+        const result = subscribe(ctx, { newsletterId: nl.id, email: contact.email, source: 'signup', tagSource: 'signup', consent: 'confirmed' })
         if (result.outcome === 'subscribed') mailId = queueWelcome(ctx, nl.id, contact.id, result.contact.subscribedAt)
       })
       if (mailId) { try { await deliverMail(ctx, mailId) } catch { /* The durable job retries safe failures. */ } }

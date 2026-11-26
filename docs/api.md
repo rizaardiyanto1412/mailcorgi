@@ -277,7 +277,7 @@ curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/a
 
 ## DELETE /api/v1/newsletters/:newsletterId
 
-Permanently delete a newsletter with its contacts, campaigns, stats, imports, website, images and team access. This cannot be undone. Refused while a campaign is sending or scheduled. The removal runs in the background; calling again is safe.
+Permanently delete a newsletter with its contacts, campaigns, sequences, stats, imports, website, images and team access. This cannot be undone. Refused while a campaign is sending or scheduled. The removal runs in the background; calling again is safe.
 
 MCP tool: `newsletters_delete`. Effect: write.
 
@@ -1344,7 +1344,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/cont
 
 ## POST /api/v1/newsletters/:newsletterId/contacts
 
-Add a contact with asserted consent. Suppressed addresses stay suppressed (outcome suppressed). Past the plan contact limit the call fails with limit_reached and nothing is added.
+Add a contact with asserted consent, or update the one that already has this email (outcome exists): its name and fields are merged and the given tags are added. Adding a tag can start a tag-triggered email sequence, for new and existing contacts alike. Suppressed addresses stay suppressed (outcome suppressed) and get no tags. Past the plan contact limit the call fails with limit_reached and nothing is added.
 
 MCP tool: `contacts_create`. Effect: write.
 
@@ -1395,7 +1395,7 @@ Input JSON Schema:
       }
     },
     "tags": {
-      "description": "Tag ids from this newsletter",
+      "description": "Tag ids from this newsletter to add to the contact. Tags the contact already has are left alone.",
       "maxItems": 100,
       "type": "array",
       "items": {
@@ -1468,7 +1468,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/cont
 
 ## PATCH /api/v1/newsletters/:newsletterId/contacts/:contactId
 
-Edit a contact name and typed custom fields.
+Edit a contact name, typed custom fields and tags. Adding a tag the contact does not have yet can start a tag-triggered email sequence.
 
 MCP tool: `contacts_update`. Effect: write.
 
@@ -1522,6 +1522,24 @@ Input JSON Schema:
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "addTagIds": {
+      "description": "Tag ids from this newsletter to add. Tags the contact already has are left alone.",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "removeTagIds": {
+      "description": "Tag ids from this newsletter to remove. Tags the contact does not have are ignored.",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
     }
   },
@@ -1625,7 +1643,7 @@ curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/c
 
 ## POST /api/v1/newsletters/:newsletterId/contacts/bulk
 
-Tag, untag, unsubscribe or delete up to 100 contacts atomically.
+Tag, untag, unsubscribe or delete up to 100 contacts atomically. Adding a tag a contact does not have yet can start a tag-triggered email sequence.
 
 MCP tool: `contacts_bulk`. Effect: write.
 
@@ -3604,6 +3622,1176 @@ curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/i
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
   --data '{"confirm":false}'
+```
+
+## GET /api/v1/newsletters/:newsletterId/sequences
+
+List the email sequences (drips) of a newsletter with their step and enrollment counts. Archived sequences are left out unless asked for.
+
+MCP tool: `sequences_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "includeArchived": {
+      "default": false,
+      "description": "Also list archived sequences",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences?includeArchived=false' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## GET /api/v1/newsletters/:newsletterId/sequences/:sequenceId
+
+Read one email sequence: its entry and exit rules, enrollment counts and every step in order with its delay, subject, body and revision.
+
+MCP tool: `sequences_get`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences
+
+Create an email sequence (drip) as a draft: a series of emails each contact gets a set number of days after entering. Each step’s delay counts from the day the contact entered. A draft sends nothing. To run a sequence for contacts your app creates, use a tag entry and add that tag with contacts.create or contacts.update.
+
+MCP tool: `sequences_create`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The sequence name, shown only to the team"
+    },
+    "entry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "signup",
+              "description": "Readers who subscribe through the public signup form (after confirming, with double opt-in). Imported and API-created contacts do not enter."
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tag",
+              "description": "Contacts who newly gain a tag, by any path: contacts.create, contacts.update, contacts.bulk, imports or the dashboard"
+            },
+            "tagId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tag of this newsletter that starts the sequence"
+            }
+          },
+          "required": [
+            "type",
+            "tagId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "segment",
+              "description": "Contacts who match a saved segment"
+            },
+            "segmentId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The saved segment of this newsletter"
+            }
+          },
+          "required": [
+            "type",
+            "segmentId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "manual",
+              "description": "Only contacts added to the sequence by hand"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ],
+      "description": "Who enters the sequence. One of {type:\"tag\",tagId} (contacts who newly gain that tag, including API-created ones), {type:\"signup\"} (public signup form only), {type:\"segment\",segmentId} or {type:\"manual\"}."
+    },
+    "exit": {
+      "default": {},
+      "description": "Who leaves the sequence early: contacts with any of tagIds, or matching segmentId. Unsubscribed and bounced contacts always leave.",
+      "type": "object",
+      "properties": {
+        "tagIds": {
+          "description": "A contact who has any of these tags leaves the sequence",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A tag id of this newsletter"
+          }
+        },
+        "segmentId": {
+          "description": "A contact who matches this segment leaves the sequence",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "steps": {
+      "default": [],
+      "description": "The emails in order. More can be added later with sequences.addStep.",
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "delayDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 730,
+            "description": "Whole days after the contact entered the sequence (not after the previous step) at which this email goes out. Day 0 is the welcome email, so the first step is at least 1."
+          },
+          "subject": {
+            "default": "",
+            "description": "The email subject",
+            "type": "string",
+            "maxLength": 500
+          },
+          "doc": {
+            "description": "The email body as a TipTap document. Omit for an empty email to fill in later.",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "doc",
+                  "text",
+                  "hardBreak",
+                  "paragraph",
+                  "heading",
+                  "bulletList",
+                  "orderedList",
+                  "listItem",
+                  "blockquote",
+                  "codeBlock",
+                  "horizontalRule",
+                  "image",
+                  "button",
+                  "callout",
+                  "divider",
+                  "spacer",
+                  "embed"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              },
+              "marks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "bold",
+                        "italic",
+                        "underline",
+                        "strike",
+                        "code",
+                        "link",
+                        "highlight"
+                      ]
+                    },
+                    "attrs": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": [
+                          "string",
+                          "number",
+                          "boolean",
+                          "null"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              },
+              "content": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "delayDays"
+        ]
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "name",
+    "entry"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"name":"example","entry":"example","exit":{},"steps":[]}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/sequences/:sequenceId
+
+Rename an email sequence or change its entry and exit rules. Omitted fields stay as they are. The entry rule cannot change once any contact has entered (409 entry_locked).
+
+MCP tool: `sequences_update`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "name": {
+      "description": "The sequence name, shown only to the team",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "entry": {
+      "description": "Who enters the sequence. One of {type:\"tag\",tagId} (contacts who newly gain that tag, including API-created ones), {type:\"signup\"} (public signup form only), {type:\"segment\",segmentId} or {type:\"manual\"}.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "signup",
+              "description": "Readers who subscribe through the public signup form (after confirming, with double opt-in). Imported and API-created contacts do not enter."
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "tag",
+              "description": "Contacts who newly gain a tag, by any path: contacts.create, contacts.update, contacts.bulk, imports or the dashboard"
+            },
+            "tagId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tag of this newsletter that starts the sequence"
+            }
+          },
+          "required": [
+            "type",
+            "tagId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "segment",
+              "description": "Contacts who match a saved segment"
+            },
+            "segmentId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The saved segment of this newsletter"
+            }
+          },
+          "required": [
+            "type",
+            "segmentId"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "manual",
+              "description": "Only contacts added to the sequence by hand"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "exit": {
+      "description": "Who leaves the sequence early: contacts with any of tagIds, or matching segmentId. Unsubscribed and bounced contacts always leave. Replaces the whole exit rule.",
+      "type": "object",
+      "properties": {
+        "tagIds": {
+          "description": "A contact who has any of these tags leaves the sequence",
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A tag id of this newsletter"
+          }
+        },
+        "segmentId": {
+          "description": "A contact who matches this segment leaves the sequence",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/archive
+
+Archive an email sequence: it stops for good, leaves the default list and can no longer be edited. Its history stays. Sequences are never deleted, and archiving cannot be undone.
+
+MCP tool: `sequences_archive`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/archive' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps
+
+Add an email to the end of a sequence. Returns the step with the revision to pass to sequences.updateStep. A sequence holds at most 50 steps.
+
+MCP tool: `sequences_addStep`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "delayDays": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 730,
+      "description": "Whole days after the contact entered the sequence (not after the previous step) at which this email goes out. Day 0 is the welcome email, so the first step is at least 1."
+    },
+    "subject": {
+      "default": "",
+      "description": "The email subject",
+      "type": "string",
+      "maxLength": 500
+    },
+    "doc": {
+      "description": "The email body as a TipTap document. Omit for an empty email to fill in later.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "delayDays"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/steps' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"delayDays":1,"subject":""}'
+```
+
+## PATCH /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
+
+Change a step’s delay, subject or body, only if its revision is still current. Omitted fields stay as they are. A stale revision returns 409 revision_conflict with the current revision: read the sequence again before saving.
+
+MCP tool: `sequences_updateStep`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "stepId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The step id, from the sequence’s steps"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "The step revision last read. Stale saves return 409 with the current revision."
+    },
+    "delayDays": {
+      "description": "Whole days after the contact entered the sequence at which this email goes out",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 730
+    },
+    "subject": {
+      "description": "The email subject",
+      "type": "string",
+      "maxLength": 500
+    },
+    "previewText": {
+      "description": "Inbox preview text",
+      "type": "string",
+      "maxLength": 1000
+    },
+    "doc": {
+      "description": "The email body as a TipTap document",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "stepId",
+    "revision"
+  ],
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "doc",
+            "text",
+            "hardBreak",
+            "paragraph",
+            "heading",
+            "bulletList",
+            "orderedList",
+            "listItem",
+            "blockquote",
+            "codeBlock",
+            "horizontalRule",
+            "image",
+            "button",
+            "callout",
+            "divider",
+            "spacer",
+            "embed"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "bold",
+                  "italic",
+                  "underline",
+                  "strike",
+                  "code",
+                  "link",
+                  "highlight"
+                ]
+              },
+              "attrs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    }
+  }
+}
+```
+
+```sh
+curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/steps/YOUR_STEP_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"revision":1}'
+```
+
+## DELETE /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
+
+Remove a step and its email from a sequence. Refused once the step has been sent to anyone (409 step_sent), so reports keep their history.
+
+MCP tool: `sequences_deleteStep`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "stepId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The step id, from the sequence’s steps"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "stepId"
+  ]
+}
+```
+
+```sh
+curl -X DELETE 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/steps/YOUR_STEP_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{}'
+```
+
+## PUT /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/order
+
+Put the steps of a sequence in a new order. Pass every step id of the sequence exactly once. Each step keeps its own delay.
+
+MCP tool: `sequences_reorderSteps`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "sequenceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The sequence id"
+    },
+    "stepIds": {
+      "minItems": 1,
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Every step id of the sequence, in the new order"
+    }
+  },
+  "required": [
+    "newsletterId",
+    "sequenceId",
+    "stepIds"
+  ]
+}
+```
+
+```sh
+curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sequences/YOUR_SEQUENCE_ID/steps/order' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"stepIds":[]}'
 ```
 
 ## POST /api/v1/campaigns/:campaignId/send

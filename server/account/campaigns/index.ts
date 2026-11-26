@@ -1,15 +1,15 @@
 import { z } from 'zod'
-import { defineAction } from '../../core/actions.ts'
-import { notFound } from '../../core/http.ts'
+import { defineAction, meetsRole } from '../../core/actions.ts'
+import { forbidden, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { emptyDoc, parseTheme, themeSchema, renderEmail, renderWeb } from '../render/index.ts'
-import { assertEditable, assertRevision, audienceSchema, draftFields, getCampaign, getCampaignRow, serializeCampaign, statusSchema, type CampaignAudience, type CampaignRow } from './model.ts'
+import { assertEditable, assertNotSequenceStep, assertRevision, audienceSchema, draftFields, getCampaign, getCampaignRow, serializeCampaign, statusSchema, type CampaignAudience, type CampaignRow } from './model.ts'
 import { reviewChecks } from './review.ts'
 import { deleteImageAction, imageUsageAction, listImagesAction, uploadImageAction } from './uploads.ts'
-export { getCampaign, getCampaignRow, serializeCampaign, transitionCampaign, statusSchema, audienceSchema } from './model.ts'
+export { getCampaign, getCampaignRow, serializeCampaign, transitionCampaign, statusSchema, audienceSchema, assertNotSequenceStep, assertRevision, draftFields } from './model.ts'
 export type { Campaign, CampaignRow, CampaignStatus, CampaignAudience } from './model.ts'
 export { reviewChecks } from './review.ts'
 export type { ReviewCheck } from './review.ts'
@@ -83,8 +83,10 @@ export const campaignsModule = {
           html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.optional().describe('Audience selection and exclusions'),
         }),
         rest: { method: 'PATCH', path: '/campaigns/:campaignId' }, mcp: { title: 'Save a campaign draft', destructive: false },
-        handler: (ctx, input) => ctx.db.tx(() => {
+        handler: (ctx, input, actor) => ctx.db.tx(() => {
           const row = getCampaignRow(ctx, input.campaignId)
+          // The editor saves a sequence step's content through this action; sequences are written by admins only.
+          if (row.kind === 'sequence' && !meetsRole(actor, row.newsletter_id, 'admin')) throw forbidden()
           assertEditable(row)
           assertRevision(row, input.revision)
           if (input.audience) validateAudience(ctx, row.newsletter_id, input.audience)
@@ -98,6 +100,7 @@ export const campaignsModule = {
         input: z.object({ campaignId }), rest: { method: 'POST', path: '/campaigns/:campaignId/duplicate' }, mcp: { title: 'Duplicate a campaign', destructive: false },
         handler: (ctx, input, actor) => {
           const row = getCampaignRow(ctx, input.campaignId)
+          assertNotSequenceStep(row)
           const id = newId('cmp')
           ctx.db.run('INSERT INTO campaigns (id, newsletter_id, author_id, kind, subject, preview_text, format, doc, source, html, text, audience, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, row.newsletter_id, row.author_id, row.kind, `${row.subject} (copy)`, row.preview_text, row.format, row.doc, row.source, row.html, row.text, row.audience, actor.userId, ctx.now(), ctx.now())
           return getCampaign(ctx, id)
@@ -108,6 +111,7 @@ export const campaignsModule = {
         input: z.object({ campaignId, revision }), rest: { method: 'DELETE', path: '/campaigns/:campaignId' }, mcp: { title: 'Delete a campaign draft', destructive: true },
         handler: (ctx, input) => ctx.db.tx(() => {
           const row = getCampaignRow(ctx, input.campaignId)
+          assertNotSequenceStep(row)
           assertEditable(row)
           assertRevision(row, input.revision)
           ctx.db.run('DELETE FROM campaigns WHERE id = ? AND newsletter_id = ?', row.id, row.newsletter_id)

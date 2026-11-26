@@ -29,7 +29,8 @@ export interface CampaignRow {
   id: string
   newsletter_id: string
   author_id: string | null
-  kind: 'issue' | 'welcome' | 'keep'
+  /** `sequence`: the hidden template of one email-sequence step. It stays a draft and is managed by the sequences module. */
+  kind: 'issue' | 'welcome' | 'keep' | 'sequence'
   format: 'doc' | 'markdown' | 'html'
   subject: string
   preview_text: string
@@ -72,6 +73,10 @@ export type Campaign = ReturnType<typeof serializeCampaign>
 export const getCampaign = (ctx: StoreCtx, id: string) => serializeCampaign(getCampaignRow(ctx, id))
 export function assertEditable(row: CampaignRow) {
   if (row.status !== 'draft') throw new AppError('not_editable', 'Only drafts can be edited.', 409)
+}
+/** A sequence step's hidden campaign is not a standalone campaign: only the sequences module may copy, cancel or remove it. */
+export function assertNotSequenceStep(row: CampaignRow) {
+  if (row.kind === 'sequence') throw new AppError('sequence_step', 'This email is a step of a sequence. Change it from the sequence instead.', 409)
 }
 export function assertRevision(row: CampaignRow, revision: number) {
   if (row.revision !== revision) throw new AppError('revision_conflict', 'A newer version is available. Reload it before saving.', 409, { revision: row.revision })

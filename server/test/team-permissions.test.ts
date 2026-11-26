@@ -57,6 +57,7 @@ for (const action of actions) test(`permission matrix: ${action.name}`, async ()
       const author = await owner.action('authors.create', { newsletterId: nl.id, name: 'Writer', slug: `writer-${grant}` })
       const tag = await owner.action('tags.create', { newsletterId: nl.id, name: `Tag ${grant}` })
       const field = await owner.action('contactFields.create', { newsletterId: nl.id, key: `custom_${grant}`, label: 'Custom', type: 'text' })
+      const sequence = await owner.action('sequences.create', { newsletterId: nl.id, name: 'Sequence', entry: { type: 'tag', tagId: tag.id }, steps: [{ delayDays: 1, subject: 'Step' }] })
       const code = '123456'
       control.db.run('INSERT INTO account_email_changes (user_id, email, code_hash, expires_at, attempts) VALUES (?, ?, ?, ?, 0)', actor.userId, `${grant}-new@example.com`, await sha256Hex(`${actor.userId}:${code}`), install.clock.now() + 60_000)
       const token = `${grant}-invitation-token-for-matrix`
@@ -73,6 +74,7 @@ for (const action of actions) test(`permission matrix: ${action.name}`, async ()
         confirmation: 'DELETE', sessionId: 'session_example', plan: 'starter', interval: 'monthly',
         access: 'full', values: {}, to: 'test@example.com', reason: 'Test reason', alertId: 'alert_example',
         value: 'closed',
+        sequenceId: sequence.id, stepId: sequence.steps[0].id, stepIds: [sequence.steps[0].id], entry: { type: 'tag', tagId: tag.id }, delayDays: 2,
       }
       if (action.name === 'newsletters.update') delete input.domainId
       if (action.name === 'admin.deadJobs') input.operation = 'list'

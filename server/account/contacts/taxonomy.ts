@@ -3,6 +3,7 @@ import { defineAction } from '../../core/actions.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
 import { emailSchema, suppress } from './state.ts'
+import { removeTagFromContacts } from './tags.ts'
 const newsletterId = z.string().min(1).describe('The newsletter id')
 const tagId = z.string().min(1).describe('The tag id')
 const name = z.string().trim().min(1).max(120).describe('The tag name')
@@ -19,7 +20,7 @@ export const taxonomyActions = [
     if (ctx.db.get('SELECT id FROM tags WHERE newsletter_id = ? AND name = ? AND id != ?', i.newsletterId, i.name, i.tagId)) throw new AppError('already_exists', 'A tag with that name already exists.', 409)
     ctx.db.run('UPDATE tags SET name = ? WHERE id = ? AND newsletter_id = ?', i.name, i.tagId, i.newsletterId); return { id: i.tagId, name: i.name }
   } }),
-  defineAction({ name: 'tags.delete', description: 'Delete a tag and remove it from contacts.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'tag', param: 'tagId' }, input: z.object({ newsletterId, tagId }), rest: { method: 'DELETE', path: '/newsletters/:newsletterId/tags/:tagId' }, mcp: { title: 'Delete a tag', destructive: true }, handler: (ctx, i) => ctx.db.tx(() => { ctx.db.run('DELETE FROM contact_tags WHERE tag_id IN (SELECT id FROM tags WHERE id = ? AND newsletter_id = ?)', i.tagId, i.newsletterId); ctx.db.run('DELETE FROM tags WHERE id = ? AND newsletter_id = ?', i.tagId, i.newsletterId); return { deleted: true } }) }),
+  defineAction({ name: 'tags.delete', description: 'Delete a tag and remove it from contacts.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'tag', param: 'tagId' }, input: z.object({ newsletterId, tagId }), rest: { method: 'DELETE', path: '/newsletters/:newsletterId/tags/:tagId' }, mcp: { title: 'Delete a tag', destructive: true }, handler: (ctx, i) => ctx.db.tx(() => { removeTagFromContacts(ctx, { newsletterId: i.newsletterId, tagId: i.tagId });ctx.db.run('DELETE FROM tags WHERE id = ? AND newsletter_id = ?', i.tagId, i.newsletterId); return { deleted: true } }) }),
   defineAction({ name: 'contactFields.list', description: 'List typed custom fields for a newsletter.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId }), rest: { method: 'GET', path: '/newsletters/:newsletterId/fields' }, mcp: { title: 'List custom fields', destructive: false }, handler: (ctx, i) => ({ fields: ctx.db.all<FieldRow>('SELECT id, key, label, type FROM contact_fields WHERE newsletter_id = ? ORDER BY label, id', i.newsletterId) }) }),
   defineAction({ name: 'contactFields.create', description: 'Create a typed custom field.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId, ...fieldShape }), rest: { method: 'POST', path: '/newsletters/:newsletterId/fields' }, mcp: { title: 'Create a custom field', destructive: false }, handler: (ctx, i) => {
     if (ctx.db.get('SELECT id FROM contact_fields WHERE newsletter_id = ? AND key = ?', i.newsletterId, i.key)) throw new AppError('already_exists', 'That field key is already in use.', 409)

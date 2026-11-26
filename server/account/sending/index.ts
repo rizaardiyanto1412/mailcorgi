@@ -5,7 +5,7 @@ import { AppError } from '../../core/http.ts'
 import { allowRate } from '../../core/ratelimit.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
-import { getCampaign, getCampaignRow, reviewChecks, serializeCampaign, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
+import { assertNotSequenceStep, getCampaign, getCampaignRow, reviewChecks, serializeCampaign, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { parseTheme } from '../render/index.ts'
 import { verifiedSenderFor } from '../domains/index.ts'
@@ -116,6 +116,7 @@ export const sendingModule = {
         input: z.object({ campaignId }), rest: { method: 'POST', path: '/campaigns/:campaignId/cancel' }, mcp: { title: 'Cancel a campaign send', destructive: true },
         handler: (ctx, input) => ctx.db.tx(() => {
           const row = getCampaignRow(ctx, input.campaignId)
+          assertNotSequenceStep(row)
           if (row.status === 'draft' || row.status === 'scheduled') {
             ctx.jobs.cancelByKey(`send.start:${row.id}`)
             return transitionCampaign(ctx, row.id, 'canceled')
