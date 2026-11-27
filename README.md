@@ -21,10 +21,11 @@ keeps your list, your issues and your stats in SQLite databases that you own.
   Gradual sending for addresses you never emailed before, with an automatic pause when hard bounces pass
   2.5% or complaints pass 0.08%. "Send to more now" and resuming a paused send follow the same check,
   and the send page says when the next step is held and why. Send to the most engaged readers first.
-- One-click unsubscribe headers (RFC 8058) on every email.
+- One-click unsubscribe headers (RFC 8058) on every campaign, sequence and newsletter email. Only a
+  welcome email marked transactional, with its list-unsubscribe headers switched off, goes without them.
 - Plain text sending for any campaign, the welcome email or a sequence step (`sendFormat: "plain"`, or
   "Send as plain text" in the editor): no design, footer or tracking, only your words and an unsubscribe
-  line, so it reads like an email you wrote by hand. See [how it is sent](docs/decisions/plain-text-send.md).
+  line (which `hideUnsubscribeFooter` can hide; the headers stay), so it reads like an email you wrote by hand. See [how it is sent](docs/decisions/plain-text-send.md).
 
 **Your list**
 

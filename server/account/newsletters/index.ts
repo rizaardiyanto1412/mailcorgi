@@ -38,6 +38,21 @@ export interface NewsletterRow {
   updated_at: number
 }
 
+const welcomeSchema = z.object({ enabled: z.boolean().default(false), transactional: z.boolean().default(false), includeListUnsubscribeHeaders: z.boolean().default(true) })
+/** `newsletters.welcome`: whether the welcome email is on, and its two transactional switches. A value saved before they existed reads as not transactional, headers kept. */
+export const welcomeOptions = (value: string) => welcomeSchema.parse(JSON.parse(value))
+/**
+ * The `transactional` render option for one email. Only the welcome email (`kind = 'welcome'`) of a
+ * newsletter saved as transactional gets one; a campaign, sequence step or keep email gets undefined,
+ * so it always carries its unsubscribe links and List-Unsubscribe headers. `headers` is false only
+ * when the welcome email is transactional and `includeListUnsubscribeHeaders` was saved as false.
+ */
+export function transactionalWelcome(kind: string, newsletter: Pick<NewsletterRow, 'welcome'>): { headers: boolean } | undefined {
+  if (kind !== 'welcome') return undefined
+  const options = welcomeOptions(newsletter.welcome)
+  return options.transactional ? { headers: options.includeListUnsubscribeHeaders } : undefined
+}
+
 export interface Newsletter {
   id: string
   key: string

@@ -19,6 +19,9 @@ export interface RenderCampaign {
   /** `plain` sends the body as plain text with no theme and no tracking. Anything else is the themed email. */
   sendFormat?: string
   send_format?: string
+  /** A plain send without its closing `--` / `Unsubscribe:` lines. Ignored by the themed email; never touches a header. */
+  hideUnsubscribeFooter?: boolean
+  hide_unsubscribe_footer?: number | boolean
   subject?: string
   previewText?: string
   preview_text?: string
@@ -45,6 +48,12 @@ export interface RenderEmailInput {
     contact: RenderContact
     links: RecipientLinks
   }
+  /**
+   * Only for the welcome email, set by `transactional` (signup): a one-off transactional message
+   * shows no Unsubscribe or Preferences link, and drops the List-Unsubscribe headers when `headers` is
+   * false. Campaign, sequence and newsletter sends never pass it.
+   */
+  transactional?: { headers: boolean }
 }
 export interface RenderWebInput {
   campaign: RenderCampaign
@@ -281,18 +290,20 @@ export function renderEmail(input: RenderEmailInput): {
   const part = body(input.campaign, ctx, false)
   const links = input.recipient.links
   const subject = ctx.merge(string(input.campaign.subject)).replace(/[\r\n]/g, ' ')
-  const headers = { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
+  const transactional = input.transactional
+  const headers: Record<string, string> = transactional?.headers === false ? {} : { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
   if (plain) {
     // No theme, header, footer, preview text or open pixel: only the words and one line to unsubscribe.
-    const text = `${tidy(part.text)}\n\n--\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}`
+    const hidden = !!transactional || !!(input.campaign.hideUnsubscribeFooter ?? input.campaign.hide_unsubscribe_footer)
+    const text = hidden ? tidy(part.text) : `${tidy(part.text)}\n\n--\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}`
     return { subject, html: bareHtml(text), text, textOnly: true, headers }
   }
   const address = string(input.newsletter.postalAddress) || string(input.newsletter.postal_address)
   const footerLink = (url: string, label: string) => `<a href="${escapeHtml(safeUrl(url, true))}" style="color:${theme.accent}">${label}</a>`
-  const footer = `<div style="margin-top:32px;border-top:1px solid ${theme.muted};padding-top:20px;font-size:13px;color:${theme.muted}"><p>${escapeHtml(ctx.merge(theme.footerText))}</p><p>${escapeHtml(address)}</p><p>${footerLink(links.unsubscribe, 'Unsubscribe')} · ${footerLink(links.preferences, 'Preferences')} · ${footerLink(links.web, 'View on the web')}</p></div>`
+  const footer = `<div style="margin-top:32px;border-top:1px solid ${theme.muted};padding-top:20px;font-size:13px;color:${theme.muted}"><p>${escapeHtml(ctx.merge(theme.footerText))}</p><p>${escapeHtml(address)}</p><p>${transactional ? '' : `${footerLink(links.unsubscribe, 'Unsubscribe')} · ${footerLink(links.preferences, 'Preferences')} · `}${footerLink(links.web, 'View on the web')}</p></div>`
   const pixel = links.openPixel && safeUrl(links.openPixel, true)
   const html = page(header(theme, input.newsletter) + part.html + footer + (pixel ? `<img src="${escapeHtml(pixel)}" width="1" height="1" alt="" style="display:block;border:0">` : ''), theme, ctx.merge(string(input.campaign.previewText) || string(input.campaign.preview_text)))
-  const text = `${part.text.trim()}${notes.length ? '\n\n' + notes.map((url, i) => `[${i + 1}] ${url}`).join('\n') : ''}\n\n${ctx.merge(theme.footerText)}\n${address}\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}\nPreferences: ${safeUrl(links.preferences, true)}\nView on the web: ${safeUrl(links.web, true)}`
+  const text = `${part.text.trim()}${notes.length ? '\n\n' + notes.map((url, i) => `[${i + 1}] ${url}`).join('\n') : ''}\n\n${ctx.merge(theme.footerText)}\n${address}${transactional ? '' : `\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}\nPreferences: ${safeUrl(links.preferences, true)}`}\nView on the web: ${safeUrl(links.web, true)}`
   return { subject, html, text, headers }
 }
 /** Plain text for cards and meta descriptions: no link footnotes, list markers or merge-field fallbacks. */

@@ -358,7 +358,7 @@ account_meta(key PRIMARY KEY, value)      -- plan + limits copy, status, owner e
 newsletters(id, key UNIQUE 'nl_<accountId>_<rand>', name, slug, description, language, timezone,
             from_name, from_local, domain_id NULL, reply_to, postal_address, logo_key, icon_key,
             theme JSON, website JSON (enabled, analytics ids, custom code, social links, seo),
-            double_opt_in INTEGER DEFAULT 1, welcome JSON (enabled, subject, doc),
+            double_opt_in INTEGER DEFAULT 1, welcome JSON (enabled, transactional, includeListUnsubscribeHeaders, subject, doc),
             hygiene JSON (enabled, after_issues), tracking JSON (opens, clicks),
             archived_at, created_at, updated_at)
 authors(id, newsletter_id, name, slug, bio, avatar_key, links JSON, user_id NULL, created_at)
@@ -383,7 +383,7 @@ imports(id, newsletter_id, status, source_preset, mapping JSON, options JSON, to
         added, updated, skipped JSON (by reason), created_by, created_at, finished_at, error)
 import_chunks(import_id, seq, rows JSON, done INTEGER, PRIMARY KEY(import_id, seq))
 campaigns(id, newsletter_id, author_id NULL, kind 'issue'|'welcome'|'keep'|'sequence', format 'doc'|'markdown'|'html',
-          send_format 'html'|'plain',
+          send_format 'html'|'plain', hide_unsubscribe_footer INTEGER DEFAULT 0,
           subject, preview_text, doc JSON, source TEXT, html TEXT, text TEXT, slug,
           status 'draft'|'scheduled'|'sending'|'paused'|'sent'|'canceled', pause_reason,
           audience JSON (segment id / tag ids / 'engaged' / all, exclusions),

@@ -29,6 +29,8 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
   const [doc, setDoc] = useState<JSONContent>(initial.welcome?.doc ?? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Thanks for subscribing, {{first_name|friend}}!' }] }] })
   const [revision, setRevision] = useState(initial.welcome?.revision ?? null)
   const [sendFormat, setSendFormat] = useState(initial.welcome?.sendFormat ?? 'html')
+  const [transactional, setTransactional] = useState(initial.welcome?.transactional ?? false)
+  const [includeListUnsubscribeHeaders, setIncludeListUnsubscribeHeaders] = useState(initial.welcome?.includeListUnsubscribeHeaders ?? true)
   const [welcomeSaved, setWelcomeSaved] = useState(false)
   const [validation, setValidation] = useState('')
   const save = useAction('signup.update', { invalidate: ['signup.get'], onSuccess: () => setSaved(true) })
@@ -40,7 +42,7 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     const parsed = nodeSchema.safeParse(doc)
     if (!parsed.success) { setValidation('The editor content is invalid. Please reload and try again.'); return }
     setValidation('')
-    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision, sendFormat })
+    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision, sendFormat, transactional, includeListUnsubscribeHeaders })
   }
   return <div className="space-y-6">
     <PageHeader title="Signup forms" description="Invite readers to subscribe on your site or with a hosted form." />
@@ -69,6 +71,8 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     <section className="space-y-4"><h2 className="font-semibold">Welcome email</h2><p className="text-sm text-fg-3">Sent once after a reader confirms, or immediately when confirmation is off.</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setWelcomeSaved(false) }} />Send a welcome email</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sendFormat === 'plain'} onChange={(e) => { setSendFormat(e.target.checked ? 'plain' : 'html'); setWelcomeSaved(false) }} />Send as plain text, like an email you wrote by hand (no design, footer or tracking)</label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={transactional} onChange={(e) => { setTransactional(e.target.checked); setWelcomeSaved(false) }} />Transactional (no visible unsubscribe)</label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!transactional} checked={!transactional || includeListUnsubscribeHeaders} onChange={(e) => { setIncludeListUnsubscribeHeaders(e.target.checked); setWelcomeSaved(false) }} />Include List-Unsubscribe headers{!transactional && <span className="text-fg-3">(always sent unless the email is transactional)</span>}</label>
       <Field label="Subject">{(id) => <Input id={id} required maxLength={150} value={subject} onChange={(e) => { setSubject(e.target.value); setWelcomeSaved(false) }} />}</Field>
       <Suspense fallback={<Spinner />}><CampaignEditor newsletterId={newsletterId} doc={doc} onChange={(next) => { setDoc(next); setWelcomeSaved(false) }} onSave={saveWelcome} editable /></Suspense>
       {(validation || welcome.error) && <Banner kind="danger">{validation || welcome.error?.message}</Banner>}{welcomeSaved && <Banner kind="ok">Welcome email saved.</Banner>}

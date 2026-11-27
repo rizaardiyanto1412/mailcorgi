@@ -267,7 +267,8 @@ sender reputation suffers sooner. Use SMTP only for small lists or for testing.
 
 A campaign, welcome email or sequence step set to send as plain text (`sendFormat: "plain"`) goes out as
 a single `text/plain` message through every provider: SES, Resend, PostShiba and SMTP. The details are in
-[decisions/plain-text-send.md](decisions/plain-text-send.md).
+[decisions/plain-text-send.md](decisions/plain-text-send.md). `hideUnsubscribeFooter` drops the closing
+`--` / `Unsubscribe:` lines of a plain campaign or step; the `List-Unsubscribe` headers are still sent.
 
 ### Amazon SES
 

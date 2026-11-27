@@ -6,6 +6,7 @@ import { renderEmail, parseTheme, type RenderCampaign } from '../render/index.ts
 import { getPolicy } from '../usage/index.ts'
 import { isSuppressed } from '../contacts/index.ts'
 import { getNewsletter, welcomeCampaign, welcomeEnabled } from './settings.ts'
+import { transactionalWelcome } from '../newsletters/index.ts'
 import { signToken } from '../tracking/index.ts'
 
 interface MailRow {
@@ -84,7 +85,8 @@ export async function deliverMail(ctx: StoreCtx, mailId: string): Promise<void> 
     if (!welcome) return stop()
     campaign = welcome
   }
-  const rendered = renderEmail({ campaign, newsletter: nl, theme: parseTheme(nl.theme), recipient: { contact, links } })
+  // The confirmation email is never transactional here: it keeps its unsubscribe link and headers.
+  const rendered = renderEmail({ campaign, newsletter: nl, theme: parseTheme(nl.theme), recipient: { contact, links }, transactional: transactionalWelcome(row.kind, nl) })
   const current = ctx.db.get<{ status: string; subscribed_at: number | null }>('SELECT status, subscribed_at FROM contacts WHERE id = ? AND newsletter_id = ?', contact.id, nl.id)
   if (!current || ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', contact.email)) return stop()
   if (row.kind === 'welcome' && (current.status !== 'subscribed' || isSuppressed(ctx, contact.email, nl.id) || (current.subscribed_at ?? 0) > row.created_at || !welcomeEnabled(getNewsletter(ctx, nl.id).welcome))) return stop()
