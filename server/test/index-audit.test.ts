@@ -78,6 +78,15 @@ test('50,000 contacts and 100,000 deliveries: every hot query uses the index it 
   assert.equal(await timed('engagement count', () => owner.action('segments.count', { newsletterId: nl.id, filter: { field: 'engagement', op: 'openedLast', issues: 2 } }), 2000).then((r) => (r as { count: number }).count), CONTACTS / 2)
   uses('timeline deliveries', 'SELECT d.campaign_id, c.subject, d.sent_at, d.opened_at, d.clicked_at FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE d.campaign_id IN (SELECT id FROM campaigns WHERE newsletter_id = ?) AND d.contact_id = ? AND d.sent_at IS NOT NULL ORDER BY d.sent_at DESC LIMIT 500', [nl.id, 'c000001'], /sqlite_autoindex_deliveries_1/)
 
+  // The send log: one address's page uses the email index; the newsletter-wide page is bounded by the newsletter's campaigns.
+  const sendsSql = (extra: string) => `SELECT d.id FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id LEFT JOIN sequence_steps st ON st.campaign_id = c.id LEFT JOIN sequences s ON s.id = st.sequence_id WHERE c.newsletter_id = ? ${extra} ORDER BY d.sent_at DESC, d.id DESC LIMIT 51`
+  const sendsEmail = uses('send log by email', sendsSql('AND d.email = ?'), [nl.id, 'reader000001@example.com'], /INDEX deliveries_email_sent/)
+  assert.doesNotMatch(sendsEmail, /TEMP B-TREE/, `one address's log needs no sort:\n${sendsEmail}`)
+  uses('send log by email, second page', sendsSql('AND d.email = ? AND (d.sent_at < ? OR d.sent_at IS NULL OR (d.sent_at = ? AND d.id < ?))'), [nl.id, 'reader000001@example.com', now, now, 1], /INDEX deliveries_email_sent/)
+  const sendsGlobal = plan(sendsSql(''), nl.id)
+  assert.doesNotMatch(sendsGlobal, /SCAN d\b|SCAN deliveries\b(?! USING)/, `newsletter-wide log reaches deliveries by campaign:\n${sendsGlobal}`)
+  await timed('sends.list by email', () => owner.action('sends.list', { newsletterId: nl.id, email: 'reader000001@example.com' }), 200)
+
   // Events: the timeline, the daily rebuild, click bookkeeping and soft-bounce counts.
   uses('timeline events', 'SELECT id, type, data, at, campaign_id FROM events WHERE newsletter_id = ? AND contact_id = ? AND id < ? ORDER BY id DESC LIMIT 101', [nl.id, 'c000001', Number.MAX_SAFE_INTEGER], /INDEX events_contact_page/)
   uses('daily rebuild', "SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), COUNT(*) FROM events WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2", [nl.id, 0], /INDEX events_newsletter/)

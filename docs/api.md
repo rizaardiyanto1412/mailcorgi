@@ -6846,6 +6846,74 @@ curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/recipien
   -H "Authorization: Bearer $MAILCORGI_API_KEY"
 ```
 
+## GET /api/v1/newsletters/:newsletterId/sends
+
+Read the send log: every email delivered from this newsletter, newest first, with engagement timestamps and whether it came from a campaign, welcome email or sequence step. Pass email for one contact.
+
+MCP tool: `sends_list`. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id."
+    },
+    "email": {
+      "description": "Only sends to this exact address, case-insensitive. Omit for the newsletter-wide log.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320
+    },
+    "status": {
+      "default": "all",
+      "description": "Filter by delivery or engagement status. opened, clicked and unsubscribed match any send with that timestamp, so a clicked send also matches opened.",
+      "type": "string",
+      "enum": [
+        "all",
+        "queued",
+        "sending",
+        "sent",
+        "delivered",
+        "opened",
+        "clicked",
+        "bounced",
+        "unsubscribed",
+        "complained",
+        "failed",
+        "skipped",
+        "unknown"
+      ]
+    },
+    "cursor": {
+      "description": "The nextCursor from the previous page.",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "limit": {
+      "default": 50,
+      "description": "The maximum number of sends in this page.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "newsletterId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sends?status=all&limit=50' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
 ## GET /api/v1/newsletters/:newsletterId/hygiene
 
 Read automatic list hygiene and reminder copy.
