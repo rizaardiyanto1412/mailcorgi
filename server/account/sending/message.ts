@@ -3,7 +3,7 @@ import type { StoreCtx } from '../../core/store.ts'
 import type { EmailMessage } from '../../email/index.ts'
 import { parseJson } from '../../core/db.ts'
 import { newId } from '../../core/ids.ts'
-import { getNewsletterRow, type NewsletterRow } from '../newsletters/index.ts'
+import { getNewsletterRow, transactionalWelcome, type NewsletterRow } from '../newsletters/index.ts'
 import { parseTheme, renderEmail } from '../render/index.ts'
 import { serializeCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { verifiedSenderFor } from '../domains/index.ts'
@@ -65,15 +65,16 @@ export async function buildMessage(ctx: StoreCtx, send: SendContext, recipient: 
   const openPixel = tracked && send.tracking.opens ? publicUrl(ctx, `/t/o/${await signToken(ctx, 'o', [deliveryId])}`) : undefined
   const keep = send.row.kind === 'keep' ? publicUrl(ctx, `/keep/${await signToken(ctx, 'k', [contact.id, keepIssuedAt(ctx, campaignId, contact.id)])}`) : ''
   const campaign = keep ? { ...send.campaign, source: send.campaign.source.replaceAll('{{keep_url}}', keep) } : send.campaign
-  const rendered = renderEmail({ campaign, newsletter: send.newsletter, theme: send.theme, recipient: { contact: { name: contact.name, email: contact.email, fields: contact.fields }, links: { unsubscribe, preferences, web: send.webUrl, openPixel, wrap: (url) => wrapped.get(url) ?? url } } })
+  // Set only for a test send of a transactional welcome email. Campaigns and sequence steps always get undefined.
+  const transactional = transactionalWelcome(send.row.kind, send.newsletter)
+  const rendered = renderEmail({ campaign, newsletter: send.newsletter, theme: send.theme, transactional, recipient: { contact: { name: contact.name, email: contact.email, fields: contact.fields }, links: { unsubscribe, preferences, web: send.webUrl, openPixel, wrap: (url) => wrapped.get(url) ?? url } } })
   const accountId = ctx.accountId!
   return {
     from: send.sender.from, to: contact.email, replyTo: send.sender.replyTo,
     subject: subjectPrefix + rendered.subject, html: rendered.html, text: rendered.text, ...(rendered.textOnly ? { textOnly: true } : {}),
     headers: {
       ...rendered.headers,
-      'List-Unsubscribe': `<mailto:${send.unsubscribeMailbox}?subject=unsubscribe>, <${unsubscribe}>`,
-      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      ...(transactional?.headers === false ? {} : { 'List-Unsubscribe': `<mailto:${send.unsubscribeMailbox}?subject=unsubscribe>, <${unsubscribe}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }),
       'Feedback-ID': `${campaignId}:${send.row.newsletter_id}:${accountId}:mailcorgi`,
       'X-MC-Account': accountId,
       ...(deliveryId !== null ? { 'X-MC-Delivery': String(deliveryId) } : {}),

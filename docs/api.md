@@ -2713,6 +2713,11 @@ Input JSON Schema:
         "html",
         "plain"
       ]
+    },
+    "hideUnsubscribeFooter": {
+      "default": false,
+      "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -2818,7 +2823,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/cam
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"subject":"","format":"doc","audience":{"all":true},"sendFormat":"html"}'
+  --data '{"subject":"","format":"doc","audience":{"all":true},"sendFormat":"html","hideUnsubscribeFooter":false}'
 ```
 
 ## GET /api/v1/campaigns/:campaignId
@@ -3051,6 +3056,10 @@ Input JSON Schema:
         "html",
         "plain"
       ]
+    },
+    "hideUnsubscribeFooter": {
+      "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -3949,6 +3958,11 @@ Input JSON Schema:
               "html",
               "plain"
             ]
+          },
+          "hideUnsubscribeFooter": {
+            "default": false,
+            "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4374,6 +4388,11 @@ Input JSON Schema:
         "html",
         "plain"
       ]
+    },
+    "hideUnsubscribeFooter": {
+      "default": false,
+      "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -4481,7 +4500,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/seq
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"delayDays":1,"subject":"","sendFormat":"html"}'
+  --data '{"delayDays":1,"subject":"","sendFormat":"html","hideUnsubscribeFooter":false}'
 ```
 
 ## PATCH /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
@@ -4633,6 +4652,10 @@ Input JSON Schema:
         "html",
         "plain"
       ]
+    },
+    "hideUnsubscribeFooter": {
+      "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -5745,6 +5768,14 @@ Input JSON Schema:
         "html",
         "plain"
       ]
+    },
+    "transactional": {
+      "description": "Treat the welcome email as a one-off transactional message instead of a newsletter issue: it shows no unsubscribe link. Plain: no closing \"--\" and \"Unsubscribe:\" lines. Html: the footer keeps its text, postal address and \"View on the web\" but loses the Unsubscribe and Preferences links. The List-Unsubscribe headers stay unless includeListUnsubscribeHeaders is false. Omit to keep the current value; a new welcome email starts as false.",
+      "type": "boolean"
+    },
+    "includeListUnsubscribeHeaders": {
+      "description": "Only read when transactional is true: false sends the welcome email without the List-Unsubscribe and List-Unsubscribe-Post headers. While transactional is false this is ignored and the headers are always sent. Omit to keep the current value; a new welcome email starts as true.",
+      "type": "boolean"
     }
   },
   "required": [

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
-import { getNewsletterRow } from '../newsletters/index.ts'
+import { getNewsletterRow, welcomeOptions } from '../newsletters/index.ts'
 import { getCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { safeUrl } from '../render/index.ts'
 import { notFound } from '../../core/http.ts'
@@ -36,6 +36,14 @@ export function welcomeCampaign(ctx: StoreCtx, newsletterId: string) {
   const row = ctx.db.get<CampaignRow>("SELECT * FROM campaigns WHERE newsletter_id = ? AND kind = 'welcome' ORDER BY created_at, id LIMIT 1", newsletterId)
   return row ? getCampaign(ctx, row.id) : null
 }
+/** The welcome email as signup.get and signup.saveWelcome return it: the campaign plus its two welcome-only switches, without the campaign-only `hideUnsubscribeFooter`. */
+export function welcomeEmail(ctx: StoreCtx, newsletterId: string) {
+  const campaign = welcomeCampaign(ctx, newsletterId)
+  if (!campaign) return null
+  const { hideUnsubscribeFooter: _campaignOnly, ...welcome } = campaign
+  const { transactional, includeListUnsubscribeHeaders } = welcomeOptions(getNewsletter(ctx, newsletterId).welcome)
+  return { ...welcome, transactional, includeListUnsubscribeHeaders }
+}
 export function welcomeEnabled(value: string) {
-  return z.object({ enabled: z.boolean().default(false) }).parse(JSON.parse(value)).enabled
+  return welcomeOptions(value).enabled
 }

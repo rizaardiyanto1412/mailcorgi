@@ -51,12 +51,14 @@ plain text email that reads like one written by hand.
   no `links` rows. Reports for a plain send show deliveries, bounces, complaints and unsubscribes, and
   zero opens and clicks. Because silence after a plain send says nothing, a plain issue does not add
   to a reader's ignored-issue streak (list hygiene counts only html issues).
-- **Headers.** Exactly those of an html send: `List-Unsubscribe` (mailto and one-click URL on
+- **Headers.** Always on a campaign, sequence step or newsletter email, exactly those of an html send: `List-Unsubscribe` (mailto and one-click URL on
   campaign and sequence sends, the URL on signup mail), `List-Unsubscribe-Post: List-Unsubscribe=One-Click`,
-  `Feedback-ID` and the routing headers. Unsubscribing by header or by the closing line is the same token.
+  `Feedback-ID` and the routing headers. Unsubscribing by header or by the closing line is the same token. The one exception is the welcome
+  email, see "Hiding the unsubscribe line".
 - **Test sends and previews** render the same way, so `campaigns.sendTest` shows what readers get.
 - **Review checks.** A plain email is not asked for preview text, nor for a `{{unsubscribe_url}}`
-  link in raw HTML content: the closing line is always there.
+  link in raw HTML content: the closing line is there unless `hideUnsubscribeFooter` removes it (the
+  headers still carry unsubscribe). A transactional welcome email is not asked for one either.
 
 ## MIME parts per provider
 
@@ -74,6 +76,31 @@ card, footer or pixel), but no provider sends it: every plain send leaves as `te
 
 The rule is the same everywhere: a plain send is `text/plain` with no HTML part. Each provider still
 applies it itself, because each one builds or requests the message differently.
+
+## Hiding the unsubscribe line
+
+Some plain emails read better without a closing `--` / `Unsubscribe:` line. Two separate settings:
+
+- **`hideUnsubscribeFooter`** (boolean, default `false`; column `campaigns.hide_unsubscribe_footer`,
+  added by migration with `DEFAULT 0`). Campaigns and sequence steps. In plain mode the `--` and
+  `Unsubscribe:` lines are left out. In html mode it does nothing: the theme footer, its links and the
+  headers stay. **The `List-Unsubscribe` and `List-Unsubscribe-Post` headers are always sent on
+  campaigns, sequence steps and newsletter emails**; no field can remove them there.
+  Fields: `campaigns.create` / `campaigns.update` (input), `campaigns.get` / `duplicate` /
+  `list` (`campaigns[].hideUnsubscribeFooter`), `sequences.create` (`steps[].hideUnsubscribeFooter`),
+  `sequences.addStep`, `sequences.updateStep`, and every step list. The welcome email has no such
+  field (`signup.saveWelcome` does not take it; `campaigns.update` on a welcome row rejects it).
+- **Welcome only: `transactional` and `includeListUnsubscribeHeaders`** (booleans, defaults `false` and
+  `true`), stored in `newsletters.welcome` JSON, set with `signup.saveWelcome`, returned by
+  `signup.get` under `welcome`. A transactional welcome email drops the visible unsubscribe line (plain)
+  or the Unsubscribe and Preferences links (html theme footer and text alternative); the footer text,
+  postal address and "View on the web" stay. The `List-Unsubscribe` headers are dropped only when
+  `transactional` is true **and** `includeListUnsubscribeHeaders` is false. Review and preview treat
+  a transactional welcome as having no visible unsubscribe link, so raw HTML is not blocked for lacking
+  `{{unsubscribe_url}}`. The double opt-in confirmation email keeps its headers and link.
+
+Review for any non-welcome campaign or step ignores `transactional`: raw HTML is still asked for its
+unsubscribe link.
 
 ## Not decided here
 

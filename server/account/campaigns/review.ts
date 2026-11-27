@@ -10,6 +10,8 @@ export function reviewChecks(input: {
   newsletter: Record<string, unknown>
   theme: Record<string, unknown>
   domainVerified: boolean
+  /** Set only for a transactional welcome email (`transactionalWelcome`): it carries no visible unsubscribe link, so raw HTML is not asked for one. */
+  transactional?: { headers: boolean }
 }): ReviewCheck[] {
   const { campaign, newsletter } = input
   const checks: ReviewCheck[] = []
@@ -22,7 +24,7 @@ export function reviewChecks(input: {
   if (!(newsletter.postalAddress || newsletter.postal_address)) add('postal_address', 'error', 'Add a postal address in newsletter settings.')
   if (!input.domainVerified) add('sender_domain', 'error', 'Choose a verified sender domain in newsletter settings.')
   const html = typeof campaign.html === 'string' && campaign.html ? campaign.html : typeof campaign.source === 'string' ? campaign.source : ''
-  if (!plain && campaign.format === 'html' && !/href\s*=\s*["'][^"']*\{\{\s*unsubscribe_url\s*\}\}/i.test(html)) add('unsubscribe', 'error', 'Include a link to {{unsubscribe_url}} in your HTML.')
+  if (!plain && !input.transactional && campaign.format === 'html' && !/href\s*=\s*["'][^"']*\{\{\s*unsubscribe_url\s*\}\}/i.test(html)) add('unsubscribe', 'error', 'Include a link to {{unsubscribe_url}} in your HTML.')
   let missingAlt = false
   let invalidLink = false
   const checkLink = (url: unknown) => {
@@ -45,7 +47,7 @@ export function reviewChecks(input: {
   }
   if (missingAlt) add('image_alt', 'warning', 'Add alt text to every image.')
   if (invalidLink) add('links', 'error', 'Use an http or https address for every link.')
-  const rendered = renderEmail({ campaign, newsletter, theme: input.theme, recipient: { contact: {}, links: { unsubscribe: 'https://example.com/unsubscribe', preferences: 'https://example.com/preferences', web: 'https://example.com/issue' } } })
+  const rendered = renderEmail({ campaign, newsletter, theme: input.theme, transactional: input.transactional, recipient: { contact: {}, links: { unsubscribe: 'https://example.com/unsubscribe', preferences: 'https://example.com/preferences', web: 'https://example.com/issue' } } })
   if (new TextEncoder().encode(rendered.html).length >= 102 * 1024) add('email_size', 'warning', 'This issue exceeds 102 KB. Gmail may clip it.')
   return checks
 }
