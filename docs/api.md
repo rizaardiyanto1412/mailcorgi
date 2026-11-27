@@ -6803,6 +6803,41 @@ curl -X GET 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/recipien
   -H "Authorization: Bearer $MAILCORGI_API_KEY"
 ```
 
+## GET /api/v1/newsletters/:newsletterId/sends/:deliveryId
+
+Read one send from sends.list: pass its numeric items[].id as deliveryId. Returns {id, sentAt, content}. content is {subject, html, text}, the email exactly as handed to the email provider, for 30 days after the provider accepted it and only while the install keeps copies (DELIVERY_CONTENT_CAPTURE). html is null for a plain-text send. content is null when there is no exact copy: the install does not keep copies, the send was not accepted, predates copying, was retried after an earlier attempt, was too large to keep (over about 1 MB), the copy could not be written, or is older than 30 days. An unknown id, or one from another newsletter, is 404. Access is the same as sends.list: any newsletter member, read-only keys included. There is no MCP tool for it. Responses carry Cache-Control: private, no-store. The copy is one recipient's email, with that recipient's links, unsubscribe and preferences links and open pixel. Treat it as private data. Never open its links or images, which would record an open, a click or an unsubscribe for that recipient. To show the HTML, first strip or disable every navigation element, href, form action and meta refresh, because a sandboxed frame with default-src none can still follow a link inside itself. Never put the raw content in your app DOM.
+
+MCP tool: None. Effect: read.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id."
+    },
+    "deliveryId": {
+      "type": "string",
+      "description": "The numeric id of an item in sends.list, as text."
+    }
+  },
+  "required": [
+    "newsletterId",
+    "deliveryId"
+  ]
+}
+```
+
+```sh
+curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sends/YOUR_DELIVERY_ID' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY"
+```
+
 ## GET /api/v1/newsletters/:newsletterId/sends
 
 Read the send log: every email delivered from this newsletter, newest first, with engagement timestamps and whether it came from a campaign, welcome email or sequence step. Pass email for one contact.

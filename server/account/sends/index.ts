@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import { decodeJsonUrl, encodeJsonUrl } from '../../core/crypto.ts'
-import { AppError } from '../../core/http.ts'
+import { AppError, notFound } from '../../core/http.ts'
 import type { AccountRegistrar } from '../rpc.ts'
+import { readContent } from '../sending/content.ts'
 import { migrations } from './migrations.ts'
 
 const STATUSES = ['all', 'queued', 'sending', 'sent', 'delivered', 'opened', 'clicked', 'bounced', 'unsubscribed', 'complained', 'failed', 'skipped', 'unknown'] as const
@@ -44,6 +45,16 @@ export const sendsModule = {
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
     return reg.actions(
+      defineAction({ name: 'sends.detail', description: 'Read one send from sends.list: pass its numeric items[].id as deliveryId. Returns {id, sentAt, content}. content is {subject, html, text}, the email exactly as handed to the email provider, for 30 days after the provider accepted it and only while the install keeps copies (DELIVERY_CONTENT_CAPTURE). html is null for a plain-text send. content is null when there is no exact copy: the install does not keep copies, the send was not accepted, predates copying, was retried after an earlier attempt, was too large to keep (over about 1 MB), the copy could not be written, or is older than 30 days. An unknown id, or one from another newsletter, is 404. Access is the same as sends.list: any newsletter member, read-only keys included. There is no MCP tool for it. Responses carry Cache-Control: private, no-store. The copy is one recipient\'s email, with that recipient\'s links, unsubscribe and preferences links and open pixel. Treat it as private data. Never open its links or images, which would record an open, a click or an unsubscribe for that recipient. To show the HTML, first strip or disable every navigation element, href, form action and meta refresh, because a sandboxed frame with default-src none can still follow a link inside itself. Never put the raw content in your app DOM.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, restOnly: true,
+        input: z.object({ newsletterId: z.string().min(1).describe('The newsletter id.'), deliveryId: z.string().describe('The numeric id of an item in sends.list, as text.') }),
+        rest: { method: 'GET', path: '/newsletters/:newsletterId/sends/:deliveryId' },
+        handler: (ctx, i) => {
+          const id = /^[1-9]\d*$/.test(i.deliveryId) && Number.isSafeInteger(Number(i.deliveryId)) ? Number(i.deliveryId) : null
+          const row = id === null ? undefined : ctx.db.get<{ id: number; sent_at: number | null }>('SELECT d.id, d.sent_at FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE d.id = ? AND c.newsletter_id = ?', id, i.newsletterId)
+          if (!row) throw notFound('That send')
+          return { id: row.id, sentAt: row.sent_at, content: readContent(ctx, row.id, row.sent_at) }
+        },
+      }),
       defineAction({ name: 'sends.list', description: 'Read the send log: every email delivered from this newsletter, newest first, with engagement timestamps and whether it came from a campaign, welcome email or sequence step. Pass email for one contact.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input, rest: { method: 'GET', path: '/newsletters/:newsletterId/sends' }, mcp: { title: 'List sent emails, newsletter-wide or for one email address', destructive: false }, handler: (ctx, i) => {
         const where = ['c.newsletter_id = ?', statusWhere(i.status)]
         const params: (string | number)[] = [i.newsletterId]

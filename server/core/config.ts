@@ -19,6 +19,8 @@ export interface Config {
   host: string
   imagesPublicUrl: string
   sendBatchSize: number
+  /** Keep a 30-day copy of each campaign and sequence email as sent, and serve it from the send detail API. Off unless `DELIVERY_CONTENT_CAPTURE` is `true`. */
+  captureDeliveryContent: boolean
   billingProvider: 'stripe' | 'polar' | 'test' | ''
   turnstile: { siteKey: string; secretKey: string } | null
   /** APP_SECRET when set. The platform generates one otherwise. */
@@ -57,6 +59,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     host: env.HOST || '0.0.0.0',
     imagesPublicUrl: (env.IMAGES_PUBLIC_URL || '').replace(/\/+$/, ''),
     sendBatchSize: Number(env.SEND_BATCH_SIZE || 100),
+    captureDeliveryContent: env.DELIVERY_CONTENT_CAPTURE === 'true',
     billingProvider: provider === 'stripe' || provider === 'polar' || provider === 'test' ? provider : '',
     turnstile: env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY } : null,
     secret,

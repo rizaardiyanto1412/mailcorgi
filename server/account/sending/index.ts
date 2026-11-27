@@ -12,6 +12,7 @@ import { senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
 import { countEmails, currentPeriod, limits } from '../usage/index.ts'
 import { migrations } from './migrations.ts'
 import { finishCampaign, sendBatch } from './batch.ts'
+import { armPurge, nextExpiry, purgeExpired } from './content.ts'
 import { audienceCount, startSending, type SendOptions } from './plan.ts'
 import { buildMessage, sendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
@@ -66,6 +67,11 @@ export const sendingModule = {
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
     reg.job<{ campaignId: string }>('send.batch', (ctx, { campaignId }, budget) => sendBatch(ctx, campaignId, budget))
+    reg.job('delivery_content.purge', async (ctx, _input, budget) => purgeExpired(ctx, budget))
+    reg.maintenance((ctx) => {
+      const next = nextExpiry(ctx)
+      if (next !== null) armPurge(ctx, next)
+    })
     reg.job<{ campaignId: string; options: SendOptions }>('send.start', async (ctx, { campaignId, options }) => {
       let row: CampaignRow
       try { row = getCampaignRow(ctx, campaignId) } catch { return 'done' }

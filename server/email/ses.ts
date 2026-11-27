@@ -43,12 +43,12 @@ export function sesProvider(ctx: StoreCtx, settings: Record<string, string>): Em
         if (isRedirect(response)) return redirectedSend('ses', response.status)
         const text = await response.text()
         if (!response.ok) {
-          logSendFailure('ses', 'status', { status: response.status, body: text, redact: [settings.ses_secret_access_key, settings.ses_access_key_id] })
+          logSendFailure('ses', 'status', { status: response.status, body: text, redact: [settings.ses_secret_access_key, settings.ses_access_key_id], safe: msg.safeDiagnostics })
           return sendError(response.status, response.headers.get('retry-after'), response.headers.get('x-amzn-errortype') || '')
         }
         const parsed = z.object({ MessageId: z.string().min(1) }).safeParse(parseJson(text))
         return parsed.success ? { ok: true, id: parsed.data.MessageId } : unparsedSend('ses', response.status)
-      } catch (error) { return failedSend('ses', error, [settings.ses_secret_access_key, settings.ses_access_key_id]) }
+      } catch (error) { return failedSend('ses', error, [settings.ses_secret_access_key, settings.ses_access_key_id], msg.safeDiagnostics) }
     },
     async createIdentity(domain) {
       try {

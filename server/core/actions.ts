@@ -39,6 +39,8 @@ export interface ActionDef<S extends Scope = Scope, N extends string = string, I
   input: I
   rest?: { method: RestMethod; path: string }
   mcp?: { title: string; destructive: boolean }
+  /** The REST API is the only way in: the session route `/api/actions/:name` answers 404 for it, and with no `mcp` it is not a tool. */
+  restOnly?: true
   handler: (ctx: StoreCtx, input: z.output<I>, actor: Actor) => Promise<O> | O
 }
 

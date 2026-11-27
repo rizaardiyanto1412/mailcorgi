@@ -6,6 +6,8 @@ import { checkProtection, globalSuppressions, hygieneEpoch, keepDeliveryAllowed,
 import { isSuppressed } from '../contacts/index.ts'
 import { getCampaignRow, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { countEmails, getPolicy } from '../usage/index.ts'
+import { classifyError } from '../../email/http.ts'
+import { capturesKind, keepContent, neverAttempted, snapshotOf, type ContentSnapshot } from './content.ts'
 import { buildMessage, recordLinks, sendContext, type SendContext } from './message.ts'
 import { sendProvider, sendSettings } from './provider.ts'
 import { AUTO_PAUSE_MIN_SENT, bumpStat, daily, notify, pauseCampaign, rateBreach, readStats, recountStats, stepGate } from './stats.ts'
@@ -104,7 +106,7 @@ export function finishCampaign(ctx: StoreCtx, row: CampaignRow) {
   })
 }
 
-function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: number): (DeliveryRow & { name: string; fields: string }) | null {
+function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: number): (DeliveryRow & { name: string; fields: string; fresh: boolean }) | null {
   return ctx.db.tx(() => {
     const d = ctx.db.get<DeliveryRow & { name: string | null; fields: string | null; contact_status: string | null }>(`SELECT d.*, c.name, c.fields, c.status AS contact_status FROM deliveries d LEFT JOIN contacts c ON c.id = d.contact_id AND c.newsletter_id = ? WHERE d.id = ? AND d.status = 'queued'`, newsletterId, id)
     if (!d) return null
@@ -114,9 +116,10 @@ function claimDelivery(ctx: StoreCtx, id: number, newsletterId: string, now: num
       bumpStat(ctx, d.campaign_id, 'skipped')
       return null
     }
+    const fresh = neverAttempted(d)
     const token = randomToken(12)
     ctx.db.run("UPDATE deliveries SET status = 'sending', attempt_token = ?, attempt_at = ?, attempts = attempts + 1 WHERE id = ? AND status = 'queued'", token, now, id)
-    return { ...d, status: 'sending', attempt_token: token, attempts: d.attempts + 1, name: d.name ?? '', fields: d.fields ?? '{}' }
+    return { ...d, status: 'sending', attempt_token: token, attempts: d.attempts + 1, name: d.name ?? '', fields: d.fields ?? '{}', fresh }
   })
 }
 
@@ -168,13 +171,23 @@ export async function sendDelivery(ctx: StoreCtx, send: SendContext, provider: E
   const newsletterId = send.row.newsletter_id
   const d = claimDelivery(ctx, id, newsletterId, ctx.now())
   if (!d) return null
+  const keeps = capturesKind(ctx, send.row.kind)
+  let snapshot: ContentSnapshot | null = null
   let result: SendResult
   try {
-    result = await provider.send(await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } }))
+    const message = await buildMessage(ctx, send, { deliveryId: d.id, contact: { id: d.contact_id, email: d.email, name: d.name, fields: d.fields } })
+    if (keeps) {
+      message.safeDiagnostics = true
+      if (d.fresh) snapshot = snapshotOf(message)
+    }
+    result = await provider.send(message)
   } catch (err) {
-    result = { ok: false, kind: 'unknown', message: err instanceof Error ? err.message : String(err) }
+    result = { ok: false, kind: 'unknown', message: keeps ? `The send attempt failed (${classifyError(err)}).` : err instanceof Error ? err.message : String(err) }
   }
-  return recordResult(ctx, d, newsletterId, result, provider.capabilities.idempotency, ctx.now(), tally)
+  const at = ctx.now()
+  const stop = recordResult(ctx, d, newsletterId, result, provider.capabilities.idempotency, at, tally)
+  if (snapshot && result.ok) keepContent(ctx, d, newsletterId, snapshot, at)
+  return stop
 }
 
 /** One run of the send loop for a campaign, per architecture 11.5. Idempotent: every write is conditional on row state. */

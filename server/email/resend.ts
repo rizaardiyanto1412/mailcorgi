@@ -37,12 +37,12 @@ export function resendProvider(ctx: StoreCtx, settings: Record<string, string>):
         if (isRedirect(response)) return redirectedSend('resend', response.status)
         const text = await response.text()
         if (!response.ok) {
-          logSendFailure('resend', 'status', { status: response.status, body: text, redact: [settings.resend_api_key] })
+          logSendFailure('resend', 'status', { status: response.status, body: text, redact: [settings.resend_api_key], safe: msg.safeDiagnostics })
           return sendError(response.status, response.headers.get('retry-after'))
         }
         const data = z.object({ id: z.string().min(1) }).safeParse(parseJson(text))
         return data.success ? { ok: true, id: data.data.id } : unparsedSend('resend', response.status)
-      } catch (error) { return failedSend('resend', error, [settings.resend_api_key]) }
+      } catch (error) { return failedSend('resend', error, [settings.resend_api_key], msg.safeDiagnostics) }
     },
     async createIdentity(domain) {
       try { return await readDomain(await request('domains', 'POST', { name: domain, region: settings.resend_region || 'us-east-1' })) } catch { return identityError() }

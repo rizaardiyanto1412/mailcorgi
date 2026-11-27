@@ -17,7 +17,7 @@ import { accountIdOfToken, isAccountId, parseApiKey, parseNewsletterKey, parseOA
 import { CLIENT_IP_HEADER, errorResponse, withSecurityHeaders } from '../core/http.ts'
 import type { SessionInfo, SiteRow } from '../control/rpc.ts'
 import { accountRegistry } from '../account/modules.ts'
-import { markdown } from '../api/index.ts'
+import { isSendDetailPath, markdown, privateNoStore } from '../api/index.ts'
 import { controlRegistry } from '../control/modules.ts'
 import { HSTS_VALUE, wantsHsts } from './assets.ts'
 
@@ -265,7 +265,7 @@ export function createEdge(deps: EdgeDeps): Edge {
         challenge.headers.set('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(publicOrigin(deps.config, url))}"${bearer ? ', error="invalid_token"' : ''}`)
         return challenge
       }
-      return response
+      return isSendDetailPath(path) ? privateNoStore(response) : response
     }
 
     for (const prefix of TOKEN_PREFIXES) {

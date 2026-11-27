@@ -24,12 +24,24 @@ export const isRedirect = (response: Response) => response.type === 'opaqueredir
 export const redirectSend = (hint = 'Check the endpoint URL.'): SendResult => ({ ok: false, kind: 'permanent', message: `The email provider answered with a redirect. ${hint}` })
 
 export type FailureStage = 'fetch' | 'timeout' | 'redirect' | 'status' | 'parse'
-type FailureDetail = { status?: number; error?: unknown; body?: string; redact?: (string | undefined)[] }
+type FailureDetail = { status?: number; error?: unknown; body?: string; redact?: (string | undefined)[]; safe?: boolean }
+/** The only error descriptions a safe log line can carry. */
+export type ErrorClass = 'timeout' | 'network' | 'invalid_message' | 'other'
 
 const isTimeout = (error: unknown) => {
   const { name, code } = (error ?? {}) as { name?: unknown; code?: unknown }
   return name === 'TimeoutError' || name === 'AbortError' || code === 'ETIMEDOUT'
 }
+/** Names a thrown error by kind. Only one of the fixed values is returned, so nothing the error says reaches a log or a stored row. */
+export function classifyError(error: unknown): ErrorClass {
+  if (error instanceof InvalidMessageError) return 'invalid_message'
+  if (isTimeout(error)) return 'timeout'
+  const { code, cause } = (error ?? {}) as { code?: unknown; cause?: { code?: unknown } }
+  const network = /^(ECONN[A-Z]+|ENOTFOUND|EAI_AGAIN|EPIPE|EHOST[A-Z]+|ENETUNREACH|UND_ERR_[A-Z_]+|ERR_TLS_[A-Z_]+|CERT_[A-Z_]+)$/
+  if (error instanceof TypeError || [code, cause?.code].some((c) => typeof c === 'string' && network.test(c))) return 'network'
+  return 'other'
+}
+
 /** Cuts to 200 characters after removing the given secrets, credentials in auth schemes or URLs, and email addresses. */
 function scrub(text: string, redact: (string | undefined)[]) {
   let out = text.slice(0, 4000)
@@ -47,6 +59,11 @@ function scrub(text: string, redact: (string | undefined)[]) {
  * a non-OK status. Settings, headers, the request body and recipients are never passed in.
  */
 export function logSendFailure(provider: string, stage: FailureStage, detail: FailureDetail = {}) {
+  if (detail.safe) {
+    const status = typeof detail.status === 'number' && Number.isInteger(detail.status) ? detail.status : undefined
+    console.error(`email provider failed ${JSON.stringify({ provider, stage, ...(status === undefined ? {} : { status }), ...(detail.error === undefined ? {} : { error: classifyError(detail.error) }) })}`)
+    return
+  }
   const redact = detail.redact ?? []
   const error = detail.error === undefined ? undefined : detail.error instanceof Error ? detail.error : new Error(typeof detail.error === 'string' ? detail.error : 'Unknown error')
   const line = {
@@ -59,9 +76,9 @@ export function logSendFailure(provider: string, stage: FailureStage, detail: Fa
 }
 
 /** For a provider's catch block: an invalid header is the caller's fault, anything else is logged and unknown. */
-export function failedSend(provider: string, error: unknown, redact: (string | undefined)[] = []): SendResult {
+export function failedSend(provider: string, error: unknown, redact: (string | undefined)[] = [], safe = false): SendResult {
   if (error instanceof InvalidMessageError) return invalidSend()
-  logSendFailure(provider, isTimeout(error) ? 'timeout' : 'fetch', { error, redact })
+  logSendFailure(provider, isTimeout(error) ? 'timeout' : 'fetch', { error, redact, safe })
   return unknownSend()
 }
 /** A reply that arrived but is not what the provider documents: logged as a parse failure, outcome unknown. */
