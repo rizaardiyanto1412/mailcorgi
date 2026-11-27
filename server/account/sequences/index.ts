@@ -173,7 +173,7 @@ export const sequencesModule = {
           revision: z.number().int().min(1).describe('The step revision last read. Stale saves return 409 with the current revision.'),
           delayDays: delayDaysSchema.optional().describe('Whole days after the contact entered the sequence at which this email goes out'),
           subject: draftFields.subject.optional().describe('The email subject'), previewText: draftFields.previewText.optional().describe('Inbox preview text'),
-          doc: draftFields.doc.optional().describe('The email body as a TipTap document'),
+          doc: draftFields.doc.optional().describe('The email body as a TipTap document'), sendFormat: draftFields.sendFormat.optional().describe('How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.'),
         }),
         rest: { method: 'PATCH', path: '/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId' }, mcp: { title: 'Update a sequence step', destructive: false },
         handler: (ctx, i) => ctx.db.tx(() => {
@@ -183,7 +183,7 @@ export const sequencesModule = {
           const campaign = getCampaignRow(ctx, step.campaign_id)
           assertRevision(campaign, i.revision)
           const now = ctx.now()
-          ctx.db.run('UPDATE campaigns SET subject = ?, preview_text = ?, doc = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?', i.subject ?? campaign.subject, i.previewText ?? campaign.preview_text, i.doc ? JSON.stringify(i.doc) : campaign.doc, now, campaign.id, i.newsletterId, i.revision)
+          ctx.db.run('UPDATE campaigns SET send_format = ?, subject = ?, preview_text = ?, doc = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?', i.sendFormat ?? campaign.send_format, i.subject ?? campaign.subject, i.previewText ?? campaign.preview_text, i.doc ? JSON.stringify(i.doc) : campaign.doc, now, campaign.id, i.newsletterId, i.revision)
           if (row.status !== 'draft' && !(i.subject ?? campaign.subject).trim()) throw new AppError('review_failed', 'A step of a running sequence needs a subject.', 400)
           const delayDays = i.delayDays ?? step.delay_days
           ctx.db.run('UPDATE sequence_steps SET delay_days = ?, updated_at = ? WHERE id = ? AND sequence_id = ?', delayDays, now, step.id, row.id)

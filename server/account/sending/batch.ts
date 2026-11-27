@@ -57,7 +57,9 @@ export function flushTally(ctx: StoreCtx, campaignId: string, newsletterId: stri
  * itself is the record of the send (the timeline reads `deliveries.sent_at`); no `events` row is written.
  */
 export function markSentEffects(ctx: StoreCtx, d: Pick<DeliveryRow, 'id' | 'campaign_id' | 'contact_id'>, newsletterId: string, at: number, tally?: SentTally) {
-  const issue = getCampaignRow(ctx, d.campaign_id).kind === 'issue'
+  const campaign = getCampaignRow(ctx, d.campaign_id)
+  // A plain send carries no open pixel or tracked link, so silence after it says nothing about the reader.
+  const issue = campaign.kind === 'issue' && campaign.send_format !== 'plain'
   ctx.db.run('UPDATE contacts SET sent_count = sent_count + 1, ignored_streak = ignored_streak + ?, strict_ignored_streak = strict_ignored_streak + ?, last_sent_at = ?, updated_at = ?, engaged_score = ROUND((open_count + 3.0 * click_count) / (sent_count + 1), 3) WHERE id = ?', issue ? 1 : 0, issue ? 1 : 0, at, at, d.contact_id)
   recordHygieneSend(ctx, d.campaign_id, d.contact_id, at)
   if (tally) {

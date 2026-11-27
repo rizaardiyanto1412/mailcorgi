@@ -4,6 +4,7 @@ import { AppError } from '../../core/http.ts'
 import { newId } from '../../core/ids.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { nodeSchema, emptyDoc } from '../render/index.ts'
+import { draftFields } from '../campaigns/index.ts'
 import { hostedForm } from './pages.ts'
 import { migrations } from './migrations.ts'
 import { getNewsletter, getSettings, settingsSchema, customFields, welcomeCampaign, welcomeEnabled } from './settings.ts'
@@ -56,7 +57,7 @@ export const signupModule = {
       }),
       defineAction({
         name: 'signup.saveWelcome', description: 'Save the one welcome campaign for this newsletter and turn it on or off.', scope: 'account', role: 'admin', effect: 'write', resource,
-        input: z.object({ newsletterId, enabled: z.boolean().describe('Send this email after a reader subscribes'), subject: z.string().trim().min(1).max(150).describe('Welcome email subject'), doc: nodeSchema.refine((n) => n.type === 'doc').default(emptyDoc).describe('Welcome email editor document'), revision: z.number().int().positive().nullable().describe('Revision last read, or null to create the welcome campaign') }),
+        input: z.object({ newsletterId, enabled: z.boolean().describe('Send this email after a reader subscribes'), subject: z.string().trim().min(1).max(150).describe('Welcome email subject'), doc: nodeSchema.refine((n) => n.type === 'doc').default(emptyDoc).describe('Welcome email editor document'), revision: z.number().int().positive().nullable().describe('Revision last read, or null to create the welcome campaign'), sendFormat: draftFields.sendFormat.optional().describe('How the welcome email is sent: html (themed) or plain (a plain text email that reads like a personally written one). Omit to keep the current value; a new welcome email starts as html.') }),
         rest: { method: 'PUT', path: '/newsletters/:newsletterId/signup/welcome' }, mcp: { title: 'Save welcome email', destructive: false },
         handler: (ctx, input, actor) => ctx.db.tx(() => {
           getNewsletter(ctx, input.newsletterId)
@@ -64,8 +65,8 @@ export const signupModule = {
           if ((existing?.revision ?? null) !== input.revision) throw new AppError('revision_conflict', 'The welcome email changed. Reload it before saving.', 409)
           if (existing && existing.status !== 'draft') throw new AppError('not_editable', 'The welcome email must be a draft.', 409)
           const id = existing?.id ?? newId('cmp')
-          if (existing) ctx.db.run('UPDATE campaigns SET subject = ?, doc = ?, format = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.subject, JSON.stringify(input.doc), 'doc', ctx.now(), id, input.newsletterId)
-          else ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'welcome', ?, ?, 'doc', 0, ?, ?, ?)", id, input.newsletterId, input.subject, JSON.stringify(input.doc), actor.userId, ctx.now(), ctx.now())
+          if (existing) ctx.db.run('UPDATE campaigns SET subject = ?, doc = ?, format = ?, send_format = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.subject, JSON.stringify(input.doc), 'doc', input.sendFormat ?? existing.sendFormat, ctx.now(), id, input.newsletterId)
+          else ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'welcome', ?, ?, 'doc', ?, 0, ?, ?, ?)", id, input.newsletterId, input.subject, JSON.stringify(input.doc), input.sendFormat ?? 'html', actor.userId, ctx.now(), ctx.now())
           ctx.db.run('UPDATE newsletters SET welcome = ?, updated_at = ? WHERE id = ?', JSON.stringify({ enabled: input.enabled }), ctx.now(), input.newsletterId)
           return { welcome: welcomeCampaign(ctx, input.newsletterId), enabled: input.enabled }
         }),

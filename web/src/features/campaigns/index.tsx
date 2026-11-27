@@ -56,7 +56,7 @@ function Draft({ initial, reload }: {
   initial: Campaign
   reload(): unknown
 }) {
-  const [draft, setDraft] = useState({ subject: initial.subject, previewText: initial.previewText, format: initial.format, doc: initial.doc, source: initial.source, html: initial.html, text: initial.text, audience: initial.audience })
+  const [draft, setDraft] = useState({ subject: initial.subject, previewText: initial.previewText, format: initial.format, sendFormat: initial.sendFormat, doc: initial.doc, source: initial.source, html: initial.html, text: initial.text, audience: initial.audience })
   const [revision, setRevision] = useState(initial.revision)
   const [saved, setSaved] = useState(JSON.stringify(draft))
   const [saveState, setSaveState] = useState('Saved')
@@ -149,7 +149,7 @@ function Draft({ initial, reload }: {
       <div className="flex flex-wrap items-center gap-3"><Select aria-label="Content format" disabled={!editable} className="!w-44" value={draft.format} onChange={(e) => {
         const format = e.target.value
         if (format === 'doc' || format === 'markdown' || format === 'html') setDraft({ ...draft, format })
-      }}><option value="doc">Visual editor</option><option value="markdown">Markdown</option><option value="html">HTML</option></Select>{!editable && <Button onClick={() => {
+      }}><option value="doc">Visual editor</option><option value="markdown">Markdown</option><option value="html">HTML</option></Select><label className="flex items-center gap-2 text-sm" title="No design, footer or tracking: it reads like an email you wrote by hand. An unsubscribe line is added at the end."><input type="checkbox" disabled={!editable} checked={draft.sendFormat === 'plain'} onChange={(e) => setDraft({ ...draft, sendFormat: e.target.checked ? 'plain' : 'html' })} />Send as plain text</label>{!editable && <Button onClick={() => {
         setShowPreview(!showPreview)
         void preview.refetch()
       }}>{showPreview ? 'Hide preview' : 'Show preview'}</Button>}</div>

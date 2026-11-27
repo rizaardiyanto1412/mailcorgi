@@ -30,6 +30,7 @@ export const stepInputSchema = z.object({
   delayDays: delayDaysSchema.describe('Whole days after the contact entered the sequence (not after the previous step) at which this email goes out. Day 0 is the welcome email, so the first step is at least 1.'),
   subject: draftFields.subject.default('').describe('The email subject'),
   doc: draftFields.doc.optional().describe('The email body as a TipTap document. Omit for an empty email to fill in later.'),
+  sendFormat: draftFields.sendFormat.default('html').describe('How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)'),
 })
 export type StepInput = z.infer<typeof stepInputSchema>
 
@@ -38,7 +39,7 @@ export interface SequenceRow {
   delay_anchor: 'enrolled_at'; created_by: string; created_at: number; updated_at: number; archived_at: number | null
 }
 export interface StepRow { id: string; sequence_id: string; position: number; delay_days: number; campaign_id: string; created_at: number; updated_at: number }
-type StepWithCampaign = StepRow & Pick<CampaignRow, 'subject' | 'preview_text' | 'doc' | 'revision'> & { campaign_updated_at: number }
+type StepWithCampaign = StepRow & Pick<CampaignRow, 'subject' | 'preview_text' | 'doc' | 'revision' | 'send_format'> & { campaign_updated_at: number }
 
 export function getSequenceRow(ctx: StoreCtx, sequenceId: string, newsletterId: string): SequenceRow {
   const row = ctx.db.get<SequenceRow>('SELECT * FROM sequences WHERE id = ? AND newsletter_id = ?', sequenceId, newsletterId)
@@ -59,10 +60,10 @@ export function validateRules(ctx: StoreCtx, newsletterId: string, entry: Sequen
   for (const segmentId of segments) if (!ctx.db.get('SELECT id FROM segments WHERE id = ? AND newsletter_id = ?', segmentId, newsletterId)) throw notFound('That segment')
 }
 
-const STEP_SELECT = 'SELECT st.*, c.subject, c.preview_text, c.doc, c.revision, c.updated_at AS campaign_updated_at FROM sequence_steps st JOIN campaigns c ON c.id = st.campaign_id'
+const STEP_SELECT = 'SELECT st.*, c.subject, c.preview_text, c.doc, c.send_format, c.revision, c.updated_at AS campaign_updated_at FROM sequence_steps st JOIN campaigns c ON c.id = st.campaign_id'
 const serializeStep = (r: StepWithCampaign) => ({
   id: r.id, sequenceId: r.sequence_id, position: r.position, delayDays: r.delay_days, campaignId: r.campaign_id,
-  subject: r.subject, previewText: r.preview_text, doc: (r.doc ? parseDoc(r.doc) : emptyDoc) as DocNode, revision: r.revision,
+  subject: r.subject, previewText: r.preview_text, sendFormat: r.send_format, doc: (r.doc ? parseDoc(r.doc) : emptyDoc) as DocNode, revision: r.revision,
   createdAt: r.created_at, updatedAt: Math.max(r.updated_at, r.campaign_updated_at),
 })
 export type SequenceStep = ReturnType<typeof serializeStep>
@@ -103,7 +104,7 @@ export function insertStep(ctx: StoreCtx, sequence: SequenceRow, input: StepInpu
   const now = ctx.now()
   const campaignId = newId(ID_PREFIX.campaign)
   const stepId = newId(ID_PREFIX.sequenceStep)
-  ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'sequence', ?, ?, 'doc', 0, ?, ?, ?)", campaignId, sequence.newsletter_id, input.subject, JSON.stringify(input.doc ?? emptyDoc), userId, now, now)
+  ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'sequence', ?, ?, 'doc', ?, 0, ?, ?, ?)", campaignId, sequence.newsletter_id, input.subject, JSON.stringify(input.doc ?? emptyDoc), input.sendFormat, userId, now, now)
   ctx.db.run('INSERT INTO sequence_steps (id, sequence_id, position, delay_days, campaign_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', stepId, sequence.id, (count.last ?? 0) + 1, input.delayDays, campaignId, now, now)
   return stepId
 }

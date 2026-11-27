@@ -8,9 +8,10 @@ import { getNewsletterRow } from '../newsletters/index.ts'
 import { emptyDoc, parseTheme, themeSchema, renderEmail, renderWeb } from '../render/index.ts'
 import { assertEditable, assertNotSequenceStep, assertRevision, audienceSchema, draftFields, getCampaign, getCampaignRow, serializeCampaign, statusSchema, type CampaignAudience, type CampaignRow } from './model.ts'
 import { reviewChecks } from './review.ts'
+import { migrations } from './migrations.ts'
 import { deleteImageAction, imageUsageAction, listImagesAction, uploadImageAction } from './uploads.ts'
 export { getCampaign, getCampaignRow, serializeCampaign, transitionCampaign, statusSchema, audienceSchema, assertNotSequenceStep, assertRevision, draftFields } from './model.ts'
-export type { Campaign, CampaignRow, CampaignStatus, CampaignAudience } from './model.ts'
+export type { Campaign, CampaignRow, CampaignStatus, CampaignAudience, SendFormat } from './model.ts'
 export { reviewChecks } from './review.ts'
 export type { ReviewCheck } from './review.ts'
 
@@ -45,6 +46,7 @@ function previews(ctx: StoreCtx, row: CampaignRow) {
 export const campaignsModule = {
   name: 'campaigns',
   register(reg: AccountRegistrar) {
+    reg.migrations(migrations)
     reg.resolver('campaign', (ctx, id) => ctx.db.get<{ newsletter_id: string }>('SELECT newsletter_id FROM campaigns WHERE id = ?', id)?.newsletter_id ?? null)
     return reg.actions(
       defineAction({
@@ -55,17 +57,17 @@ export const campaignsModule = {
           const where = "newsletter_id = ? AND kind = 'issue' AND (? IS NULL OR status = ?) AND instr(lower(subject), lower(?)) > 0"
           const params = [input.newsletterId, input.status ?? null, input.status ?? null, input.search ?? '']
           const rows = ctx.db.all<CampaignRow>(`SELECT * FROM campaigns WHERE ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, ...params, input.limit, input.offset)
-          return { campaigns: rows.map((r) => ({ id: r.id, newsletterId: r.newsletter_id, subject: r.subject, status: r.status, format: r.format, updatedAt: r.updated_at, revision: r.revision })), total: ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM campaigns WHERE ${where}`, ...params)!.n }
+          return { campaigns: rows.map((r) => ({ id: r.id, newsletterId: r.newsletter_id, subject: r.subject, status: r.status, format: r.format, sendFormat: r.send_format, updatedAt: r.updated_at, revision: r.revision })), total: ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM campaigns WHERE ${where}`, ...params)!.n }
         },
       }),
       defineAction({
         name: 'campaigns.create', description: 'Create a campaign draft.', scope: 'account', role: 'member', effect: 'write', resource: newsletterResource,
-        input: z.object({ newsletterId, subject: draftFields.subject.default('').describe('Email subject or draft name'), format: draftFields.format.default('doc').describe('Content format'), doc: draftFields.doc.optional().describe('Initial TipTap document'), source: draftFields.source.optional().describe('Markdown or HTML source'), html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.default({ all: true }).describe('Audience selection and exclusions') }),
+        input: z.object({ newsletterId, subject: draftFields.subject.default('').describe('Email subject or draft name'), format: draftFields.format.default('doc').describe('Content format'), doc: draftFields.doc.optional().describe('Initial TipTap document'), source: draftFields.source.optional().describe('Markdown or HTML source'), html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.default({ all: true }).describe('Audience selection and exclusions'), sendFormat: draftFields.sendFormat.default('html').describe('How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)') }),
         rest: { method: 'POST', path: '/newsletters/:newsletterId/campaigns' }, mcp: { title: 'Create a campaign draft', destructive: false },
         handler: (ctx, input, actor) => {
           validateAudience(ctx, input.newsletterId, input.audience)
           const id = newId('cmp')
-          ctx.db.run('INSERT INTO campaigns (id, newsletter_id, subject, format, doc, source, html, text, audience, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, input.newsletterId, input.subject, input.format, JSON.stringify(input.doc ?? emptyDoc), input.source ?? '', input.html ?? '', input.text ?? '', JSON.stringify(input.audience), actor.userId, ctx.now(), ctx.now())
+          ctx.db.run('INSERT INTO campaigns (id, newsletter_id, subject, send_format, format, doc, source, html, text, audience, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, input.newsletterId, input.subject, input.sendFormat, input.format, JSON.stringify(input.doc ?? emptyDoc), input.source ?? '', input.html ?? '', input.text ?? '', JSON.stringify(input.audience), actor.userId, ctx.now(), ctx.now())
           return getCampaign(ctx, id)
         },
       }),
@@ -80,7 +82,7 @@ export const campaignsModule = {
           campaignId, revision,
           subject: draftFields.subject.optional().describe('Email subject or draft name'), previewText: draftFields.previewText.optional().describe('Inbox preview text'),
           format: draftFields.format.optional().describe('Content format'), doc: draftFields.doc.optional().describe('TipTap document JSON'), source: draftFields.source.optional().describe('Markdown or HTML source'),
-          html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.optional().describe('Audience selection and exclusions'),
+          html: draftFields.html.optional().describe('Raw email HTML'), text: draftFields.text.optional().describe('Plain text alternative'), audience: audienceSchema.optional().describe('Audience selection and exclusions'), sendFormat: draftFields.sendFormat.optional().describe('How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.'),
         }),
         rest: { method: 'PATCH', path: '/campaigns/:campaignId' }, mcp: { title: 'Save a campaign draft', destructive: false },
         handler: (ctx, input, actor) => ctx.db.tx(() => {
@@ -92,8 +94,8 @@ export const campaignsModule = {
           if (input.audience) validateAudience(ctx, row.newsletter_id, input.audience)
           // The same rule as sequences.updateStep: a running sequence keeps a subject on every step.
           if (row.kind === 'sequence' && !(input.subject ?? row.subject).trim() && ctx.db.get("SELECT 1 FROM sequence_steps st JOIN sequences s ON s.id = st.sequence_id WHERE st.campaign_id = ? AND s.status IN ('active', 'paused')", row.id)) throw new AppError('review_failed', 'A step of a running sequence needs a subject.', 400)
-          ctx.db.run('UPDATE campaigns SET subject = ?, preview_text = ?, format = ?, doc = ?, source = ?, html = ?, text = ?, audience = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?',
-            input.subject ?? row.subject, input.previewText ?? row.preview_text, input.format ?? row.format, input.doc ? JSON.stringify(input.doc) : row.doc, input.source ?? row.source, input.html ?? row.html, input.text ?? row.text, input.audience ? JSON.stringify(input.audience) : row.audience, ctx.now(), row.id, row.newsletter_id, input.revision)
+          ctx.db.run('UPDATE campaigns SET send_format = ?, subject = ?, preview_text = ?, format = ?, doc = ?, source = ?, html = ?, text = ?, audience = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?',
+            input.sendFormat ?? row.send_format, input.subject ?? row.subject, input.previewText ?? row.preview_text, input.format ?? row.format, input.doc ? JSON.stringify(input.doc) : row.doc, input.source ?? row.source, input.html ?? row.html, input.text ?? row.text, input.audience ? JSON.stringify(input.audience) : row.audience, ctx.now(), row.id, row.newsletter_id, input.revision)
           return getCampaign(ctx, row.id)
         }),
       }),
@@ -104,7 +106,7 @@ export const campaignsModule = {
           const row = getCampaignRow(ctx, input.campaignId)
           assertNotSequenceStep(row)
           const id = newId('cmp')
-          ctx.db.run('INSERT INTO campaigns (id, newsletter_id, author_id, kind, subject, preview_text, format, doc, source, html, text, audience, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, row.newsletter_id, row.author_id, row.kind, `${row.subject} (copy)`, row.preview_text, row.format, row.doc, row.source, row.html, row.text, row.audience, actor.userId, ctx.now(), ctx.now())
+          ctx.db.run('INSERT INTO campaigns (id, newsletter_id, author_id, kind, send_format, subject, preview_text, format, doc, source, html, text, audience, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', id, row.newsletter_id, row.author_id, row.kind, row.send_format, `${row.subject} (copy)`, row.preview_text, row.format, row.doc, row.source, row.html, row.text, row.audience, actor.userId, ctx.now(), ctx.now())
           return getCampaign(ctx, id)
         },
       }),

@@ -9,6 +9,11 @@ export interface EmailMessage {
   subject: string
   html: string
   text: string
+  /**
+   * A plain send: `text` is the message and `html` only a bare copy of it. Every real provider drops
+   * `html` and sends a lone text/plain part; the test outbox stores both.
+   */
+  textOnly?: boolean
   headers: Record<string, string>
   meta: { accountId: string; deliveryId: string | null; kind: 'campaign' | 'system' }
   idempotencyKey: string

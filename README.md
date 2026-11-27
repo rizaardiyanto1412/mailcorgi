@@ -22,6 +22,9 @@ keeps your list, your issues and your stats in SQLite databases that you own.
   2.5% or complaints pass 0.08%. "Send to more now" and resuming a paused send follow the same check,
   and the send page says when the next step is held and why. Send to the most engaged readers first.
 - One-click unsubscribe headers (RFC 8058) on every email.
+- Plain text sending for any campaign, the welcome email or a sequence step (`sendFormat: "plain"`, or
+  "Send as plain text" in the editor): no design, footer or tracking, only your words and an unsubscribe
+  line, so it reads like an email you wrote by hand. See [how it is sent](docs/decisions/plain-text-send.md).
 
 **Your list**
 

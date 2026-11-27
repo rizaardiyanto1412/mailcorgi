@@ -39,7 +39,7 @@ export function sendContext(ctx: StoreCtx, row: CampaignRow): SendContext | null
 
 /** Record every link the issue carries once, so click tokens can only point at them. */
 export function recordLinks(ctx: StoreCtx, send: SendContext): void {
-  if (send.links.length) return
+  if (send.links.length || send.campaign.sendFormat === 'plain') return
   const urls: string[] = []
   renderEmail({ campaign: send.campaign, newsletter: send.newsletter, theme: send.theme, recipient: { contact: {}, links: { unsubscribe: 'https://example.invalid/u', preferences: 'https://example.invalid/p', web: send.webUrl, wrap: (url) => { if (!urls.includes(url)) urls.push(url); return url } } } })
   ctx.db.tx(() => {
@@ -60,15 +60,16 @@ export async function buildMessage(ctx: StoreCtx, send: SendContext, recipient: 
   const unsubscribe = publicUrl(ctx, `/u/${await signToken(ctx, 'u', [contact.id, campaignId])}`)
   const preferences = publicUrl(ctx, `/u/${await signToken(ctx, 'p', [contact.id])}`)
   const wrapped = new Map<string, string>()
-  if (deliveryId !== null && send.tracking.clicks) for (const link of send.links) wrapped.set(link.url, publicUrl(ctx, `/t/c/${await signToken(ctx, 'c', [deliveryId, link.id])}`))
-  const openPixel = deliveryId !== null && send.tracking.opens ? publicUrl(ctx, `/t/o/${await signToken(ctx, 'o', [deliveryId])}`) : undefined
+  const tracked = deliveryId !== null && send.campaign.sendFormat !== 'plain'
+  if (tracked && send.tracking.clicks) for (const link of send.links) wrapped.set(link.url, publicUrl(ctx, `/t/c/${await signToken(ctx, 'c', [deliveryId, link.id])}`))
+  const openPixel = tracked && send.tracking.opens ? publicUrl(ctx, `/t/o/${await signToken(ctx, 'o', [deliveryId])}`) : undefined
   const keep = send.row.kind === 'keep' ? publicUrl(ctx, `/keep/${await signToken(ctx, 'k', [contact.id, keepIssuedAt(ctx, campaignId, contact.id)])}`) : ''
   const campaign = keep ? { ...send.campaign, source: send.campaign.source.replaceAll('{{keep_url}}', keep) } : send.campaign
   const rendered = renderEmail({ campaign, newsletter: send.newsletter, theme: send.theme, recipient: { contact: { name: contact.name, email: contact.email, fields: contact.fields }, links: { unsubscribe, preferences, web: send.webUrl, openPixel, wrap: (url) => wrapped.get(url) ?? url } } })
   const accountId = ctx.accountId!
   return {
     from: send.sender.from, to: contact.email, replyTo: send.sender.replyTo,
-    subject: subjectPrefix + rendered.subject, html: rendered.html, text: rendered.text,
+    subject: subjectPrefix + rendered.subject, html: rendered.html, text: rendered.text, ...(rendered.textOnly ? { textOnly: true } : {}),
     headers: {
       ...rendered.headers,
       'List-Unsubscribe': `<mailto:${send.unsubscribeMailbox}?subject=unsubscribe>, <${unsubscribe}>`,
