@@ -16,6 +16,9 @@ export interface RecipientLinks {
 }
 export interface RenderCampaign {
   format?: string
+  /** `plain` sends the body as plain text with no theme and no tracking. Anything else is the themed email. */
+  sendFormat?: string
+  send_format?: string
   subject?: string
   previewText?: string
   preview_text?: string
@@ -83,11 +86,14 @@ interface RenderContext {
   tracking: boolean
   /** Text for a card excerpt: images contribute only their caption, never `[alt]`. */
   excerpt?: boolean
+  /** A plain send: links are written out after their text and never rewritten for click tracking. */
+  plain: boolean
   merge(value: string): string
   href(value: string): string
-  footnote(url: string): string
+  /** The text that follows a link's label: a ` [n]` footnote mark, or ` (url)` in a plain send unless the label is the address itself. */
+  footnote(url: string, label?: string): string
 }
-function makeContext(theme: Theme, contact: RenderContact, links: RecipientLinks): {
+function makeContext(theme: Theme, contact: RenderContact, links: RecipientLinks, plain = false): {
   ctx: RenderContext
   notes: string[]
 } {
@@ -96,14 +102,15 @@ function makeContext(theme: Theme, contact: RenderContact, links: RecipientLinks
   return {
     notes,
     ctx: {
-      theme, merge, tracking: typeof links.wrap === 'function',
+      theme, merge, plain, tracking: !plain && typeof links.wrap === 'function',
       href: (value) => {
         const url = safeUrl(merge(value), true)
-        return url ? safeUrl(links.wrap?.(url) ?? url, true) : ''
+        return url ? safeUrl(plain ? url : links.wrap?.(url) ?? url, true) : ''
       },
-      footnote: (value) => {
+      footnote: (value, label = '') => {
         const url = safeUrl(merge(value), true)
         if (!url) return ''
+        if (plain) return (safeUrl(label.trim(), true) || label.trim()) === url ? '' : ` (${url})`
         let index = notes.indexOf(url)
         if (index < 0) {
           index = notes.length
@@ -149,7 +156,7 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
           case 'link': {
             const url = string(mark.attrs?.href)
             html = link(html, url)
-            text += ctx.footnote(url)
+            text += ctx.footnote(url, text)
             break
           }
         }
@@ -200,7 +207,7 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
       const href = ctx.href(attr('href'))
       const align = ['left', 'center', 'right'].includes(attr('align')) ? attr('align') : 'left'
       const radius = t.buttonShape === 'pill' ? 48 : t.buttonShape === 'rounded' ? 8 : 0
-      return { html: href ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="${align}" style="padding:12px 0 24px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="${t.buttonColor}" style="background:${t.buttonColor};border-radius:${radius}px;mso-padding-alt:14px 24px"><a href="${escapeHtml(href)}" style="display:inline-block;border:1px solid ${t.buttonColor};border-radius:${radius}px;padding:14px 24px;color:${t.buttonText};background:${t.buttonColor};text-decoration:none;font-weight:bold;mso-padding-alt:0">${escapeHtml(label)}</a></td></tr></table></td></tr></table>` : `<p>${escapeHtml(label)}</p>`, text: `${label}${ctx.footnote(attr('href'))}\n\n` }
+      return { html: href ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="${align}" style="padding:12px 0 24px"><table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="${t.buttonColor}" style="background:${t.buttonColor};border-radius:${radius}px;mso-padding-alt:14px 24px"><a href="${escapeHtml(href)}" style="display:inline-block;border:1px solid ${t.buttonColor};border-radius:${radius}px;padding:14px 24px;color:${t.buttonText};background:${t.buttonColor};text-decoration:none;font-weight:bold;mso-padding-alt:0">${escapeHtml(label)}</a></td></tr></table></td></tr></table>` : `<p>${escapeHtml(label)}</p>`, text: `${label}${ctx.footnote(attr('href'), label)}\n\n` }
     }
     case 'callout': {
       const p = children()
@@ -213,7 +220,7 @@ function renderNode(node: DocNode, ctx: RenderContext): Part {
       const title = merge(attr('title') || attr('url'))
       const description = merge(attr('description'))
       const image = safeUrl(merge(attr('image')), true)
-      return { html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:16px;border:1px solid ${t.muted}">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" width="120" style="max-width:100%;height:auto">` : ''}<p>${link(escapeHtml(title), attr('url'))}</p><p>${escapeHtml(description)}</p></td></tr></table>`, text: `${title}${ctx.footnote(attr('url'))}\n${description}\n\n` }
+      return { html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:16px;border:1px solid ${t.muted}">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" width="120" style="max-width:100%;height:auto">` : ''}<p>${link(escapeHtml(title), attr('url'))}</p><p>${escapeHtml(description)}</p></td></tr></table>`, text: `${title}${ctx.footnote(attr('url'), title)}\n${description}\n\n` }
     }
   }
 }
@@ -229,9 +236,12 @@ const sanitise = (html: string) => sanitizeHtml(html, {
 
 function htmlText(html: string, ctx: RenderContext): string {
   const safe = sanitise(html)
-  const annotated = safe.replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_all, href: string, label: string) => `${label}${escapeHtml(ctx.footnote(decodeText(href)))}`)
-  const plain = sanitizeHtml(annotated.replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n').replace(/<br\s*\/?\s*>/gi, '\n'), { allowedTags: [], allowedAttributes: {} })
-  return decodeText(plain).trim()
+  const strip = (value: string) => sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} })
+  const annotated = safe.replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_all, href: string, label: string) => `${label}${escapeHtml(ctx.footnote(decodeText(href), ctx.plain ? decodeText(strip(label)) : ''))}`)
+  if (!ctx.plain) return decodeText(strip(annotated.replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n').replace(/<br\s*\/?\s*>/gi, '\n'))).trim()
+  // The plain send is read as written, so the source's own line breaks go and every block ends in a blank line.
+  const blocks = annotated.replace(/\s+/g, ' ').replace(/<\/(p|h[1-6]|blockquote|ul|ol|table|pre|figure)>|<hr\s*\/?\s*>/gi, '\n\n').replace(/<\/(div|li|tr)>|<br\s*\/?\s*>/gi, '\n')
+  return decodeText(strip(blocks)).split('\n').map((line) => line.trim()).join('\n').trim()
 }
 function body(campaign: RenderCampaign, ctx: RenderContext, web: boolean): Part {
   if (campaign.format === 'html') {
@@ -249,23 +259,41 @@ function header(theme: Theme, newsletter: RenderNewsletter): string {
   const logo = safeUrl(theme.header.logo, true)
   return `${logo ? `<img src="${escapeHtml(logo)}" width="160" alt="${escapeHtml(string(newsletter.name))}" style="max-width:100%;height:auto;margin-bottom:20px">` : ''}${theme.header.title ? `<p style="font-weight:bold;color:${theme.accent}">${escapeHtml(theme.header.title)}</p>` : ''}`
 }
+/** Tidy text for a plain send: no trailing spaces, at most one blank line between paragraphs. */
+const tidy = (text: string) => text.split('\n').map((line) => line.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+/** The plain text again as the barest HTML, for a provider that wants an HTML part: paragraphs and links, no styling. */
+const bareHtml = (text: string) => `<!doctype html><html><body>${text.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/https?:\/\/[^\s<>"]+/g, (match) => {
+  const url = match.replace(/[).,!?]+$/, '')
+  return `<a href="${url}">${url}</a>${match.slice(url.length)}`
+}).replace(/\n/g, '<br>')}</p>`).join('')}</body></html>`
+
 export function renderEmail(input: RenderEmailInput): {
   subject: string
   html: string
   text: string
+  /** Set for a plain send: `text` is the email, `html` a bare copy that no provider sends. */
+  textOnly?: true
   headers: Record<string, string>
 } {
   const theme = parseTheme(input.theme)
-  const { ctx, notes } = makeContext(theme, input.recipient.contact, input.recipient.links)
+  const plain = (input.campaign.sendFormat ?? input.campaign.send_format) === 'plain'
+  const { ctx, notes } = makeContext(theme, input.recipient.contact, input.recipient.links, plain)
   const part = body(input.campaign, ctx, false)
   const links = input.recipient.links
+  const subject = ctx.merge(string(input.campaign.subject)).replace(/[\r\n]/g, ' ')
+  const headers = { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
+  if (plain) {
+    // No theme, header, footer, preview text or open pixel: only the words and one line to unsubscribe.
+    const text = `${tidy(part.text)}\n\n--\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}`
+    return { subject, html: bareHtml(text), text, textOnly: true, headers }
+  }
   const address = string(input.newsletter.postalAddress) || string(input.newsletter.postal_address)
   const footerLink = (url: string, label: string) => `<a href="${escapeHtml(safeUrl(url, true))}" style="color:${theme.accent}">${label}</a>`
   const footer = `<div style="margin-top:32px;border-top:1px solid ${theme.muted};padding-top:20px;font-size:13px;color:${theme.muted}"><p>${escapeHtml(ctx.merge(theme.footerText))}</p><p>${escapeHtml(address)}</p><p>${footerLink(links.unsubscribe, 'Unsubscribe')} · ${footerLink(links.preferences, 'Preferences')} · ${footerLink(links.web, 'View on the web')}</p></div>`
   const pixel = links.openPixel && safeUrl(links.openPixel, true)
   const html = page(header(theme, input.newsletter) + part.html + footer + (pixel ? `<img src="${escapeHtml(pixel)}" width="1" height="1" alt="" style="display:block;border:0">` : ''), theme, ctx.merge(string(input.campaign.previewText) || string(input.campaign.preview_text)))
   const text = `${part.text.trim()}${notes.length ? '\n\n' + notes.map((url, i) => `[${i + 1}] ${url}`).join('\n') : ''}\n\n${ctx.merge(theme.footerText)}\n${address}\nUnsubscribe: ${safeUrl(links.unsubscribe, true)}\nPreferences: ${safeUrl(links.preferences, true)}\nView on the web: ${safeUrl(links.web, true)}`
-  return { subject: ctx.merge(string(input.campaign.subject)).replace(/[\r\n]/g, ' '), html, text, headers: { 'List-Unsubscribe': `<${safeUrl(links.unsubscribe)}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } }
+  return { subject, html, text, headers }
 }
 /** Plain text for cards and meta descriptions: no link footnotes, list markers or merge-field fallbacks. */
 const excerptOf = (text: string) => text.split('\n').filter((line) => !/^\s*\[\d+\]\s/.test(line)).map((line) => line.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')).join(' ').replace(/\s\[\d+\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240)

@@ -2704,6 +2704,15 @@ Input JSON Schema:
           }
         }
       }
+    },
+    "sendFormat": {
+      "default": "html",
+      "description": "How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)",
+      "type": "string",
+      "enum": [
+        "html",
+        "plain"
+      ]
     }
   },
   "required": [
@@ -2809,7 +2818,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/cam
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"subject":"","format":"doc","audience":{"all":true}}'
+  --data '{"subject":"","format":"doc","audience":{"all":true},"sendFormat":"html"}'
 ```
 
 ## GET /api/v1/campaigns/:campaignId
@@ -3034,6 +3043,14 @@ Input JSON Schema:
           }
         }
       }
+    },
+    "sendFormat": {
+      "description": "How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.",
+      "type": "string",
+      "enum": [
+        "html",
+        "plain"
+      ]
     }
   },
   "required": [
@@ -3923,6 +3940,15 @@ Input JSON Schema:
               "type"
             ],
             "$ref": "#/$defs/__schema0"
+          },
+          "sendFormat": {
+            "default": "html",
+            "description": "How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)",
+            "type": "string",
+            "enum": [
+              "html",
+              "plain"
+            ]
           }
         },
         "required": [
@@ -4339,6 +4365,15 @@ Input JSON Schema:
         "type"
       ],
       "$ref": "#/$defs/__schema0"
+    },
+    "sendFormat": {
+      "default": "html",
+      "description": "How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)",
+      "type": "string",
+      "enum": [
+        "html",
+        "plain"
+      ]
     }
   },
   "required": [
@@ -4446,7 +4481,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/seq
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"delayDays":1,"subject":""}'
+  --data '{"delayDays":1,"subject":"","sendFormat":"html"}'
 ```
 
 ## PATCH /api/v1/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId
@@ -4590,6 +4625,14 @@ Input JSON Schema:
         "type"
       ],
       "$ref": "#/$defs/__schema0"
+    },
+    "sendFormat": {
+      "description": "How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.",
+      "type": "string",
+      "enum": [
+        "html",
+        "plain"
+      ]
     }
   },
   "required": [
@@ -5694,6 +5737,14 @@ Input JSON Schema:
         }
       ],
       "description": "Revision last read, or null to create the welcome campaign"
+    },
+    "sendFormat": {
+      "description": "How the welcome email is sent: html (themed) or plain (a plain text email that reads like a personally written one). Omit to keep the current value; a new welcome email starts as html.",
+      "type": "string",
+      "enum": [
+        "html",
+        "plain"
+      ]
     }
   },
   "required": [

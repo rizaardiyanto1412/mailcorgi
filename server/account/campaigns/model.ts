@@ -24,7 +24,9 @@ export const draftFields = {
   html: z.string().max(1_000_000).describe('Raw email HTML for the HTML format'),
   text: z.string().max(1_000_000).describe('Optional plain text alternative for HTML campaigns'),
   audience: audienceSchema.describe('Exactly one of all, segmentId, tagIds or engaged, plus exclusions'),
+  sendFormat: z.enum(['html', 'plain']).describe('How the email is sent. html: the themed email with header, footer and tracking. plain: a plain text email that reads like a personally written one, with no theme, no open pixel and no click tracking, ending in a one-line unsubscribe link.'),
 }
+export type SendFormat = z.infer<typeof draftFields.sendFormat>
 export interface CampaignRow {
   id: string
   newsletter_id: string
@@ -32,6 +34,7 @@ export interface CampaignRow {
   /** `sequence`: the hidden template of one email-sequence step. It stays a draft and is managed by the sequences module. */
   kind: 'issue' | 'welcome' | 'keep' | 'sequence'
   format: 'doc' | 'markdown' | 'html'
+  send_format: SendFormat
   subject: string
   preview_text: string
   doc: string | null
@@ -61,7 +64,7 @@ export function getCampaignRow(ctx: StoreCtx, id: string): CampaignRow {
 export function serializeCampaign(row: CampaignRow) {
   return {
     id: row.id, newsletterId: row.newsletter_id, authorId: row.author_id, kind: row.kind,
-    format: row.format, subject: row.subject, previewText: row.preview_text,
+    format: row.format, sendFormat: row.send_format, subject: row.subject, previewText: row.preview_text,
     doc: row.doc ? parseDoc(row.doc) : emptyDoc, source: row.source ?? '', html: row.html ?? '', text: row.text ?? '', slug: row.slug,
     status: row.status, pauseReason: row.pause_reason, audience: audienceSchema.parse(JSON.parse(row.audience === '{}' ? '{"all":true}' : row.audience)),
     scheduledAt: row.scheduled_at, sendStartedAt: row.send_started_at, sentAt: row.sent_at,

@@ -62,7 +62,7 @@ export function postshibaProvider(ctx: StoreCtx, settings: Record<string, string
         const response = await ctx.platform.fetch(endpoint.href, {
           method: 'POST',
           headers: { authorization: `Basic ${toBase64(new TextEncoder().encode(`${settings.postshiba_user || ''}:${settings.postshiba_password || ''}`))}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ envelope_sender: from, content: { text_body: msg.text, html_body: msg.html, headers }, recipients: [{ email: to }] }),
+          body: JSON.stringify({ envelope_sender: from, content: { text_body: msg.text, ...(msg.textOnly ? {} : { html_body: msg.html }), headers }, recipients: [{ email: to }] }),
           ...noRedirect, signal: AbortSignal.timeout(30_000),
         })
         if (isRedirect(response)) return redirectedSend('postshiba', response.status, 'Check postshiba_endpoint.')

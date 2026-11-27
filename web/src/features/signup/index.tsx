@@ -28,6 +28,7 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
   const [subject, setSubject] = useState(initial.welcome?.subject ?? 'Welcome!')
   const [doc, setDoc] = useState<JSONContent>(initial.welcome?.doc ?? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Thanks for subscribing, {{first_name|friend}}!' }] }] })
   const [revision, setRevision] = useState(initial.welcome?.revision ?? null)
+  const [sendFormat, setSendFormat] = useState(initial.welcome?.sendFormat ?? 'html')
   const [welcomeSaved, setWelcomeSaved] = useState(false)
   const [validation, setValidation] = useState('')
   const save = useAction('signup.update', { invalidate: ['signup.get'], onSuccess: () => setSaved(true) })
@@ -39,7 +40,7 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     const parsed = nodeSchema.safeParse(doc)
     if (!parsed.success) { setValidation('The editor content is invalid. Please reload and try again.'); return }
     setValidation('')
-    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision })
+    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision, sendFormat })
   }
   return <div className="space-y-6">
     <PageHeader title="Signup forms" description="Invite readers to subscribe on your site or with a hosted form." />
@@ -67,6 +68,7 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     </div></Card>
     <section className="space-y-4"><h2 className="font-semibold">Welcome email</h2><p className="text-sm text-fg-3">Sent once after a reader confirms, or immediately when confirmation is off.</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setWelcomeSaved(false) }} />Send a welcome email</label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sendFormat === 'plain'} onChange={(e) => { setSendFormat(e.target.checked ? 'plain' : 'html'); setWelcomeSaved(false) }} />Send as plain text, like an email you wrote by hand (no design, footer or tracking)</label>
       <Field label="Subject">{(id) => <Input id={id} required maxLength={150} value={subject} onChange={(e) => { setSubject(e.target.value); setWelcomeSaved(false) }} />}</Field>
       <Suspense fallback={<Spinner />}><CampaignEditor newsletterId={newsletterId} doc={doc} onChange={(next) => { setDoc(next); setWelcomeSaved(false) }} onSave={saveWelcome} editable /></Suspense>
       {(validation || welcome.error) && <Banner kind="danger">{validation || welcome.error?.message}</Banner>}{welcomeSaved && <Banner kind="ok">Welcome email saved.</Banner>}

@@ -61,12 +61,13 @@ function fold(name: string, value: string): string {
 
 export function buildMime(msg: EmailMessage): string {
   const boundary = `mc_${randomToken(18)}`
-  const headers = { From: mailbox(msg.from), To: mailbox(msg.to), ...(msg.replyTo ? { 'Reply-To': mailbox(msg.replyTo) } : {}), Subject: encoded(msg.subject), ...messageHeaders(msg), 'MIME-Version': '1.0', 'Content-Type': `multipart/alternative; boundary="${boundary}"` }
+  const base64 = (body: string) => toBase64(new TextEncoder().encode(body.replace(/\r?\n/g, '\r\n'))).match(/.{1,76}/g)?.join('\r\n') ?? ''
+  const content = msg.textOnly ? { 'Content-Type': 'text/plain; charset=UTF-8', 'Content-Transfer-Encoding': 'base64' } : { 'Content-Type': `multipart/alternative; boundary="${boundary}"` }
+  const headers = { From: mailbox(msg.from), To: mailbox(msg.to), ...(msg.replyTo ? { 'Reply-To': mailbox(msg.replyTo) } : {}), Subject: encoded(msg.subject), ...messageHeaders(msg), 'MIME-Version': '1.0', ...content }
   const parts = Object.entries(headers).map(([name, value]) => fold(name, /[^\x20-\x7e]/.test(value) ? encoded(value) : value))
-  for (const [type, body] of [['text/plain', msg.text], ['text/html', msg.html]]) {
-    const base64 = toBase64(new TextEncoder().encode(body.replace(/\r?\n/g, '\r\n')))
-    parts.push('', `--${boundary}`, `Content-Type: ${type}; charset=UTF-8`, 'Content-Transfer-Encoding: base64', '', base64.match(/.{1,76}/g)?.join('\r\n') ?? '')
-  }
+  // A plain send is one text/plain entity, the same shape a mail client writes.
+  if (msg.textOnly) return [...parts, '', base64(msg.text), ''].join('\r\n')
+  for (const [type, body] of [['text/plain', msg.text], ['text/html', msg.html]]) parts.push('', `--${boundary}`, `Content-Type: ${type}; charset=UTF-8`, 'Content-Transfer-Encoding: base64', '', base64(body))
   parts.push(`--${boundary}--`, '')
   return parts.join('\r\n')
 }

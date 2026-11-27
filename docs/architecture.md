@@ -383,6 +383,7 @@ imports(id, newsletter_id, status, source_preset, mapping JSON, options JSON, to
         added, updated, skipped JSON (by reason), created_by, created_at, finished_at, error)
 import_chunks(import_id, seq, rows JSON, done INTEGER, PRIMARY KEY(import_id, seq))
 campaigns(id, newsletter_id, author_id NULL, kind 'issue'|'welcome'|'keep'|'sequence', format 'doc'|'markdown'|'html',
+          send_format 'html'|'plain',
           subject, preview_text, doc JSON, source TEXT, html TEXT, text TEXT, slug,
           status 'draft'|'scheduled'|'sending'|'paused'|'sent'|'canceled', pause_reason,
           audience JSON (segment id / tag ids / 'engaged' / all, exclusions),
@@ -615,7 +616,9 @@ spacer, embed link card (url, title, description, image), and marks bold, italic
 code, link, highlight. Email HTML is table-based with inline styles and a dark-mode-safe palette.
 Merge fields: `{{first_name}}`, `{{name}}`, `{{email}}`, `{{field.<key>}}`, with `|fallback`. System
 links: `{{unsubscribe_url}}`, `{{web_url}}`, `{{preferences_url}}`. Every user-controlled string is
-escaped. HTML-format campaigns are sanitized (`sanitize-html`) for the web archive.
+escaped. HTML-format campaigns are sanitized (`sanitize-html`) for the web archive. A campaign with
+`send_format = 'plain'` is rendered as plain text with no theme, footer or tracking and one unsubscribe
+line; which MIME parts each provider then sends is in `docs/decisions/plain-text-send.md`.
 
 **sending** — audience → `deliveries` rows (chunked inserts) → `send.batch` jobs. Each run claims up to
 `min(SEND_BATCH_SIZE, platform.limits.subrequestsPerRun)` queued rows, renders, calls the provider once
@@ -934,7 +937,7 @@ signing and verification; signup uses its exports.
 interface EmailProvider {
   name: 'ses' | 'resend' | 'postshiba' | 'smtp' | 'test'
   capabilities: { identities: boolean; events: boolean; idempotency: boolean }
-  send(msg: { from, to, replyTo?, subject, html, text, headers: Record<string,string>,
+  send(msg: { from, to, replyTo?, subject, html, text, textOnly?: boolean, headers: Record<string,string>,
               meta: { accountId: string; deliveryId: string | null; kind: 'campaign'|'system' },
               idempotencyKey: string }): Promise<SendResult>
   createIdentity?(domain): Promise<Identity>; getIdentity?(domain): Promise<Identity>; deleteIdentity?(domain): Promise<void>
@@ -1015,7 +1018,8 @@ audienceQuery(ctx, newsletterId, audience): { where, params }   // adds status =
 
 // server/account/render/index.ts
 renderEmail(input: { campaign, newsletter, theme, recipient: { contact, links: { unsubscribe, web, preferences, openPixel?, wrap?(url): string } } }):
-  { subject: string; html: string; text: string; headers: Record<string,string> }
+  { subject: string; html: string; text: string; textOnly?: true; headers: Record<string,string> }
+  // campaign.sendFormat 'plain': text only, no theme or tracking (docs/decisions/plain-text-send.md)
 renderWeb(input: { campaign, newsletter, theme, author? }): { html: string; excerpt: string; image?: string }
 renderDocPreview(doc, theme): string
 

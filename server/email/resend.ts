@@ -33,7 +33,7 @@ export function resendProvider(ctx: StoreCtx, settings: Record<string, string>):
     name: 'resend', capabilities: { identities: true, events: true, idempotency: true },
     async send(msg) {
       try {
-        const response = await request('emails', 'POST', { from: safeHeader(msg.from), to: [safeHeader(msg.to)], ...(msg.replyTo ? { reply_to: safeHeader(msg.replyTo) } : {}), subject: safeHeader(msg.subject), html: msg.html, text: msg.text, headers: messageHeaders(msg), tags: [{ name: 'mc_account', value: msg.meta.accountId }, ...(msg.meta.deliveryId ? [{ name: 'mc_delivery', value: msg.meta.deliveryId }] : [])] }, msg.idempotencyKey)
+        const response = await request('emails', 'POST', { from: safeHeader(msg.from), to: [safeHeader(msg.to)], ...(msg.replyTo ? { reply_to: safeHeader(msg.replyTo) } : {}), subject: safeHeader(msg.subject), ...(msg.textOnly ? {} : { html: msg.html }), text: msg.text, headers: messageHeaders(msg), tags: [{ name: 'mc_account', value: msg.meta.accountId }, ...(msg.meta.deliveryId ? [{ name: 'mc_delivery', value: msg.meta.deliveryId }] : [])] }, msg.idempotencyKey)
         if (isRedirect(response)) return redirectedSend('resend', response.status)
         const text = await response.text()
         if (!response.ok) {

@@ -265,6 +265,10 @@ The check cannot test these on a live install:
 Without bounce and complaint tracking, MailCorgi cannot remove bad addresses on its own, and your
 sender reputation suffers sooner. Use SMTP only for small lists or for testing.
 
+A campaign, welcome email or sequence step set to send as plain text (`sendFormat: "plain"`) goes out as
+a single `text/plain` message through every provider: SES, Resend, PostShiba and SMTP. The details are in
+[decisions/plain-text-send.md](decisions/plain-text-send.md).
+
 ### Amazon SES
 
 1. **Pick a region.** In the AWS console, choose the SES region closest to your readers, for example

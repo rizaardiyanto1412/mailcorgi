@@ -22,7 +22,7 @@ interface MailRow {
   consumed_at: number | null
 }
 const messageSchema = z.object({
-  from: z.string(), to: z.string(), replyTo: z.string().optional(), subject: z.string(), html: z.string(), text: z.string(),
+  from: z.string(), to: z.string(), replyTo: z.string().optional(), subject: z.string(), html: z.string(), text: z.string(), textOnly: z.boolean().optional(),
   headers: z.record(z.string(), z.string()), meta: z.object({ accountId: z.string(), deliveryId: z.null(), kind: z.literal('system') }), idempotencyKey: z.string(),
 })
 export function queueMail(ctx: StoreCtx, input: { id: string; newsletterId: string; contactId: string } & ({ kind: 'confirm'; token: string } | { kind: 'welcome' })) {
