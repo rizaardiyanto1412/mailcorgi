@@ -1,26 +1,30 @@
 import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { AppError, notFound } from '../../core/http.ts'
+import { withPatch } from '../../core/patch.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import type { CampaignRow } from '../campaigns/index.ts'
 
 const webUrl = z.url().refine((v) => /^https?:\/\//.test(v), 'Use an http or https URL.')
-export const settingsSchema = z.object({
-  enabled: z.boolean().default(true).describe('Make the public archive discoverable'),
-  seoTitle: z.string().max(160).default('').describe('Optional home page title'),
-  seoDescription: z.string().max(500).default('').describe('Optional search engine description'),
-  plausible: z.string().max(253).regex(/^[a-zA-Z0-9.-]*$/).default('').describe('Plausible site domain'),
-  ga4: z.string().regex(/^(G-[A-Z0-9]+)?$/).default('').describe('Google Analytics measurement id'),
-  fathom: z.string().regex(/^[A-Z0-9]*$/).max(30).default('').describe('Fathom site id'),
-  umami: z.string().regex(/^[a-fA-F0-9-]*$/).max(50).default('').describe('Umami Cloud website id'),
-  headCode: z.string().max(20000).default('').describe('Custom head HTML, used only on a verified custom host'),
-  bodyCode: z.string().max(20000).default('').describe('Custom body HTML, used only on a verified custom host'),
-  socialLinks: z.record(z.string().max(50), webUrl).default({}).describe('Named public social links'),
-  favicon: webUrl.or(z.literal('')).default('').describe('Optional favicon URL; otherwise the newsletter icon is used'),
-})
-export type WebsiteSettings = z.infer<typeof settingsSchema>
+const settingsFields = {
+  enabled: z.boolean().describe('Make the public archive discoverable'),
+  seoTitle: z.string().max(160).describe('Optional home page title'),
+  seoDescription: z.string().max(500).describe('Optional search engine description'),
+  plausible: z.string().max(253).regex(/^[a-zA-Z0-9.-]*$/).describe('Plausible site domain'),
+  ga4: z.string().regex(/^(G-[A-Z0-9]+)?$/).describe('Google Analytics measurement id'),
+  fathom: z.string().regex(/^[A-Z0-9]*$/).max(30).describe('Fathom site id'),
+  umami: z.string().regex(/^[a-fA-F0-9-]*$/).max(50).describe('Umami Cloud website id'),
+  headCode: z.string().max(20000).describe('Custom head HTML, used only on a verified custom host'),
+  bodyCode: z.string().max(20000).describe('Custom body HTML, used only on a verified custom host'),
+  socialLinks: z.record(z.string().max(50), webUrl).describe('Named public social links; replaces the whole set'),
+  favicon: webUrl.or(z.literal('')).describe('Optional favicon URL; otherwise the newsletter icon is used'),
+}
+/** Website options as a caller sends them: every key is optional and an omitted one keeps its saved value. */
+export const settingsSchema = z.object(settingsFields).partial()
+export type WebsiteSettings = Required<z.infer<typeof settingsSchema>>
+export const defaultSettings: WebsiteSettings = { enabled: true, seoTitle: '', seoDescription: '', plausible: '', ga4: '', fathom: '', umami: '', headCode: '', bodyCode: '', socialLinks: {}, favicon: '' }
 export function settings(value: string): WebsiteSettings {
-  return settingsSchema.parse(JSON.parse(value))
+  return withPatch(defaultSettings, settingsSchema.parse(JSON.parse(value)))
 }
 export const slugSchema = z.string().trim().toLowerCase().min(1).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).refine((v) => !['feed', 'feed-xml', 'sitemap', 'robots', 'authors', 'author', 'page'].includes(v), 'That address is reserved.')
 export const hostnameSchema = z.string().trim().toLowerCase().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, 'Enter a hostname without a scheme, port or path.')

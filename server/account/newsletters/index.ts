@@ -6,7 +6,7 @@ import { websiteHost } from '../website/index.ts'
 import { authorActions } from './authors.ts'
 import { imageShape, decodeImage, deleteBrandingImage, queueImageRemoval } from './images.ts'
 import { newId, newNewsletterKey } from '../../core/ids.ts'
-import { themeSchema, type Theme } from '../render/theme.ts'
+import { themeSchema, themePatchSchema, mergeTheme, parseTheme, type Theme } from '../render/theme.ts'
 import { limits } from '../usage/index.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { deleteNewsletterAction, registerNewsletterDelete } from './delete.ts'
@@ -261,8 +261,8 @@ export const newslettersModule = {
           language: z.string().min(2).max(35).refine((v) => { try { return Intl.getCanonicalLocales(v).length === 1 } catch { return false } }, 'Use a valid language code.').optional().describe('Newsletter language code'),
           timezone: z.string().max(100).refine((v) => { try { new Intl.DateTimeFormat('en', { timeZone: v }); return true } catch { return false } }, 'Use a valid timezone.').optional().describe('IANA timezone for scheduling'),
           doubleOptIn: z.boolean().optional().describe('Require email confirmation for public signups'),
-          tracking: z.object({ opens: z.boolean(), clicks: z.boolean() }).optional().describe('Enable tracking for opens and clicks'),
-          theme: themeSchema.optional().describe('Email and website colors, fonts, headings, buttons, header and footer'),
+          tracking: z.object({ opens: z.boolean().optional(), clicks: z.boolean().optional() }).optional().describe('Enable tracking for opens and clicks. An omitted key keeps its current value.'),
+          theme: themePatchSchema.optional().describe('Email and website colors, fonts, headings, buttons, header and footer. Omitted keys (and omitted header keys) keep their saved value.'),
         }),
         rest: { method: 'PATCH', path: '/newsletters/:newsletterId' },
         mcp: { title: 'Update a newsletter', destructive: false },
@@ -281,10 +281,13 @@ export const newslettersModule = {
             sets.push('description = ?')
             values.push(input.description)
           }
+          const stored = input.theme || input.tracking ? getNewsletterRow(ctx, input.newsletterId) : undefined
+          const tracking = input.tracking && stored ? { ...z.object({ opens: z.boolean().default(true), clicks: z.boolean().default(true) }).parse(JSON.parse(stored.tracking)), ...Object.fromEntries(Object.entries(input.tracking).filter(([, v]) => v !== undefined)) } : undefined
+          const theme = input.theme && stored ? mergeTheme(parseTheme(stored.theme), input.theme) : undefined
           const extra: [string, string | boolean | Theme | { opens: boolean; clicks: boolean } | undefined][] = [
             ['from_name', input.fromName], ['from_local', input.fromLocal], ['reply_to', input.replyTo],
             ['postal_address', input.postalAddress], ['language', input.language], ['timezone', input.timezone],
-            ['double_opt_in', input.doubleOptIn], ['tracking', input.tracking], ['theme', input.theme],
+            ['double_opt_in', input.doubleOptIn], ['tracking', tracking], ['theme', theme],
           ]
           for (const [column, value] of extra) {
             if (value !== undefined) {

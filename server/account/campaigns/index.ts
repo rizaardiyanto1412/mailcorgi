@@ -5,7 +5,7 @@ import { newId } from '../../core/ids.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { getNewsletterRow, transactionalWelcome } from '../newsletters/index.ts'
-import { emptyDoc, parseTheme, themeSchema, renderEmail, renderWeb } from '../render/index.ts'
+import { emptyDoc, parseTheme, mergeTheme, themePatchSchema, renderEmail, renderWeb } from '../render/index.ts'
 import { assertEditable, assertNotSequenceStep, assertRevision, audienceSchema, draftFields, hideUnsubscribeFooterSchema, senderOverrideInput, getCampaign, getCampaignRow, serializeCampaign, statusSchema, type CampaignAudience, type CampaignRow } from './model.ts'
 import { reviewChecks } from './review.ts'
 import { assertSenderOverride, nextSenderOverride, senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
@@ -158,20 +158,22 @@ export const campaignsModule = {
       }),
       defineAction({
         name: 'campaigns.updateTheme', description: 'Save the newsletter email and web design.', scope: 'account', role: 'admin', effect: 'write', resource: newsletterResource,
-        input: z.object({ newsletterId, theme: themeSchema.describe('Colors, email-safe fonts, heading sizes, button style, header and footer') }),
+        input: z.object({ newsletterId, theme: themePatchSchema.describe('Colors, email-safe fonts, heading sizes, button style, header and footer. Omitted keys (and omitted header keys) keep their saved value.') }),
         rest: { method: 'PUT', path: '/newsletters/:newsletterId/design' }, mcp: { title: 'Save newsletter design', destructive: false },
         handler: (ctx, input) => {
-          ctx.db.run('UPDATE newsletters SET theme = ?, updated_at = ? WHERE id = ?', JSON.stringify(input.theme), ctx.now(), input.newsletterId)
-          return { theme: input.theme }
+          const theme = mergeTheme(parseTheme(newsletter(ctx, input.newsletterId).theme), input.theme)
+          ctx.db.run('UPDATE newsletters SET theme = ?, updated_at = ? WHERE id = ?', JSON.stringify(theme), ctx.now(), input.newsletterId)
+          return { theme }
         },
       }),
       defineAction({
         name: 'campaigns.previewDesign', description: 'Preview an unsaved newsletter design with sample content.', scope: 'account', role: 'member', effect: 'read', resource: newsletterResource,
-        input: z.object({ newsletterId, theme: themeSchema.describe('Design to preview without saving') }),
+        input: z.object({ newsletterId, theme: themePatchSchema.describe('Design to preview without saving; omitted keys show as currently saved') }),
         handler: (ctx, input) => {
           const nl = newsletter(ctx, input.newsletterId)
+          const theme = mergeTheme(parseTheme(nl.theme), input.theme)
           const campaign = { subject: 'A little inspiration for your week', previewText: 'Your next great issue starts here.', format: 'doc', doc: { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Hello, {{first_name|reader}}' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'A thoughtful story, a useful idea, and something worth sharing. This is your newsletter, in your own style.' }] }, { type: 'button', attrs: { label: 'Keep reading', href: 'https://example.com', align: 'left' } }] } }
-          return { email: renderEmail({ campaign, newsletter: { ...nl }, theme: input.theme, recipient: { contact: { name: 'Reader' }, links: { unsubscribe: 'https://example.com/unsubscribe', preferences: 'https://example.com/preferences', web: 'https://example.com/issue' } } }), web: renderWeb({ campaign, newsletter: { ...nl }, theme: input.theme }) }
+          return { email: renderEmail({ campaign, newsletter: { ...nl }, theme, recipient: { contact: { name: 'Reader' }, links: { unsubscribe: 'https://example.com/unsubscribe', preferences: 'https://example.com/preferences', web: 'https://example.com/issue' } } }), web: renderWeb({ campaign, newsletter: { ...nl }, theme }) }
         },
       }),
       uploadImageAction,

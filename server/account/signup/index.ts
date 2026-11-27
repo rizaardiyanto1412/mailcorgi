@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { defineAction } from '../../core/actions.ts'
 import { AppError } from '../../core/http.ts'
+import { withPatch } from '../../core/patch.ts'
 import { newId } from '../../core/ids.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { nodeSchema, emptyDoc } from '../render/index.ts'
@@ -41,25 +42,27 @@ export const signupModule = {
       }),
       defineAction({
         name: 'signup.preview', description: 'Preview unsaved form settings with the newsletter theme.', scope: 'account', role: 'admin', effect: 'read', resource,
-        input: z.object({ newsletterId, settings: settingsSchema.describe('Form settings to preview') }),
-        handler: (ctx, input) => ({ html: hostedForm({ nl: getNewsletter(ctx, input.newsletterId), settings: input.settings, fields: customFields(ctx, input.newsletterId), formToken: '', base: ctx.config.appUrl }) }),
+        input: z.object({ newsletterId, settings: settingsSchema.describe('Form settings to preview; omitted ones show as currently saved') }),
+        handler: (ctx, input) => ({ html: hostedForm({ nl: getNewsletter(ctx, input.newsletterId), settings: withPatch(getSettings(ctx, input.newsletterId), input.settings), fields: customFields(ctx, input.newsletterId), formToken: '', base: ctx.config.appUrl }) }),
       }),
       defineAction({
         name: 'signup.update', description: 'Save signup form fields, copy, redirects and opt-in settings.', scope: 'account', role: 'admin', effect: 'write', resource,
-        input: z.object({ newsletterId, settings: settingsSchema.describe('Fields, copy, redirect and form layout'), doubleOptIn: z.boolean().describe('Require email confirmation before subscribing') }),
+        input: z.object({ newsletterId, settings: settingsSchema.describe('Fields, copy, redirect and form layout. Omitted keys keep their saved value.'), doubleOptIn: z.boolean().optional().describe('Require email confirmation before subscribing. Omit to keep the current value.') }),
         rest: { method: 'PUT', path: '/newsletters/:newsletterId/signup' }, mcp: { title: 'Save signup form settings', destructive: false },
         handler: (ctx, input) => ctx.db.tx(() => {
-          getNewsletter(ctx, input.newsletterId)
+          const nl = getNewsletter(ctx, input.newsletterId)
+          const settings = withPatch(getSettings(ctx, input.newsletterId), input.settings)
           const keys = customFields(ctx, input.newsletterId).map((f) => f.key)
-          if (input.settings.fieldKeys.some((key) => !keys.includes(key))) throw new AppError('invalid_input', 'Choose custom fields from this newsletter.', 400)
-          ctx.db.run('INSERT INTO signup_settings (newsletter_id, settings) VALUES (?, ?) ON CONFLICT(newsletter_id) DO UPDATE SET settings = excluded.settings', input.newsletterId, JSON.stringify(input.settings))
-          ctx.db.run('UPDATE newsletters SET double_opt_in = ?, updated_at = ? WHERE id = ?', input.doubleOptIn ? 1 : 0, ctx.now(), input.newsletterId)
-          return { settings: input.settings, doubleOptIn: input.doubleOptIn }
+          if (input.settings.fieldKeys?.some((key) => !keys.includes(key))) throw new AppError('invalid_input', 'Choose custom fields from this newsletter.', 400)
+          const doubleOptIn = input.doubleOptIn ?? !!nl.double_opt_in
+          ctx.db.run('INSERT INTO signup_settings (newsletter_id, settings) VALUES (?, ?) ON CONFLICT(newsletter_id) DO UPDATE SET settings = excluded.settings', input.newsletterId, JSON.stringify(settings))
+          ctx.db.run('UPDATE newsletters SET double_opt_in = ?, updated_at = ? WHERE id = ?', doubleOptIn ? 1 : 0, ctx.now(), input.newsletterId)
+          return { settings, doubleOptIn }
         }),
       }),
       defineAction({
         name: 'signup.saveWelcome', description: 'Save the one welcome campaign for this newsletter and turn it on or off.', scope: 'account', role: 'admin', effect: 'write', resource,
-        input: z.object({ newsletterId, enabled: z.boolean().describe('Send this email after a reader subscribes'), subject: z.string().trim().min(1).max(150).describe('Welcome email subject'), doc: nodeSchema.refine((n) => n.type === 'doc').default(emptyDoc).describe('Welcome email editor document'), revision: z.number().int().positive().nullable().describe('Revision last read, or null to create the welcome campaign'), sendFormat: draftFields.sendFormat.optional().describe('How the welcome email is sent: html (themed) or plain (a plain text email that reads like a personally written one). Omit to keep the current value; a new welcome email starts as html.'),
+        input: z.object({ newsletterId, enabled: z.boolean().optional().describe('Send this email after a reader subscribes. Omit to keep the current value; a new welcome email starts off.'), subject: z.string().trim().min(1).max(150).optional().describe('Welcome email subject. Required when creating the welcome email (revision null); omit to keep the current subject.'), doc: nodeSchema.refine((n) => n.type === 'doc').optional().describe('Welcome email editor document. Omit to keep the current body; a new welcome email starts with an empty document.'), revision: z.number().int().positive().nullable().describe('Revision last read, or null to create the welcome campaign'), sendFormat: draftFields.sendFormat.optional().describe('How the welcome email is sent: html (themed) or plain (a plain text email that reads like a personally written one). Omit to keep the current value; a new welcome email starts as html.'),
           transactional: z.boolean().optional().describe('Treat the welcome email as a one-off transactional message instead of a newsletter issue: it shows no unsubscribe link. Plain: no closing "--" and "Unsubscribe:" lines. Html: the footer keeps its text, postal address and "View on the web" but loses the Unsubscribe and Preferences links. The List-Unsubscribe headers stay unless includeListUnsubscribeHeaders is false. Omit to keep the current value; a new welcome email starts as false.'),
           includeListUnsubscribeHeaders: z.boolean().optional().describe('Only read when transactional is true: false sends the welcome email without the List-Unsubscribe and List-Unsubscribe-Post headers. While transactional is false this is ignored and the headers are always sent. Omit to keep the current value; a new welcome email starts as true.'),
           ...senderOverrideInput.update }),
@@ -73,10 +76,15 @@ export const signupModule = {
           // Null clears a field, omitting keeps it. Checked only when the save touches the override.
           const sender = nextSenderOverride(existing ?? {}, input)
           if (input.fromDomainId !== undefined || input.fromLocal !== undefined || input.fromName !== undefined) assertSenderOverride(ctx, input.newsletterId, sender)
-          if (existing) ctx.db.run('UPDATE campaigns SET subject = ?, doc = ?, format = ?, send_format = ?, from_domain_id = ?, from_local = ?, from_name = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.subject, JSON.stringify(input.doc), 'doc', input.sendFormat ?? existing.sendFormat, sender.fromDomainId, sender.fromLocal, sender.fromName, ctx.now(), id, input.newsletterId)
-          else ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, from_domain_id, from_local, from_name, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'welcome', ?, ?, 'doc', ?, ?, ?, ?, 0, ?, ?, ?)", id, input.newsletterId, input.subject, JSON.stringify(input.doc), input.sendFormat ?? 'html', sender.fromDomainId, sender.fromLocal, sender.fromName, actor.userId, ctx.now(), ctx.now())
-          ctx.db.run('UPDATE newsletters SET welcome = ?, updated_at = ? WHERE id = ?', JSON.stringify({ enabled: input.enabled, transactional: input.transactional ?? options.transactional, includeListUnsubscribeHeaders: input.includeListUnsubscribeHeaders ?? options.includeListUnsubscribeHeaders }), ctx.now(), input.newsletterId)
-          return { welcome: welcomeEmail(ctx, input.newsletterId), enabled: input.enabled }
+          // On an existing welcome email an omitted field keeps its stored value; defaults apply only when it is created.
+          const enabled = input.enabled ?? (existing ? options.enabled : false)
+          if (existing) ctx.db.run('UPDATE campaigns SET subject = ?, doc = COALESCE(?, doc), format = ?, send_format = ?, from_domain_id = ?, from_local = ?, from_name = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ?', input.subject ?? existing.subject, input.doc ? JSON.stringify(input.doc) : null, 'doc', input.sendFormat ?? existing.sendFormat, sender.fromDomainId, sender.fromLocal, sender.fromName, ctx.now(), id, input.newsletterId)
+          else {
+            if (input.subject === undefined) throw new AppError('invalid_input', 'A subject is required to create the welcome email.', 400)
+            ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, from_domain_id, from_local, from_name, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'welcome', ?, ?, 'doc', ?, ?, ?, ?, 0, ?, ?, ?)", id, input.newsletterId, input.subject, JSON.stringify(input.doc ?? emptyDoc), input.sendFormat ?? 'html', sender.fromDomainId, sender.fromLocal, sender.fromName, actor.userId, ctx.now(), ctx.now())
+          }
+          ctx.db.run('UPDATE newsletters SET welcome = ?, updated_at = ? WHERE id = ?', JSON.stringify({ enabled, transactional: input.transactional ?? options.transactional, includeListUnsubscribeHeaders: input.includeListUnsubscribeHeaders ?? options.includeListUnsubscribeHeaders }), ctx.now(), input.newsletterId)
+          return { welcome: welcomeEmail(ctx, input.newsletterId), enabled }
         }),
       }),
     )

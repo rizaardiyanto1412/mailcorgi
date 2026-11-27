@@ -4,7 +4,7 @@ import { parseDoc, markdownToDoc, decodeText, type DocNode } from './doc.ts'
 import { parseTheme, fontStacks, type Theme } from './theme.ts'
 export { nodeSchema, markSchema, emptyDoc, parseDoc, markdownToDoc } from './doc.ts'
 export type { DocNode, DocMark } from './doc.ts'
-export { themeSchema, parseTheme, defaultTheme, themePresets, fontStacks } from './theme.ts'
+export { themeSchema, themePatchSchema, mergeTheme, parseTheme, defaultTheme, themePresets, fontStacks } from './theme.ts'
 export type { Theme } from './theme.ts'
 
 export interface RecipientLinks {

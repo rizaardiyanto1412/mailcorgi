@@ -4,20 +4,24 @@ import { getNewsletterRow, welcomeOptions } from '../newsletters/index.ts'
 import { getCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { safeUrl } from '../render/index.ts'
 import { notFound } from '../../core/http.ts'
+import { withPatch } from '../../core/patch.ts'
 
 export const redirectSchema = z.string().max(2048).refine((v) => v === '' || (/^https?:\/\//.test(v) && !v.includes('\\') && !!safeUrl(v)), 'Use an absolute http or https address without credentials.')
-export const settingsSchema = z.object({
-  showName: z.boolean().default(true).describe('Show the reader name field'),
-  fieldKeys: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/)).max(50).default([]).describe('Custom field keys shown in the form'),
-  buttonLabel: z.string().trim().min(1).max(80).default('Subscribe').describe('Subscribe button label'),
-  successMessage: z.string().trim().min(1).max(1000).default('Thanks! Check your inbox for the next step.').describe('Message shown after every accepted signup'),
-  redirectUrl: redirectSchema.default('').describe('Optional absolute http or https success redirect'),
-  style: z.enum(['card', 'inline']).default('card').describe('Form layout'),
-})
-export type FormSettings = z.infer<typeof settingsSchema>
+const settingsFields = {
+  showName: z.boolean().describe('Show the reader name field'),
+  fieldKeys: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/)).max(50).describe('Custom field keys shown in the form'),
+  buttonLabel: z.string().trim().min(1).max(80).describe('Subscribe button label'),
+  successMessage: z.string().trim().min(1).max(1000).describe('Message shown after every accepted signup'),
+  redirectUrl: redirectSchema.describe('Optional absolute http or https success redirect'),
+  style: z.enum(['card', 'inline']).describe('Form layout'),
+}
+/** Form settings as a caller sends them: every key is optional and an omitted one keeps its stored value (or its default for a form never saved). */
+export const settingsSchema = z.object(settingsFields).partial()
+export type FormSettings = Required<z.infer<typeof settingsSchema>>
+export const defaultSettings: FormSettings = { showName: true, fieldKeys: [], buttonLabel: 'Subscribe', successMessage: 'Thanks! Check your inbox for the next step.', redirectUrl: '', style: 'card' }
 export function getSettings(ctx: StoreCtx, newsletterId: string): FormSettings {
   const row = ctx.db.get<{ settings: string }>('SELECT settings FROM signup_settings WHERE newsletter_id = ?', newsletterId)
-  return settingsSchema.parse(row ? JSON.parse(row.settings) : {})
+  return withPatch(defaultSettings, settingsSchema.parse(row ? JSON.parse(row.settings) : {}))
 }
 export function getNewsletter(ctx: StoreCtx, id: string) {
   const nl = getNewsletterRow(ctx, id)
