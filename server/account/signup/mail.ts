@@ -8,6 +8,7 @@ import { isSuppressed } from '../contacts/index.ts'
 import { getNewsletter, welcomeCampaign, welcomeEnabled } from './settings.ts'
 import { transactionalWelcome } from '../newsletters/index.ts'
 import { signToken } from '../tracking/index.ts'
+import { hasSenderOverride, verifiedSenderFor } from '../domains/index.ts'
 
 interface MailRow {
   id: string
@@ -75,13 +76,14 @@ export async function deliverMail(ctx: StoreCtx, mailId: string): Promise<void> 
     web: `${base}/f/${nl.key}`,
   }
   let campaign: RenderCampaign
+  let welcome: ReturnType<typeof welcomeCampaign> = null
   if (row.kind === 'confirm') {
     campaign = { subject: `Confirm your subscription to ${nl.name}`, format: 'doc', doc: { type: 'doc', content: [
       { type: 'paragraph', content: [{ type: 'text', text: `Please confirm that you want to receive ${nl.name}. This link expires in 7 days. If you did not request this, ignore this email.` }] },
       { type: 'button', attrs: { label: 'Confirm subscription', href: `${base}/confirm/${row.token}`, align: 'left' } },
     ] } }
   } else {
-    const welcome = welcomeCampaign(ctx, nl.id)
+    welcome = welcomeCampaign(ctx, nl.id)
     if (!welcome) return stop()
     campaign = welcome
   }
@@ -91,9 +93,14 @@ export async function deliverMail(ctx: StoreCtx, mailId: string): Promise<void> 
   if (!current || ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', contact.email)) return stop()
   if (row.kind === 'welcome' && (current.status !== 'subscribed' || isSuppressed(ctx, contact.email, nl.id) || (current.subscribed_at ?? 0) > row.created_at || !welcomeEnabled(getNewsletter(ctx, nl.id).welcome))) return stop()
   if (getPolicy(ctx).status !== 'active') throw new Error('Signup email sending is paused.')
+  // The welcome email can carry a sender override (signup.saveWelcome). With one, it goes out from the effective sender, looked up now
+  // and refused when that is not verified; without one, the install's system address as before. The confirmation email never has one.
+  const override = welcome && hasSenderOverride(welcome) ? welcome : null
+  const sender = override ? verifiedSenderFor(ctx, nl.id, override) : null
+  if (override && !sender) return stop()
   const fromAddress = settings.email_from || `mailcorgi@${new URL(base).hostname}`
   const message = row.message ? messageSchema.parse(JSON.parse(row.message)) : messageSchema.parse({
-    from: `${nl.from_name.replace(/[<>"\r\n]/g, '') || 'MailCorgi'} <${fromAddress}>`, to: contact.email, replyTo: nl.reply_to || undefined, ...rendered,
+    from: sender?.from ?? `${nl.from_name.replace(/[<>"\r\n]/g, '') || 'MailCorgi'} <${fromAddress}>`, to: contact.email, replyTo: sender ? sender.replyTo : nl.reply_to || undefined, ...rendered,
     headers: { ...rendered.headers, 'X-MC-Account': ctx.accountId!, 'Auto-Submitted': 'auto-generated' },
     meta: { accountId: ctx.accountId!, deliveryId: null, kind: 'system' }, idempotencyKey: mailId,
   })

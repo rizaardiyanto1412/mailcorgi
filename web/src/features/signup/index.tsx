@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import type { JSONContent } from '@tiptap/react'
 import { nodeSchema } from '../../../../server/account/render/doc.ts'
 import type { Feature } from '../../app/feature.ts'
@@ -7,6 +7,7 @@ import { useAction, useActionQuery } from '../../lib/api.ts'
 import { useCanAdmin, useDocumentTitle, useSession } from '../../lib/session.tsx'
 import { Banner, Button, Card, EmptyState, Field, Input, NoAccess, PageHeader, Select, Spinner, Textarea } from '../../ui/index.tsx'
 import { loadChunk } from '../../lib/reload.ts'
+import { SenderOverride, type SenderValue } from '../campaigns/Sender.tsx'
 const CampaignEditor = lazy(loadChunk(() => import('../campaigns/Editor.tsx').then((module) => ({ default: module.CampaignEditor }))))
 
 function FormsPage() {
@@ -31,10 +32,12 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
   const [sendFormat, setSendFormat] = useState(initial.welcome?.sendFormat ?? 'html')
   const [transactional, setTransactional] = useState(initial.welcome?.transactional ?? false)
   const [includeListUnsubscribeHeaders, setIncludeListUnsubscribeHeaders] = useState(initial.welcome?.includeListUnsubscribeHeaders ?? true)
+  const [sender, setSender] = useState<SenderValue>({ fromDomainId: initial.welcome?.fromDomainId ?? null, fromLocal: initial.welcome?.fromLocal ?? null, fromName: initial.welcome?.fromName ?? null })
+  const savedSender = useRef(sender)
   const [welcomeSaved, setWelcomeSaved] = useState(false)
   const [validation, setValidation] = useState('')
   const save = useAction('signup.update', { invalidate: ['signup.get'], onSuccess: () => setSaved(true) })
-  const welcome = useAction('signup.saveWelcome', { invalidate: ['signup.get', 'campaigns.list', 'campaigns.get'], onSuccess: (data) => { setRevision(data.welcome?.revision ?? null); setWelcomeSaved(true) } })
+  const welcome = useAction('signup.saveWelcome', { invalidate: ['signup.get', 'campaigns.list', 'campaigns.get'], onSuccess: (data) => { setRevision(data.welcome?.revision ?? null); setWelcomeSaved(true); savedSender.current = sender } })
   const preview = useActionQuery('signup.preview', { newsletterId, settings: { ...settings, buttonLabel: settings.buttonLabel || 'Subscribe', successMessage: settings.successMessage || 'Thanks!', redirectUrl: initial.settings.redirectUrl } })
   const change = (next: typeof settings) => { setSettings(next); setSaved(false) }
   const saveWelcome = () => {
@@ -42,7 +45,10 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
     const parsed = nodeSchema.safeParse(doc)
     if (!parsed.success) { setValidation('The editor content is invalid. Please reload and try again.'); return }
     setValidation('')
-    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision, sendFormat, transactional, includeListUnsubscribeHeaders })
+    // Only a changed sender field is sent: the server re-checks the sender whenever one is.
+    const was = savedSender.current
+    const changed = { ...(sender.fromDomainId !== was.fromDomainId && { fromDomainId: sender.fromDomainId }), ...(sender.fromLocal !== was.fromLocal && { fromLocal: sender.fromLocal }), ...(sender.fromName !== was.fromName && { fromName: sender.fromName }) }
+    welcome.mutate({ newsletterId, subject, doc: parsed.data, enabled, revision, sendFormat, transactional, includeListUnsubscribeHeaders, ...changed })
   }
   return <div className="space-y-6">
     <PageHeader title="Signup forms" description="Invite readers to subscribe on your site or with a hosted form." />
@@ -73,6 +79,7 @@ function FormsEditor({ newsletterId, initial }: { newsletterId: string; initial:
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sendFormat === 'plain'} onChange={(e) => { setSendFormat(e.target.checked ? 'plain' : 'html'); setWelcomeSaved(false) }} />Send as plain text, like an email you wrote by hand (no design, footer or tracking)</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={transactional} onChange={(e) => { setTransactional(e.target.checked); setWelcomeSaved(false) }} />Transactional (no visible unsubscribe)</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!transactional} checked={!transactional || includeListUnsubscribeHeaders} onChange={(e) => { setIncludeListUnsubscribeHeaders(e.target.checked); setWelcomeSaved(false) }} />Include List-Unsubscribe headers{!transactional && <span className="text-fg-3">(always sent unless the email is transactional)</span>}</label>
+      <SenderOverride newsletterId={newsletterId} value={sender} onChange={(next) => { setSender(next); setWelcomeSaved(false) }} />
       <Field label="Subject">{(id) => <Input id={id} required maxLength={150} value={subject} onChange={(e) => { setSubject(e.target.value); setWelcomeSaved(false) }} />}</Field>
       <Suspense fallback={<Spinner />}><CampaignEditor newsletterId={newsletterId} doc={doc} onChange={(next) => { setDoc(next); setWelcomeSaved(false) }} onSave={saveWelcome} editable /></Suspense>
       {(validation || welcome.error) && <Banner kind="danger">{validation || welcome.error?.message}</Banner>}{welcomeSaved && <Banner kind="ok">Welcome email saved.</Banner>}

@@ -2,7 +2,8 @@ import { z } from 'zod'
 import type { StoreCtx } from '../../core/store.ts'
 import { AppError, notFound } from '../../core/http.ts'
 import { ID_PREFIX, newId } from '../../core/ids.ts'
-import { draftFields, hideUnsubscribeFooterSchema, type CampaignRow } from '../campaigns/index.ts'
+import { draftFields, hideUnsubscribeFooterSchema, senderOverrideInput, type CampaignRow } from '../campaigns/index.ts'
+import { assertSenderOverride, nextSenderOverride } from '../domains/index.ts'
 import { emptyDoc, parseDoc, type DocNode } from '../render/index.ts'
 
 export const MAX_STEPS = 50
@@ -32,6 +33,7 @@ export const stepInputSchema = z.object({
   doc: draftFields.doc.optional().describe('The email body as a TipTap document. Omit for an empty email to fill in later.'),
   sendFormat: draftFields.sendFormat.default('html').describe('How the email is sent: html (themed, the default) or plain (plain text like a personally written email: no theme, no tracking, one unsubscribe line)'),
   hideUnsubscribeFooter: hideUnsubscribeFooterSchema.default(false).describe('Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.'),
+  ...senderOverrideInput.create,
 })
 export type StepInput = z.infer<typeof stepInputSchema>
 
@@ -40,7 +42,7 @@ export interface SequenceRow {
   delay_anchor: 'enrolled_at'; created_by: string; created_at: number; updated_at: number; archived_at: number | null
 }
 export interface StepRow { id: string; sequence_id: string; position: number; delay_days: number; campaign_id: string; created_at: number; updated_at: number }
-type StepWithCampaign = StepRow & Pick<CampaignRow, 'subject' | 'preview_text' | 'doc' | 'revision' | 'send_format' | 'hide_unsubscribe_footer'> & { campaign_updated_at: number }
+type StepWithCampaign = StepRow & Pick<CampaignRow, 'subject' | 'preview_text' | 'doc' | 'revision' | 'send_format' | 'hide_unsubscribe_footer' | 'from_domain_id' | 'from_local' | 'from_name'> & { campaign_updated_at: number }
 
 export function getSequenceRow(ctx: StoreCtx, sequenceId: string, newsletterId: string): SequenceRow {
   const row = ctx.db.get<SequenceRow>('SELECT * FROM sequences WHERE id = ? AND newsletter_id = ?', sequenceId, newsletterId)
@@ -61,10 +63,10 @@ export function validateRules(ctx: StoreCtx, newsletterId: string, entry: Sequen
   for (const segmentId of segments) if (!ctx.db.get('SELECT id FROM segments WHERE id = ? AND newsletter_id = ?', segmentId, newsletterId)) throw notFound('That segment')
 }
 
-const STEP_SELECT = 'SELECT st.*, c.subject, c.preview_text, c.doc, c.send_format, c.hide_unsubscribe_footer, c.revision, c.updated_at AS campaign_updated_at FROM sequence_steps st JOIN campaigns c ON c.id = st.campaign_id'
+const STEP_SELECT = 'SELECT st.*, c.subject, c.preview_text, c.doc, c.send_format, c.hide_unsubscribe_footer, c.from_domain_id, c.from_local, c.from_name, c.revision, c.updated_at AS campaign_updated_at FROM sequence_steps st JOIN campaigns c ON c.id = st.campaign_id'
 const serializeStep = (r: StepWithCampaign) => ({
   id: r.id, sequenceId: r.sequence_id, position: r.position, delayDays: r.delay_days, campaignId: r.campaign_id,
-  subject: r.subject, previewText: r.preview_text, sendFormat: r.send_format, hideUnsubscribeFooter: !!r.hide_unsubscribe_footer, doc: (r.doc ? parseDoc(r.doc) : emptyDoc) as DocNode, revision: r.revision,
+  subject: r.subject, previewText: r.preview_text, sendFormat: r.send_format, hideUnsubscribeFooter: !!r.hide_unsubscribe_footer, fromDomainId: r.from_domain_id, fromLocal: r.from_local, fromName: r.from_name, doc: (r.doc ? parseDoc(r.doc) : emptyDoc) as DocNode, revision: r.revision,
   createdAt: r.created_at, updatedAt: Math.max(r.updated_at, r.campaign_updated_at),
 })
 export type SequenceStep = ReturnType<typeof serializeStep>
@@ -102,10 +104,12 @@ export const getSequence = (ctx: StoreCtx, sequenceId: string, newsletterId: str
 export function insertStep(ctx: StoreCtx, sequence: SequenceRow, input: StepInput, userId: string): string {
   const count = ctx.db.get<{ n: number; last: number | null }>('SELECT COUNT(*) AS n, MAX(position) AS last FROM sequence_steps WHERE sequence_id = ?', sequence.id)!
   if (count.n >= MAX_STEPS) throw new AppError('limit_reached', `A sequence can have at most ${MAX_STEPS} steps.`, 400)
+  const sender = nextSenderOverride({}, input)
+  assertSenderOverride(ctx, sequence.newsletter_id, sender)
   const now = ctx.now()
   const campaignId = newId(ID_PREFIX.campaign)
   const stepId = newId(ID_PREFIX.sequenceStep)
-  ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, hide_unsubscribe_footer, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'sequence', ?, ?, 'doc', ?, ?, 0, ?, ?, ?)", campaignId, sequence.newsletter_id, input.subject, JSON.stringify(input.doc ?? emptyDoc), input.sendFormat, input.hideUnsubscribeFooter ? 1 : 0, userId, now, now)
+  ctx.db.run("INSERT INTO campaigns (id, newsletter_id, kind, subject, doc, format, send_format, hide_unsubscribe_footer, from_domain_id, from_local, from_name, web_visible, created_by, created_at, updated_at) VALUES (?, ?, 'sequence', ?, ?, 'doc', ?, ?, ?, ?, ?, 0, ?, ?, ?)", campaignId, sequence.newsletter_id, input.subject, JSON.stringify(input.doc ?? emptyDoc), input.sendFormat, input.hideUnsubscribeFooter ? 1 : 0, sender.fromDomainId, sender.fromLocal, sender.fromName, userId, now, now)
   ctx.db.run('INSERT INTO sequence_steps (id, sequence_id, position, delay_days, campaign_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', stepId, sequence.id, (count.last ?? 0) + 1, input.delayDays, campaignId, now, now)
   return stepId
 }

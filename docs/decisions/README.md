@@ -7,3 +7,4 @@ so parallel branches can merge without sharing a documentation edit.
 - [index-audit](index-audit.md)
 - [sequences-send](sequences-send.md)
 - [plain-text-send](plain-text-send.md)
+- [campaign-sender-override](campaign-sender-override.md)

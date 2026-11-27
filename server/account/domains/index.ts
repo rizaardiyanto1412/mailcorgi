@@ -89,10 +89,48 @@ export async function checkDomain(ctx: StoreCtx, id: string) {
   return output(getDomain(ctx, id))
 }
 
-export function verifiedSenderFor(ctx: StoreCtx, newsletterId: string): { from: string; replyTo?: string } | null {
-  const row = ctx.db.get<{ from_name: string; from_local: string; reply_to: string; name: string }>("SELECT n.from_name, n.from_local, n.reply_to, d.name FROM newsletters n JOIN domains d ON d.id = n.domain_id WHERE n.id = ? AND d.status = 'verified' AND n.archived_at IS NULL", newsletterId)
-  if (!row || !/^[a-zA-Z0-9.!#$%&'*+\-/=?^_`{|}~]+$/.test(row.from_local) || /[\r\n<>]/.test(row.from_name)) return null
-  return { from: `${row.from_name ? `"${row.from_name.replace(/["\\]/g, '\\$&')}" ` : ''}<${row.from_local}@${row.name}>`, ...(row.reply_to ? { replyTo: row.reply_to } : {}) }
+/** The optional sender override of a campaign, welcome email or sequence step. Null: not set, use the newsletter's value. */
+export interface SenderOverride {
+  fromDomainId?: string | null
+  fromLocal?: string | null
+  fromName?: string | null
+}
+/** The override stored on a campaigns row. */
+export const senderOverrideOf = (row: { from_domain_id: string | null; from_local: string | null; from_name: string | null }): SenderOverride => ({ fromDomainId: row.from_domain_id, fromLocal: row.from_local, fromName: row.from_name })
+export const hasSenderOverride = (o: SenderOverride | null | undefined) => !!o && (o.fromDomainId != null || o.fromLocal != null || o.fromName != null)
+/** What an action stores after a save: null clears a field, undefined keeps the stored one. */
+export const nextSenderOverride = (stored: SenderOverride, input: SenderOverride): Required<SenderOverride> => ({
+  fromDomainId: input.fromDomainId === undefined ? stored.fromDomainId ?? null : input.fromDomainId,
+  fromLocal: input.fromLocal === undefined ? stored.fromLocal ?? null : input.fromLocal,
+  fromName: input.fromName === undefined ? stored.fromName ?? null : input.fromName,
+})
+
+/**
+ * The From (and Reply-To) a send uses, or null when it cannot send. The one implementation behind every send, test send,
+ * preview and review. Each part of the From falls back to the newsletter on its own: the domain, the local part and the display name
+ * (a stored empty name means no display name). The effective domain must be verified right now, the local part valid, and the newsletter not archived.
+ * Reply-To is always the newsletter's.
+ */
+export function verifiedSenderFor(ctx: StoreCtx, newsletterId: string, override?: SenderOverride | null): { from: string; replyTo?: string } | null {
+  const nl = ctx.db.get<{ from_name: string; from_local: string; reply_to: string; domain_id: string | null }>('SELECT from_name, from_local, reply_to, domain_id FROM newsletters WHERE id = ? AND archived_at IS NULL', newsletterId)
+  if (!nl) return null
+  const domainId = override?.fromDomainId ?? nl.domain_id
+  const domain = domainId ? ctx.db.get<{ name: string }>("SELECT name FROM domains WHERE id = ? AND status = 'verified'", domainId) : undefined
+  const local = override?.fromLocal ?? nl.from_local
+  const name = override?.fromName ?? nl.from_name
+  if (!domain || !/^[a-zA-Z0-9.!#$%&'*+\-/=?^_`{|}~]+$/.test(local) || /[\r\n<>]/.test(name)) return null
+  return { from: `${name ? `"${name.replace(/["\\]/g, '\\$&')}" ` : ''}<${local}@${domain.name}>`, ...(nl.reply_to ? { replyTo: nl.reply_to } : {}) }
+}
+
+/**
+ * Save-time check of a sender override, given the values that would be stored. A provided domain must be a verified domain of this
+ * account (400 domain_unverified, the code newsletters.update uses), and the sender they make up with the newsletter's own values
+ * must be usable right now (400 sender_unverified). Nothing to check when no field is set.
+ */
+export function assertSenderOverride(ctx: StoreCtx, newsletterId: string, next: SenderOverride) {
+  if (!hasSenderOverride(next)) return
+  if (next.fromDomainId != null && !ctx.db.get("SELECT id FROM domains WHERE id = ? AND status = 'verified'", next.fromDomainId)) throw new AppError('domain_unverified', 'Choose a verified sending domain for the sender override.', 400)
+  if (!verifiedSenderFor(ctx, newsletterId, next)) throw new AppError('sender_unverified', 'The sender override needs a verified domain and a valid local part. Fields left out use the newsletter sender, so set those in newsletter settings or in the override.', 400)
 }
 
 export const domainsModule = {
@@ -144,6 +182,7 @@ export const domainsModule = {
         if (stored.provider === provider.name) await provider.deleteIdentity?.(row.name)
         ctx.db.tx(() => {
           ctx.db.run('UPDATE newsletters SET domain_id = NULL WHERE domain_id = ?', domainId)
+          ctx.db.run('UPDATE campaigns SET from_domain_id = NULL WHERE from_domain_id = ?', domainId)
           ctx.db.run('DELETE FROM domains WHERE id = ?', domainId)
           ctx.jobs.enqueue('domains.release', { name: row.name, accountId: ctx.accountId!, domainId }, { dedupeKey: `domains.release:${domainId}` })
         })

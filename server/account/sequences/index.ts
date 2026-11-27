@@ -11,9 +11,9 @@ import { AppError, notFound } from '../../core/http.ts'
 import { ID_PREFIX, newId } from '../../core/ids.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import type { AccountRegistrar } from '../rpc.ts'
-import { assertRevision, draftFields, hideUnsubscribeFooterSchema, getCampaignRow, reviewChecks, serializeCampaign, type CampaignRow } from '../campaigns/index.ts'
+import { assertRevision, draftFields, hideUnsubscribeFooterSchema, senderOverrideInput, getCampaignRow, reviewChecks, serializeCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { onContactStatusChanged, onContactTagsAdded, onTagDelete } from '../contacts/index.ts'
-import { verifiedSenderFor } from '../domains/index.ts'
+import { assertSenderOverride, nextSenderOverride, senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
 import { assertSendingAllowed } from '../hygiene/index.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { parseTheme } from '../render/index.ts'
@@ -59,8 +59,9 @@ async function assertRunnable(ctx: StoreCtx, row: SequenceRow) {
   const steps = ctx.db.all<CampaignRow & { step_id: string; step_position: number }>('SELECT c.*, st.id AS step_id, st.position AS step_position FROM sequence_steps st JOIN campaigns c ON c.id = st.campaign_id WHERE st.sequence_id = ? ORDER BY st.position', row.id)
   if (!steps.length) throw new AppError('no_steps', 'Add at least one step before starting the sequence.', 409)
   assertDelayOrder(ctx, row.id)
-  const domainVerified = !!verifiedSenderFor(ctx, row.newsletter_id)
   for (const step of steps) {
+    // Each step may carry its own sender override.
+    const domainVerified = !!verifiedSenderFor(ctx, row.newsletter_id, senderOverrideOf(step))
     const checks = reviewChecks({ campaign: serializeCampaign(step), newsletter: { ...nl }, theme: parseTheme(nl.theme), domainVerified })
     const errors = checks.filter((c) => c.level === 'error')
     if (errors.length) throw new AppError('review_failed', `Step ${step.step_position}: ${errors[0].message}`, 400, { stepId: step.step_id, position: step.step_position, checks })
@@ -173,7 +174,7 @@ export const sequencesModule = {
           revision: z.number().int().min(1).describe('The step revision last read. Stale saves return 409 with the current revision.'),
           delayDays: delayDaysSchema.optional().describe('Whole days after the contact entered the sequence at which this email goes out'),
           subject: draftFields.subject.optional().describe('The email subject'), previewText: draftFields.previewText.optional().describe('Inbox preview text'),
-          doc: draftFields.doc.optional().describe('The email body as a TipTap document'), sendFormat: draftFields.sendFormat.optional().describe('How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.'), hideUnsubscribeFooter: hideUnsubscribeFooterSchema.optional().describe('Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.'),
+          doc: draftFields.doc.optional().describe('The email body as a TipTap document'), sendFormat: draftFields.sendFormat.optional().describe('How the email is sent: html (themed) or plain (plain text like a personally written email). Omit to keep the current value.'), hideUnsubscribeFooter: hideUnsubscribeFooterSchema.optional().describe('Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.'), ...senderOverrideInput.update,
         }),
         rest: { method: 'PATCH', path: '/newsletters/:newsletterId/sequences/:sequenceId/steps/:stepId' }, mcp: { title: 'Update a sequence step', destructive: false },
         handler: (ctx, i) => ctx.db.tx(() => {
@@ -183,7 +184,9 @@ export const sequencesModule = {
           const campaign = getCampaignRow(ctx, step.campaign_id)
           assertRevision(campaign, i.revision)
           const now = ctx.now()
-          ctx.db.run('UPDATE campaigns SET send_format = ?, hide_unsubscribe_footer = ?, subject = ?, preview_text = ?, doc = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?', i.sendFormat ?? campaign.send_format, (i.hideUnsubscribeFooter ?? !!campaign.hide_unsubscribe_footer) ? 1 : 0, i.subject ?? campaign.subject, i.previewText ?? campaign.preview_text, i.doc ? JSON.stringify(i.doc) : campaign.doc, now, campaign.id, i.newsletterId, i.revision)
+          const sender = nextSenderOverride(senderOverrideOf(campaign), i)
+          if (i.fromDomainId !== undefined || i.fromLocal !== undefined || i.fromName !== undefined) assertSenderOverride(ctx, i.newsletterId, sender)
+          ctx.db.run('UPDATE campaigns SET send_format = ?, hide_unsubscribe_footer = ?, from_domain_id = ?, from_local = ?, from_name = ?, subject = ?, preview_text = ?, doc = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND newsletter_id = ? AND revision = ?', i.sendFormat ?? campaign.send_format, (i.hideUnsubscribeFooter ?? !!campaign.hide_unsubscribe_footer) ? 1 : 0, sender.fromDomainId, sender.fromLocal, sender.fromName, i.subject ?? campaign.subject, i.previewText ?? campaign.preview_text, i.doc ? JSON.stringify(i.doc) : campaign.doc, now, campaign.id, i.newsletterId, i.revision)
           if (row.status !== 'draft' && !(i.subject ?? campaign.subject).trim()) throw new AppError('review_failed', 'A step of a running sequence needs a subject.', 400)
           const delayDays = i.delayDays ?? step.delay_days
           ctx.db.run('UPDATE sequence_steps SET delay_days = ?, updated_at = ? WHERE id = ? AND sequence_id = ?', delayDays, now, step.id, row.id)

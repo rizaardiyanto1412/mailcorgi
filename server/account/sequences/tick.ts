@@ -10,7 +10,7 @@
 import type { Budget, JobResult } from '../../core/jobs.ts'
 import type { StoreCtx } from '../../core/store.ts'
 import { getCampaignRow } from '../campaigns/index.ts'
-import { verifiedSenderFor } from '../domains/index.ts'
+import { senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
 import { checkProtection, globalSuppressions, protectionState } from '../hygiene/index.ts'
 import { STUCK_AFTER_MS, bumpStat, recordLinks, sendContext, sendDelivery, sendProvider, sendSettings, type SendContext } from '../sending/index.ts'
 import { replayPending } from '../tracking/pending.ts'
@@ -67,6 +67,11 @@ function prepare(ctx: StoreCtx, newsletterId: string, due: DueRow, idempotent: b
       for (const skipped of late.slice(0, -1)) skipStep(ctx, skipped, contact, 'Skipped: overdue when the sequence caught up.')
       step = latest
     }
+  }
+  // The step's effective sender (its own override, else the newsletter's) must be verified now. If not, nothing is queued and the contact keeps waiting.
+  if (!verifiedSenderFor(ctx, newsletterId, senderOverrideOf(getCampaignRow(ctx, step.campaign_id)))) {
+    defer(ctx, e, step, now + HOLD_MS)
+    return null
   }
   const d = ctx.db.get<{ id: number; status: string; queued_at: number; attempt_at: number | null; attempts: number }>('SELECT id, status, queued_at, attempt_at, attempts FROM deliveries WHERE campaign_id = ? AND contact_id = ?', step.campaign_id, e.contact_id)
   if (!d) {
@@ -139,7 +144,7 @@ export async function tick(ctx: StoreCtx, newsletterId: string, budget: Budget):
   } catch {
     return { again: now + 60_000 }
   }
-  if (checkProtection(ctx) || getPolicy(ctx).status !== 'active' || !verifiedSenderFor(ctx, newsletterId)) return hold()
+  if (checkProtection(ctx) || getPolicy(ctx).status !== 'active') return hold()
   if (budget.take(1) < 1) return { again: now + 1000 }
   const settings = await sendSettings(ctx)
   if (settings.sending_enabled === 'false') return hold()
