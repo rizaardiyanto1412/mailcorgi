@@ -4,6 +4,7 @@ import { defineAction } from '../../core/actions.ts'
 import type { AccountRegistrar } from '../rpc.ts'
 import { getMeta, setMeta } from '../usage/index.ts'
 import { migrations } from './migrations.ts'
+import { withPatch } from '../../core/patch.ts'
 import { DAY, readSettings, settingsShape } from './settings.ts'
 import { atRiskWhere, cleanNewsletter, queueHygiene, scanNewsletter } from './lifecycle.ts'
 import { protectionState, resumeProtection, rollingRates, type ProtectionEvidence } from './protection.ts'
@@ -41,9 +42,10 @@ export const hygieneModule = {
         input: z.object({ newsletterId }), rest: { method: 'GET', path: '/newsletters/:newsletterId/hygiene' }, mcp: { title: 'Read list hygiene settings', destructive: false },
         handler: (ctx, input) => readSettings(ctx, input.newsletterId),
       }),
-      defineAction({ name: 'hygiene.updateSettings', description: 'Save automatic list hygiene and reminder copy. Account protection always remains enabled.', scope: 'account', role: 'admin', effect: 'write', resource,
+      defineAction({ name: 'hygiene.updateSettings', description: 'Save automatic list hygiene and reminder copy. Omitted fields keep their saved value. Account protection always remains enabled.', scope: 'account', role: 'admin', effect: 'write', resource,
         input: z.object({ newsletterId, ...settingsShape }), rest: { method: 'PUT', path: '/newsletters/:newsletterId/hygiene' }, mcp: { title: 'Save list hygiene settings', destructive: false },
-        handler: (ctx, { newsletterId, ...settings }) => ctx.db.tx(() => {
+        handler: (ctx, { newsletterId, ...patch }) => ctx.db.tx(() => {
+          const settings = withPatch(readSettings(ctx, newsletterId), patch)
           ctx.db.run('UPDATE newsletters SET hygiene = ?, updated_at = ? WHERE id = ?', JSON.stringify(settings), ctx.now(), newsletterId)
           queueHygiene(ctx, newsletterId)
           ctx.jobs.enqueue('hygiene.clean', { newsletterId }, { dedupeKey: `hygiene.clean:${newsletterId}` })

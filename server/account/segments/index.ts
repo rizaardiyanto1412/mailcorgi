@@ -123,10 +123,14 @@ export const segmentsModule = {
         ctx.db.run('INSERT INTO segments (id, newsletter_id, name, filter, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', id, i.newsletterId, i.name, JSON.stringify(i.filter), ctx.now(), ctx.now())
         return { id, name: i.name, filter: i.filter }
       } }),
-      defineAction({ name: 'segments.update', description: 'Change a saved contact filter.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'segment', param: 'segmentId' }, input: z.object({ newsletterId, segmentId, name, filter }), rest: { method: 'PATCH', path: '/newsletters/:newsletterId/segments/:segmentId' }, mcp: { title: 'Update a segment', destructive: false }, handler: (ctx, i) => {
-        compileAt(i.filter, i.newsletterId, ctx.now())
-        ctx.db.run('UPDATE segments SET name = ?, filter = ?, updated_at = ? WHERE id = ? AND newsletter_id = ?', i.name, JSON.stringify(i.filter), ctx.now(), i.segmentId, i.newsletterId)
-        return { id: i.segmentId, name: i.name, filter: i.filter }
+      defineAction({ name: 'segments.update', description: 'Change a saved contact filter.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'segment', param: 'segmentId' }, input: z.object({ newsletterId, segmentId, name: name.optional().describe('The segment name. Omit to keep the current one.'), filter: filter.optional().describe('Contact conditions, combined with all, any and not. Omit to keep the current filter; a given filter replaces it.') }), rest: { method: 'PATCH', path: '/newsletters/:newsletterId/segments/:segmentId' }, mcp: { title: 'Update a segment', destructive: false }, handler: (ctx, i) => {
+        const old = ctx.db.get<SegmentRow>('SELECT * FROM segments WHERE id = ? AND newsletter_id = ?', i.segmentId, i.newsletterId)
+        if (!old) throw notFound('That segment')
+        const next = i.filter ?? serialize(old).filter
+        if (i.filter) compileAt(i.filter, i.newsletterId, ctx.now())
+        const nextName = i.name ?? old.name
+        ctx.db.run('UPDATE segments SET name = ?, filter = ?, updated_at = ? WHERE id = ? AND newsletter_id = ?', nextName, JSON.stringify(next), ctx.now(), i.segmentId, i.newsletterId)
+        return { id: i.segmentId, name: nextName, filter: next }
       } }),
       defineAction({ name: 'segments.delete', description: 'Delete a saved contact filter.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'segment', param: 'segmentId' }, input: z.object({ newsletterId, segmentId }), rest: { method: 'DELETE', path: '/newsletters/:newsletterId/segments/:segmentId' }, mcp: { title: 'Delete a segment', destructive: true }, handler: (ctx, i) => { ctx.db.run('DELETE FROM segments WHERE id = ? AND newsletter_id = ?', i.segmentId, i.newsletterId); return { deleted: true } } }),
       defineAction({ name: 'segments.count', description: 'Count contacts matching a live filter.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId, filter: filter.nullable().describe('The filter to count, or null for every contact') }), rest: { method: 'POST', path: '/newsletters/:newsletterId/segments/count' }, mcp: { title: 'Count matching contacts', destructive: false }, handler: (ctx, i) => { const q = compileAt(i.filter, i.newsletterId, ctx.now()); return { count: ctx.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM contacts c WHERE ${q.where}`, ...q.params)!.n } } }),

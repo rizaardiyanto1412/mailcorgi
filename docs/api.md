@@ -169,7 +169,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/aut
 
 ## PATCH /api/v1/newsletters/:newsletterId/authors/:authorId
 
-Edit a newsletter author.
+Edit a newsletter author. Omitted fields keep their saved value.
 
 MCP tool: `authors_update`. Effect: write.
 
@@ -191,25 +191,23 @@ Input JSON Schema:
       "description": "The author id"
     },
     "name": {
+      "description": "The author name",
       "type": "string",
       "minLength": 1,
-      "maxLength": 120,
-      "description": "The author name"
+      "maxLength": 120
     },
     "slug": {
+      "description": "The author public address slug",
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]{0,59}$",
-      "description": "The author public address slug"
+      "pattern": "^[a-z0-9][a-z0-9-]{0,59}$"
     },
     "bio": {
-      "default": "",
       "description": "A short author biography",
       "type": "string",
       "maxLength": 2000
     },
     "links": {
-      "default": {},
-      "description": "Named links for the author",
+      "description": "Named links for the author; replaces all links",
       "type": "object",
       "propertyNames": {
         "type": "string",
@@ -223,9 +221,7 @@ Input JSON Schema:
   },
   "required": [
     "newsletterId",
-    "authorId",
-    "name",
-    "slug"
+    "authorId"
   ]
 }
 ```
@@ -235,7 +231,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/au
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"name":"example","slug":"example","bio":"","links":{}}'
+  --data '{}'
 ```
 
 ## DELETE /api/v1/newsletters/:newsletterId/authors/:authorId
@@ -561,7 +557,7 @@ Input JSON Schema:
       "type": "boolean"
     },
     "tracking": {
-      "description": "Enable tracking for opens and clicks",
+      "description": "Enable tracking for opens and clicks. An omitted key keeps its current value.",
       "type": "object",
       "properties": {
         "opens": {
@@ -570,43 +566,33 @@ Input JSON Schema:
         "clicks": {
           "type": "boolean"
         }
-      },
-      "required": [
-        "opens",
-        "clicks"
-      ]
+      }
     },
     "theme": {
-      "description": "Email and website colors, fonts, headings, buttons, header and footer",
+      "description": "Email and website colors, fonts, headings, buttons, header and footer. Omitted keys (and omitted header keys) keep their saved value.",
       "type": "object",
       "properties": {
         "background": {
-          "default": "#f3f4f6",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "surface": {
-          "default": "#ffffff",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "text": {
-          "default": "#20242c",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "muted": {
-          "default": "#596273",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "accent": {
-          "default": "#9a3412",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "font": {
-          "default": "sans",
           "type": "string",
           "enum": [
             "sans",
@@ -615,11 +601,6 @@ Input JSON Schema:
           ]
         },
         "headingSizes": {
-          "default": [
-            32,
-            26,
-            21
-          ],
           "type": "array",
           "prefixItems": [
             {
@@ -643,17 +624,14 @@ Input JSON Schema:
           "maxItems": 3
         },
         "buttonColor": {
-          "default": "#9a3412",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "buttonText": {
-          "default": "#ffffff",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "buttonShape": {
-          "default": "rounded",
           "type": "string",
           "enum": [
             "square",
@@ -662,26 +640,19 @@ Input JSON Schema:
           ]
         },
         "header": {
-          "default": {
-            "logo": "",
-            "title": ""
-          },
           "type": "object",
           "properties": {
             "logo": {
-              "default": "",
               "type": "string",
               "maxLength": 2048
             },
             "title": {
-              "default": "",
               "type": "string",
               "maxLength": 200
             }
           }
         },
         "footerText": {
-          "default": "Thanks for reading.",
           "type": "string",
           "maxLength": 2000
         }
@@ -1898,20 +1869,18 @@ Input JSON Schema:
       "description": "The saved segment id"
     },
     "name": {
+      "description": "The segment name. Omit to keep the current one.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 120,
-      "description": "The segment name"
+      "maxLength": 120
     },
     "filter": {
-      "description": "Contact conditions, combined with all, any and not"
+      "description": "Contact conditions, combined with all, any and not. Omit to keep the current filter; a given filter replaces it."
     }
   },
   "required": [
     "newsletterId",
-    "segmentId",
-    "name",
-    "filter"
+    "segmentId"
   ]
 }
 ```
@@ -1921,7 +1890,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/se
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"name":"example","filter":"example"}'
+  --data '{}'
 ```
 
 ## DELETE /api/v1/newsletters/:newsletterId/segments/:segmentId
@@ -3438,32 +3407,26 @@ Input JSON Schema:
       "type": "object",
       "properties": {
         "background": {
-          "default": "#f3f4f6",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "surface": {
-          "default": "#ffffff",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "text": {
-          "default": "#20242c",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "muted": {
-          "default": "#596273",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "accent": {
-          "default": "#9a3412",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "font": {
-          "default": "sans",
           "type": "string",
           "enum": [
             "sans",
@@ -3472,11 +3435,6 @@ Input JSON Schema:
           ]
         },
         "headingSizes": {
-          "default": [
-            32,
-            26,
-            21
-          ],
           "type": "array",
           "prefixItems": [
             {
@@ -3500,17 +3458,14 @@ Input JSON Schema:
           "maxItems": 3
         },
         "buttonColor": {
-          "default": "#9a3412",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "buttonText": {
-          "default": "#ffffff",
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "buttonShape": {
-          "default": "rounded",
           "type": "string",
           "enum": [
             "square",
@@ -3519,31 +3474,24 @@ Input JSON Schema:
           ]
         },
         "header": {
-          "default": {
-            "logo": "",
-            "title": ""
-          },
           "type": "object",
           "properties": {
             "logo": {
-              "default": "",
               "type": "string",
               "maxLength": 2048
             },
             "title": {
-              "default": "",
               "type": "string",
               "maxLength": 200
             }
           }
         },
         "footerText": {
-          "default": "Thanks for reading.",
           "type": "string",
           "maxLength": 2000
         }
       },
-      "description": "Colors, email-safe fonts, heading sizes, button style, header and footer"
+      "description": "Colors, email-safe fonts, heading sizes, button style, header and footer. Omitted keys (and omitted header keys) keep their saved value."
     }
   },
   "required": [
@@ -5851,61 +5799,54 @@ Input JSON Schema:
       "type": "object",
       "properties": {
         "showName": {
-          "default": true,
-          "description": "Show the reader name field",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Show the reader name field"
         },
         "fieldKeys": {
-          "default": [],
-          "description": "Custom field keys shown in the form",
           "maxItems": 50,
           "type": "array",
           "items": {
             "type": "string",
             "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
-          }
+          },
+          "description": "Custom field keys shown in the form"
         },
         "buttonLabel": {
-          "default": "Subscribe",
-          "description": "Subscribe button label",
           "type": "string",
           "minLength": 1,
-          "maxLength": 80
+          "maxLength": 80,
+          "description": "Subscribe button label"
         },
         "successMessage": {
-          "default": "Thanks! Check your inbox for the next step.",
-          "description": "Message shown after every accepted signup",
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 1000,
+          "description": "Message shown after every accepted signup"
         },
         "redirectUrl": {
-          "default": "",
-          "description": "Optional absolute http or https success redirect",
           "type": "string",
-          "maxLength": 2048
+          "maxLength": 2048,
+          "description": "Optional absolute http or https success redirect"
         },
         "style": {
-          "default": "card",
-          "description": "Form layout",
           "type": "string",
           "enum": [
             "card",
             "inline"
-          ]
+          ],
+          "description": "Form layout"
         }
       },
-      "description": "Fields, copy, redirect and form layout"
+      "description": "Fields, copy, redirect and form layout. Omitted keys keep their saved value."
     },
     "doubleOptIn": {
-      "type": "boolean",
-      "description": "Require email confirmation before subscribing"
+      "description": "Require email confirmation before subscribing. Omit to keep the current value.",
+      "type": "boolean"
     }
   },
   "required": [
     "newsletterId",
-    "settings",
-    "doubleOptIn"
+    "settings"
   ]
 }
 ```
@@ -5915,7 +5856,7 @@ curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sign
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"settings":{},"doubleOptIn":false}'
+  --data '{"settings":{}}'
 ```
 
 ## PUT /api/v1/newsletters/:newsletterId/signup/welcome
@@ -5937,25 +5878,17 @@ Input JSON Schema:
       "description": "The newsletter id"
     },
     "enabled": {
-      "type": "boolean",
-      "description": "Send this email after a reader subscribes"
+      "description": "Send this email after a reader subscribes. Omit to keep the current value; a new welcome email starts off.",
+      "type": "boolean"
     },
     "subject": {
+      "description": "Welcome email subject. Required when creating the welcome email (revision null); omit to keep the current subject.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 150,
-      "description": "Welcome email subject"
+      "maxLength": 150
     },
     "doc": {
-      "default": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph"
-          }
-        ]
-      },
-      "description": "Welcome email editor document",
+      "description": "Welcome email editor document. Omit to keep the current body; a new welcome email starts with an empty document.",
       "$ref": "#/$defs/__schema0"
     },
     "revision": {
@@ -6032,8 +5965,6 @@ Input JSON Schema:
   },
   "required": [
     "newsletterId",
-    "enabled",
-    "subject",
     "revision"
   ],
   "$defs": {
@@ -6136,7 +6067,7 @@ curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sign
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"enabled":false,"subject":"example","doc":{"type":"doc","content":[{"type":"paragraph"}]},"revision":1}'
+  --data '{"revision":1}'
 ```
 
 ## PUT /api/v1/newsletters/:newsletterId/website/host
@@ -6272,64 +6203,53 @@ Input JSON Schema:
       "type": "object",
       "properties": {
         "enabled": {
-          "default": true,
-          "description": "Make the public archive discoverable",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Make the public archive discoverable"
         },
         "seoTitle": {
-          "default": "",
-          "description": "Optional home page title",
           "type": "string",
-          "maxLength": 160
+          "maxLength": 160,
+          "description": "Optional home page title"
         },
         "seoDescription": {
-          "default": "",
-          "description": "Optional search engine description",
           "type": "string",
-          "maxLength": 500
+          "maxLength": 500,
+          "description": "Optional search engine description"
         },
         "plausible": {
-          "default": "",
-          "description": "Plausible site domain",
           "type": "string",
           "maxLength": 253,
-          "pattern": "^[a-zA-Z0-9.-]*$"
+          "pattern": "^[a-zA-Z0-9.-]*$",
+          "description": "Plausible site domain"
         },
         "ga4": {
-          "default": "",
-          "description": "Google Analytics measurement id",
           "type": "string",
-          "pattern": "^(G-[A-Z0-9]+)?$"
+          "pattern": "^(G-[A-Z0-9]+)?$",
+          "description": "Google Analytics measurement id"
         },
         "fathom": {
-          "default": "",
-          "description": "Fathom site id",
           "type": "string",
           "maxLength": 30,
-          "pattern": "^[A-Z0-9]*$"
+          "pattern": "^[A-Z0-9]*$",
+          "description": "Fathom site id"
         },
         "umami": {
-          "default": "",
-          "description": "Umami Cloud website id",
           "type": "string",
           "maxLength": 50,
-          "pattern": "^[a-fA-F0-9-]*$"
+          "pattern": "^[a-fA-F0-9-]*$",
+          "description": "Umami Cloud website id"
         },
         "headCode": {
-          "default": "",
-          "description": "Custom head HTML, used only on a verified custom host",
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 20000,
+          "description": "Custom head HTML, used only on a verified custom host"
         },
         "bodyCode": {
-          "default": "",
-          "description": "Custom body HTML, used only on a verified custom host",
           "type": "string",
-          "maxLength": 20000
+          "maxLength": 20000,
+          "description": "Custom body HTML, used only on a verified custom host"
         },
         "socialLinks": {
-          "default": {},
-          "description": "Named public social links",
           "type": "object",
           "propertyNames": {
             "type": "string",
@@ -6338,11 +6258,10 @@ Input JSON Schema:
           "additionalProperties": {
             "type": "string",
             "format": "uri"
-          }
+          },
+          "description": "Named public social links; replaces the whole set"
         },
         "favicon": {
-          "default": "",
-          "description": "Optional favicon URL; otherwise the newsletter icon is used",
           "anyOf": [
             {
               "type": "string",
@@ -6352,10 +6271,11 @@ Input JSON Schema:
               "type": "string",
               "const": ""
             }
-          ]
+          ],
+          "description": "Optional favicon URL; otherwise the newsletter icon is used"
         }
       },
-      "description": "Public website options"
+      "description": "Public website options. Omitted keys keep their saved value."
     }
   },
   "required": [
@@ -6392,15 +6312,15 @@ Input JSON Schema:
       "description": "The sent campaign id"
     },
     "slug": {
+      "description": "Public issue address. Omit to keep the current one.",
       "type": "string",
       "minLength": 1,
       "maxLength": 80,
-      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-      "description": "Public issue address"
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "visible": {
-      "type": "boolean",
-      "description": "Whether to list and serve the issue publicly"
+      "description": "Whether to list and serve the issue publicly. Omit to keep the current value.",
+      "type": "boolean"
     },
     "authorId": {
       "description": "Newsletter author id, or null for no byline",
@@ -6411,9 +6331,7 @@ Input JSON Schema:
     }
   },
   "required": [
-    "campaignId",
-    "slug",
-    "visible"
+    "campaignId"
   ]
 }
 ```
@@ -6423,7 +6341,7 @@ curl -X PATCH 'https://mail.example.com/api/v1/campaigns/YOUR_CAMPAIGN_ID/websit
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"slug":"example","visible":false}'
+  --data '{}'
 ```
 
 ## POST /api/v1/newsletters/:newsletterId/website/posts
@@ -6449,42 +6367,37 @@ Input JSON Schema:
       "type": "string"
     },
     "subject": {
+      "description": "Post title. Required for a new post; omit to keep the current one.",
       "type": "string",
       "minLength": 1,
-      "maxLength": 500,
-      "description": "Post title"
+      "maxLength": 500
     },
     "slug": {
+      "description": "Public post address. Required for a new post; omit to keep the current one.",
       "type": "string",
       "minLength": 1,
       "maxLength": 80,
-      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-      "description": "Public post address"
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "source": {
+      "description": "Markdown content. Required for a new post; omit to keep the current one.",
       "type": "string",
-      "maxLength": 1000000,
-      "description": "Markdown content"
+      "maxLength": 1000000
     },
     "authorId": {
-      "default": null,
-      "description": "Newsletter author id, or null",
+      "description": "Newsletter author id, or null for no byline. Omit to keep the current author; a new post has none.",
       "type": [
         "string",
         "null"
       ]
     },
     "visible": {
-      "default": true,
-      "description": "Whether the post is public",
+      "description": "Whether the post is public. Omit to keep the current value; a new post is public.",
       "type": "boolean"
     }
   },
   "required": [
-    "newsletterId",
-    "subject",
-    "slug",
-    "source"
+    "newsletterId"
   ]
 }
 ```
@@ -6494,7 +6407,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/web
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"subject":"example","slug":"example","source":"example","authorId":null,"visible":true}'
+  --data '{}'
 ```
 
 ## GET /api/v1/newsletters/:newsletterId/website/stats
@@ -6946,7 +6859,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/hygi
 
 ## PUT /api/v1/newsletters/:newsletterId/hygiene
 
-Save automatic list hygiene and reminder copy. Account protection always remains enabled.
+Save automatic list hygiene and reminder copy. Omitted fields keep their saved value. Account protection always remains enabled.
 
 MCP tool: `hygiene_updateSettings`. Effect: write.
 
@@ -6963,38 +6876,32 @@ Input JSON Schema:
       "description": "The newsletter id"
     },
     "enabled": {
-      "default": true,
       "description": "Automatically ask inactive subscribers whether they want to stay",
       "type": "boolean"
     },
     "afterIssues": {
-      "default": 8,
       "description": "Consecutive ignored issues before asking, after at least 90 days subscribed",
       "type": "integer",
       "minimum": 1,
       "maximum": 100
     },
     "waitDays": {
-      "default": 14,
       "description": "Days to wait after the reminder is sent before cleaning",
       "type": "integer",
       "minimum": 1,
       "maximum": 30
     },
     "strict": {
-      "default": false,
       "description": "Ignore privacy-proxy opens when deciding whether a subscriber is engaged",
       "type": "boolean"
     },
     "subject": {
-      "default": "Do you still want these emails?",
       "description": "Subject of the keep-subscription email",
       "type": "string",
       "minLength": 1,
       "maxLength": 150
     },
     "body": {
-      "default": "We noticed you have not read our recent issues. If you would like to keep receiving them, please confirm below. Otherwise, we will stop sending.",
       "description": "Markdown copy above the required keep-subscription link",
       "type": "string",
       "minLength": 1,
@@ -7012,7 +6919,7 @@ curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/hygi
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"enabled":true,"afterIssues":8,"waitDays":14,"strict":false,"subject":"Do you still want these emails?","body":"We noticed you have not read our recent issues. If you would like to keep receiving them, please confirm below. Otherwise, we will stop sending."}'
+  --data '{}'
 ```
 
 ## GET /api/v1/newsletters/:newsletterId/list-health
