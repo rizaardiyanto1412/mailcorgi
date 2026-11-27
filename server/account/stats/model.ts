@@ -68,7 +68,7 @@ export function rebuildDaily(ctx: StoreCtx, newsletterId: string, since = 0) {
         SUM(type IN ('signup','confirm') AND COALESCE(json_extract(data, '$.pending'), 0) = 0), SUM(type IN ('unsubscribe','cleaned')), SUM(type = 'bounce'), SUM(type = 'complaint')
       FROM events WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2`, newsletterId, since)
     for (const [column, timestamp] of [['sent', 'sent_at'], ['delivered', 'delivered_at'], ['opens', 'opened_at'], ['clicks', 'clicked_at']] as const) ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, ${column})
-      SELECT c.newsletter_id, strftime('%Y-%m-%d', d.${timestamp} / 1000, 'unixepoch'), COUNT(*) FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? AND d.${timestamp} >= ? GROUP BY 1, 2
+      SELECT c.newsletter_id, strftime('%Y-%m-%d', d.${timestamp} / 1000, 'unixepoch'), COUNT(*) FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? AND c.kind != 'welcome' AND d.${timestamp} >= ? GROUP BY 1, 2
       ON CONFLICT(newsletter_id, day) DO UPDATE SET ${column} = excluded.${column}`, newsletterId, since)
     ctx.db.run(`INSERT INTO daily_stats (newsletter_id, day, page_views) SELECT newsletter_id, strftime('%Y-%m-%d', at / 1000, 'unixepoch'), COUNT(*) FROM page_views WHERE newsletter_id = ? AND at >= ? GROUP BY 1, 2 ON CONFLICT(newsletter_id, day) DO UPDATE SET page_views = excluded.page_views`, newsletterId, since)
     ctx.db.run('DELETE FROM stats_sources WHERE newsletter_id = ? AND day >= ?', newsletterId, day)

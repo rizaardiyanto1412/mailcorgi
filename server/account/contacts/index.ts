@@ -17,6 +17,15 @@ export type { Contact, ContactStatus, ContactStatusChanged, SubscribeInput, Subs
 export { addContactTags, removeContactTags, onContactTagsAdded, contactTagsListeners, onTagDelete } from './tags.ts'
 export type { ContactTagsAdded, ContactTagsListener, TagSource } from './tags.ts'
 
+/** An API or MCP call (`contacts.create`) newly subscribed a contact. Runs in the call's transaction; the callback it returns runs after commit. */
+export type ApiSubscribeListener = (ctx: StoreCtx, subscribed: { newsletterId: string; contactId: string; subscribedAt: number | null }) => (() => Promise<void>) | void
+const apiSubscribeListeners = new Set<ApiSubscribeListener>()
+/** Hear about contacts newly subscribed through the API, so the welcome email can follow without contacts importing signup. */
+export function onApiSubscribe(listener: ApiSubscribeListener): () => void {
+  apiSubscribeListeners.add(listener)
+  return () => void apiSubscribeListeners.delete(listener)
+}
+
 export function isDeleted(ctx: StoreCtx, email: string, newsletterId: string): boolean {
   return !!ctx.db.get('SELECT 1 FROM deleted_contacts WHERE email_hash = ? AND newsletter_id = ?', emailHash(email.trim().toLowerCase()), newsletterId)
 }
@@ -114,9 +123,16 @@ export const contactsModule = {
     return reg.actions(
       ...taxonomyActions,
       defineAction({ name: 'contacts.list', description: 'Search and page through contacts in a newsletter.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'newsletter', param: 'newsletterId' }, input: listSchema, rest: { method: 'GET', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'List contacts', destructive: false }, handler: listContacts }),
-      defineAction({ name: 'contacts.create', description: 'Add a contact with asserted consent, or update the one that already has this email (outcome exists): its name and fields are merged and the given tags are added. Adding a tag can start a tag-triggered email sequence, for new and existing contacts alike. Suppressed addresses stay suppressed (outcome suppressed) and get no tags. Past the plan contact limit the call fails with limit_reached and nothing is added.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId: newsletterIdSchema, email: emailSchema.describe('The email address'), name: z.string().trim().max(200).optional().describe('The contact name'), fields: fieldValuesSchema.optional().describe('Typed custom field values'), tags: z.array(z.string()).max(100).optional().describe('Tag ids from this newsletter to add to the contact. Tags the contact already has are left alone.'), source: z.string().max(100).default('manual').describe('How the contact was added') }), rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'Add a contact', destructive: false }, handler: (ctx, i, actor) => {
-        const result = subscribe(ctx, { ...i, consent: 'asserted', tagSource: tagSourceOf(actor) })
-        if (result.outcome === 'limit') throw contactLimitError(ctx)
+      defineAction({ name: 'contacts.create', description: 'Add a contact with asserted consent, or update the one that already has this email (outcome exists): its name and fields are merged and the given tags are added. Adding a tag can start a tag-triggered email sequence, for new and existing contacts alike. Suppressed addresses stay suppressed (outcome suppressed) and get no tags. Past the plan contact limit the call fails with limit_reached and nothing is added. When this call newly subscribes the contact (outcome subscribed) and the newsletter has its welcome email turned on, that welcome is sent once, even with double opt-in on (this call asserts consent; it does not wait for a confirmation click). Repeat calls (outcome exists) never send another. Pass sendWelcome false for imports and migrations.', scope: 'account', role: 'admin', effect: 'write', resource: { type: 'newsletter', param: 'newsletterId' }, input: z.object({ newsletterId: newsletterIdSchema, email: emailSchema.describe('The email address'), name: z.string().trim().max(200).optional().describe('The contact name'), fields: fieldValuesSchema.optional().describe('Typed custom field values'), tags: z.array(z.string()).max(100).optional().describe('Tag ids from this newsletter to add to the contact. Tags the contact already has are left alone.'), source: z.string().max(100).default('manual').describe('How the contact was added'), sendWelcome: z.boolean().default(true).describe("Send the newsletter's welcome email when this call newly subscribes the contact and the welcome is turned on. Default true. Use false to import or migrate contacts silently. A contact who already exists as subscribed (outcome exists) never gets a welcome from this call, whatever this says.") }), rest: { method: 'POST', path: '/newsletters/:newsletterId/contacts' }, mcp: { title: 'Add a contact (sends the welcome email to new subscribers unless sendWelcome is false)', destructive: false }, handler: async (ctx, { sendWelcome, ...i }, actor) => {
+        const after: (() => Promise<void>)[] = []
+        // One transaction: the welcome is queued only with the subscription that earned it.
+        const result = ctx.db.tx(() => {
+          const result = subscribe(ctx, { ...i, consent: 'asserted', tagSource: tagSourceOf(actor) })
+          if (result.outcome === 'limit') throw contactLimitError(ctx)
+          if (result.outcome === 'subscribed' && sendWelcome) for (const listener of apiSubscribeListeners) { const next = listener(ctx, { newsletterId: i.newsletterId, contactId: result.contact.id, subscribedAt: result.contact.subscribedAt }); if (next) after.push(next) }
+          return result
+        })
+        for (const run of after) { try { await run() } catch { /* The durable signup.mail job retries safe failures. */ } }
         return result
       } }),
       defineAction({ name: 'contacts.get', description: 'Read a contact with their tags, the email sequences they are or were in, and recent timeline.', scope: 'account', role: 'member', effect: 'read', resource: { type: 'contact', param: 'contactId' }, input: z.object({ newsletterId: newsletterIdSchema, contactId, beforeEventId: z.number().int().positive().optional().describe('Load events older than this event id') }), rest: { method: 'GET', path: '/newsletters/:newsletterId/contacts/:contactId' }, mcp: { title: 'Get a contact', destructive: false }, handler: (ctx, i) => {

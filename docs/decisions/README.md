@@ -8,3 +8,4 @@ so parallel branches can merge without sharing a documentation edit.
 - [sequences-send](sequences-send.md)
 - [plain-text-send](plain-text-send.md)
 - [campaign-sender-override](campaign-sender-override.md)
+- [api-welcome](api-welcome.md)

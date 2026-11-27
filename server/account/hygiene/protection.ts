@@ -27,7 +27,7 @@ export function rollingRates(ctx: StoreCtx, newsletterId?: string) {
     SELECT COUNT(*) total, COALESCE(SUM(bounced_at IS NOT NULL), 0) bounces,
       COALESCE(SUM(complained_at IS NOT NULL), 0) complaints FROM (
       SELECT d.bounced_at, d.complained_at FROM deliveries d JOIN campaigns c ON c.id = d.campaign_id
-      WHERE d.sent_at IS NOT NULL AND d.hygiene_epoch = ? ${newsletterId ? 'AND c.newsletter_id = ?' : ''}
+      WHERE d.sent_at IS NOT NULL AND c.kind != 'welcome' AND d.hygiene_epoch = ? ${newsletterId ? 'AND c.newsletter_id = ?' : ''}
       ORDER BY d.sent_at DESC, d.id DESC LIMIT 1000
     )`, epoch, ...(newsletterId ? [newsletterId] : []))!
   return { ...row, bounceRate: row.total ? row.bounces / row.total : 0, complaintRate: row.total ? row.complaints / row.total : 0, bounceLimit: 0.05, complaintLimit: 0.003, minimum: 1000 }
