@@ -16,6 +16,7 @@ import { signupModule } from './signup/index.ts'
 import { websiteModule } from './website/index.ts'
 import { domainsModule } from './domains/index.ts'
 import { statsModule } from './stats/index.ts'
+import { sendsModule } from './sends/index.ts'
 import { assertSendingAllowed, hygieneModule } from './hygiene/index.ts'
 import { teamModule } from './team/index.ts'
 import { notificationsModule } from './notifications/index.ts'
@@ -56,6 +57,7 @@ const modules = {
   website: websiteModule,
   domains: domainsModule,
   stats: statsModule,
+  sends: sendsModule,
   hygiene: hygieneModule,
   team: teamModule,
   notifications: notificationsModule,
