@@ -8,7 +8,7 @@ import type { AccountRegistrar } from '../rpc.ts'
 import { assertNotSequenceStep, getCampaign, getCampaignRow, reviewChecks, serializeCampaign, transitionCampaign, type CampaignRow } from '../campaigns/index.ts'
 import { getNewsletterRow } from '../newsletters/index.ts'
 import { parseTheme } from '../render/index.ts'
-import { verifiedSenderFor } from '../domains/index.ts'
+import { senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
 import { countEmails, currentPeriod, limits } from '../usage/index.ts'
 import { migrations } from './migrations.ts'
 import { finishCampaign, sendBatch } from './batch.ts'
@@ -38,7 +38,7 @@ async function assertSendable(ctx: StoreCtx, row: CampaignRow) {
   if (row.kind !== 'issue') throw new AppError('not_issue', 'Only issues can be sent or scheduled.', 409)
   const nl = getNewsletterRow(ctx, row.newsletter_id)
   if (!nl || nl.archived_at) throw new AppError('newsletter_archived', 'This newsletter is archived.', 409)
-  const checks = reviewChecks({ campaign: serializeCampaign(row), newsletter: { ...nl }, theme: parseTheme(nl.theme), domainVerified: !!verifiedSenderFor(ctx, row.newsletter_id) })
+  const checks = reviewChecks({ campaign: serializeCampaign(row), newsletter: { ...nl }, theme: parseTheme(nl.theme), domainVerified: !!verifiedSenderFor(ctx, row.newsletter_id, senderOverrideOf(row)) })
   const errors = checks.filter((c) => c.level === 'error')
   if (errors.length) throw new AppError('review_failed', errors[0].message, 400, { checks })
   if ((await sendSettings(ctx)).sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
@@ -150,7 +150,7 @@ export const sendingModule = {
           const row = getCampaignRow(ctx, input.campaignId)
           if (row.status !== 'paused') throw new AppError('invalid_transition', 'Only a paused send can be resumed.', 409)
           if ((await sendSettings(ctx)).sending_enabled === 'false') throw new AppError('sending_disabled', 'Email sending is paused for this install.', 403)
-          if (!verifiedSenderFor(ctx, row.newsletter_id)) throw new AppError('sender_unverified', 'Choose a verified sender domain in newsletter settings.', 400)
+          if (!verifiedSenderFor(ctx, row.newsletter_id, senderOverrideOf(row))) throw new AppError('sender_unverified', 'Choose a verified sender domain in newsletter settings.', 400)
           return ctx.db.tx(() => {
             if (ctx.db.get("SELECT 1 FROM campaign_sends WHERE campaign_id = ? AND state = 'pending' AND release_at IS NOT NULL AND release_at <= ?", row.id, ctx.now())) assertStepGate(ctx, row.id)
             resetRateBaseline(ctx, row.id)

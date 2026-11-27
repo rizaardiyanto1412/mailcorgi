@@ -22,7 +22,7 @@ export function reviewChecks(input: {
   const plain = campaign.sendFormat === 'plain'
   if (!plain && !(campaign.previewText || campaign.preview_text)) add('preview_text', 'warning', 'Add preview text for the inbox.')
   if (!(newsletter.postalAddress || newsletter.postal_address)) add('postal_address', 'error', 'Add a postal address in newsletter settings.')
-  if (!input.domainVerified) add('sender_domain', 'error', 'Choose a verified sender domain in newsletter settings.')
+  if (!input.domainVerified) add('sender_domain', 'error', campaign.fromDomainId || campaign.fromLocal ? 'The sender needs a verified domain and a valid local part. Check the sender override and the newsletter settings.' : 'Choose a verified sender domain in newsletter settings.')
   const html = typeof campaign.html === 'string' && campaign.html ? campaign.html : typeof campaign.source === 'string' ? campaign.source : ''
   if (!plain && !input.transactional && campaign.format === 'html' && !/href\s*=\s*["'][^"']*\{\{\s*unsubscribe_url\s*\}\}/i.test(html)) add('unsubscribe', 'error', 'Include a link to {{unsubscribe_url}} in your HTML.')
   let missingAlt = false

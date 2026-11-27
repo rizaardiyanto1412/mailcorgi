@@ -9,6 +9,7 @@ import { useSession, useDocumentTitle } from '../../lib/session.tsx'
 import { callAction, useAction, useActionQuery, actionKey, ApiError } from '../../lib/api.ts'
 import { BackLink, Banner, Button, EmptyState, IconButton, MenuItem, Popover, Field, Input, LinkButton, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Textarea, useFeedback } from '../../ui/index.tsx'
 import { Preview } from './Preview.tsx'
+import { SenderOverride } from './Sender.tsx'
 import { AudiencePicker } from './Audience.tsx'
 import { Progress, SendStep, TestSend } from './SendStep.tsx'
 import { loadChunk } from '../../lib/reload.ts'
@@ -56,7 +57,7 @@ function Draft({ initial, reload }: {
   initial: Campaign
   reload(): unknown
 }) {
-  const [draft, setDraft] = useState({ subject: initial.subject, previewText: initial.previewText, format: initial.format, sendFormat: initial.sendFormat, hideUnsubscribeFooter: initial.hideUnsubscribeFooter, doc: initial.doc, source: initial.source, html: initial.html, text: initial.text, audience: initial.audience })
+  const [draft, setDraft] = useState({ subject: initial.subject, previewText: initial.previewText, format: initial.format, sendFormat: initial.sendFormat, hideUnsubscribeFooter: initial.hideUnsubscribeFooter, fromDomainId: initial.fromDomainId, fromLocal: initial.fromLocal, fromName: initial.fromName, doc: initial.doc, source: initial.source, html: initial.html, text: initial.text, audience: initial.audience })
   const [revision, setRevision] = useState(initial.revision)
   const [saved, setSaved] = useState(JSON.stringify(draft))
   const [saveState, setSaveState] = useState('Saved')
@@ -78,7 +79,11 @@ function Draft({ initial, reload }: {
     saving.current = true
     setSaveState('Saving…')
     try {
-      const result = await callAction('campaigns.update', { campaignId: initial.id, revision, ...draft })
+      // Only the sender fields that changed are sent: the server re-checks the sender whenever they are, and an unrelated autosave must not fail on it.
+      const { fromDomainId, fromLocal, fromName, ...content } = draft
+      const was: Record<string, unknown> = JSON.parse(saved)
+      const sender = { ...(fromDomainId !== was.fromDomainId && { fromDomainId }), ...(fromLocal !== was.fromLocal && { fromLocal }), ...(fromName !== was.fromName && { fromName }) }
+      const result = await callAction('campaigns.update', { campaignId: initial.id, revision, ...content, ...sender })
       queryClient.setQueryData(actionKey('campaigns.get', { campaignId: initial.id }), result)
       setRevision(result.revision)
       setSaved(serialized)
@@ -153,6 +158,7 @@ function Draft({ initial, reload }: {
         setShowPreview(!showPreview)
         void preview.refetch()
       }}>{showPreview ? 'Hide preview' : 'Show preview'}</Button>}</div>
+      <SenderOverride newsletterId={initial.newsletterId} value={draft} disabled={!editable} onChange={(next) => setDraft({ ...draft, ...next })} />
       <div className={showPreview ? 'grid items-start gap-5 lg:grid-cols-2' : ''}><div className="space-y-5">
         {draft.format === 'doc' ? <Suspense fallback={<Spinner />}><CampaignEditor newsletterId={initial.newsletterId} doc={draft.doc} editable={editable && !conflict} onSave={() => void save()} onChange={(doc) => {
           const parsed = nodeSchema.safeParse(doc)

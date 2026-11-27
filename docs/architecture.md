@@ -384,6 +384,7 @@ imports(id, newsletter_id, status, source_preset, mapping JSON, options JSON, to
 import_chunks(import_id, seq, rows JSON, done INTEGER, PRIMARY KEY(import_id, seq))
 campaigns(id, newsletter_id, author_id NULL, kind 'issue'|'welcome'|'keep'|'sequence', format 'doc'|'markdown'|'html',
           send_format 'html'|'plain', hide_unsubscribe_footer INTEGER DEFAULT 0,
+          from_domain_id NULL, from_local NULL, from_name NULL  -- optional sender override, docs/decisions/campaign-sender-override.md
           subject, preview_text, doc JSON, source TEXT, html TEXT, text TEXT, slug,
           status 'draft'|'scheduled'|'sending'|'paused'|'sent'|'canceled', pause_reason,
           audience JSON (segment id / tag ids / 'engaged' / all, exclusions),
@@ -606,7 +607,8 @@ provider deduplicates (at most five claims), and in each case the enrollment the
 step. When a step is a day or more overdue (a pause, sending switched off), only the latest due step
 is sent and the earlier ones get a `skipped` delivery. While the account is blocked or protected,
 sending is switched off or the sender is unverified, the tick sleeps an hour at a time instead of
-failing.
+failing. The sender is checked per step: a step's own sender override (else the newsletter's) must be
+verified, or only that step's contacts wait.
 
 **render** — pure functions, no DOM. `renderEmail(campaign, newsletter, recipient) → { html, text,
 headers }` and `renderWeb(campaign, newsletter) → html`. The doc format is TipTap JSON with these nodes:

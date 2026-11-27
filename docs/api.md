@@ -2718,6 +2718,48 @@ Input JSON Schema:
       "default": false,
       "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
       "type": "boolean"
+    },
+    "fromDomainId": {
+      "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromLocal": {
+      "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+          "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromName": {
+      "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n<>]*$",
+          "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -3060,6 +3102,48 @@ Input JSON Schema:
     "hideUnsubscribeFooter": {
       "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.",
       "type": "boolean"
+    },
+    "fromDomainId": {
+      "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromLocal": {
+      "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+          "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromName": {
+      "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n<>]*$",
+          "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -3963,6 +4047,48 @@ Input JSON Schema:
             "default": false,
             "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
             "type": "boolean"
+          },
+          "fromDomainId": {
+            "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Omit or null for no override (use the newsletter value).",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fromLocal": {
+            "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Omit or null for no override (use the newsletter value).",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+                "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fromName": {
+            "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Omit or null for no override (use the newsletter value).",
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^[^\\r\\n<>]*$",
+                "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4393,6 +4519,48 @@ Input JSON Schema:
       "default": false,
       "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email.",
       "type": "boolean"
+    },
+    "fromDomainId": {
+      "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromLocal": {
+      "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+          "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromName": {
+      "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Omit or null for no override (use the newsletter value).",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n<>]*$",
+          "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -4656,6 +4824,48 @@ Input JSON Schema:
     "hideUnsubscribeFooter": {
       "description": "Only for sendFormat plain: leave out the closing -- and Unsubscribe: lines. The List-Unsubscribe headers are always sent. No effect on an html email. Omit to keep the current value.",
       "type": "boolean"
+    },
+    "fromDomainId": {
+      "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromLocal": {
+      "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+          "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromName": {
+      "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n<>]*$",
+          "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -5776,6 +5986,48 @@ Input JSON Schema:
     "includeListUnsubscribeHeaders": {
       "description": "Only read when transactional is true: false sends the welcome email without the List-Unsubscribe and List-Unsubscribe-Post headers. While transactional is false this is ignored and the headers are always sent. Omit to keep the current value; a new welcome email starts as true.",
       "type": "boolean"
+    },
+    "fromDomainId": {
+      "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromLocal": {
+      "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$",
+          "description": "Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fromName": {
+      "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name. Send null to clear it (use the newsletter value again); omit to keep the stored value.",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n<>]*$",
+          "description": "Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name."
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

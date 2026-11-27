@@ -28,6 +28,22 @@ export const draftFields = {
 }
 /** Shared by campaigns and sequence steps. The welcome email has `transactional` on signup.saveWelcome instead. */
 export const hideUnsubscribeFooterSchema = z.boolean().describe('Only for sendFormat plain: leave out the closing "--" and "Unsubscribe: <address>" lines of the plain text email. The List-Unsubscribe and List-Unsubscribe-Post headers are always sent, so readers can still unsubscribe from their mail app. No effect on an html email: its footer stays.')
+/**
+ * The optional per-campaign sender override, shared by campaigns, the welcome email and sequence steps. Each field falls
+ * back to the newsletter's value on its own while it is null or not stored. On save, null clears a field and omitting it keeps it.
+ */
+export const senderOverrideFields = {
+  fromDomainId: z.string().min(1).describe('Sender override: the id of a verified sending domain of this account to send this email from, instead of the newsletter domain. Must be verified when saved and again when sent.'),
+  fromLocal: z.string().min(1).max(64).regex(/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/).describe('Sender override: the local part of the From address (before the @), instead of the newsletter fromLocal'),
+  fromName: z.string().trim().max(200).regex(/^[^\r\n<>]*$/).describe('Sender override: the From display name, instead of the newsletter fromName. An empty string sends with no display name.'),
+}
+const CLEAR = ' Send null to clear it (use the newsletter value again); omit to keep the stored value.'
+const NEW = ' Omit or null for no override (use the newsletter value).'
+/** The three override fields as an action takes them when saving. `create`: null and omitted both mean no override. `update`: null clears, omitted keeps. */
+export const senderOverrideInput = {
+  create: { fromDomainId: senderOverrideFields.fromDomainId.nullable().optional().describe(senderOverrideFields.fromDomainId.description + NEW), fromLocal: senderOverrideFields.fromLocal.nullable().optional().describe(senderOverrideFields.fromLocal.description + NEW), fromName: senderOverrideFields.fromName.nullable().optional().describe(senderOverrideFields.fromName.description + NEW) },
+  update: { fromDomainId: senderOverrideFields.fromDomainId.nullable().optional().describe(senderOverrideFields.fromDomainId.description + CLEAR), fromLocal: senderOverrideFields.fromLocal.nullable().optional().describe(senderOverrideFields.fromLocal.description + CLEAR), fromName: senderOverrideFields.fromName.nullable().optional().describe(senderOverrideFields.fromName.description + CLEAR) },
+}
 export type SendFormat = z.infer<typeof draftFields.sendFormat>
 export interface CampaignRow {
   id: string
@@ -38,6 +54,9 @@ export interface CampaignRow {
   format: 'doc' | 'markdown' | 'html'
   send_format: SendFormat
   hide_unsubscribe_footer: number
+  from_domain_id: string | null
+  from_local: string | null
+  from_name: string | null
   subject: string
   preview_text: string
   doc: string | null
@@ -67,7 +86,7 @@ export function getCampaignRow(ctx: StoreCtx, id: string): CampaignRow {
 export function serializeCampaign(row: CampaignRow) {
   return {
     id: row.id, newsletterId: row.newsletter_id, authorId: row.author_id, kind: row.kind,
-    format: row.format, sendFormat: row.send_format, hideUnsubscribeFooter: !!row.hide_unsubscribe_footer, subject: row.subject, previewText: row.preview_text,
+    format: row.format, sendFormat: row.send_format, hideUnsubscribeFooter: !!row.hide_unsubscribe_footer, fromDomainId: row.from_domain_id, fromLocal: row.from_local, fromName: row.from_name, subject: row.subject, previewText: row.preview_text,
     doc: row.doc ? parseDoc(row.doc) : emptyDoc, source: row.source ?? '', html: row.html ?? '', text: row.text ?? '', slug: row.slug,
     status: row.status, pauseReason: row.pause_reason, audience: audienceSchema.parse(JSON.parse(row.audience === '{}' ? '{"all":true}' : row.audience)),
     scheduledAt: row.scheduled_at, sendStartedAt: row.send_started_at, sentAt: row.sent_at,

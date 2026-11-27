@@ -26,6 +26,7 @@ keeps your list, your issues and your stats in SQLite databases that you own.
 - Plain text sending for any campaign, the welcome email or a sequence step (`sendFormat: "plain"`, or
   "Send as plain text" in the editor): no design, footer or tracking, only your words and an unsubscribe
   line (which `hideUnsubscribeFooter` can hide; the headers stay), so it reads like an email you wrote by hand. See [how it is sent](docs/decisions/plain-text-send.md).
+- An optional sender for one campaign, the welcome email or a sequence step (`fromDomainId`, `fromLocal`, `fromName`): each field falls back to the newsletter's, the domain must be verified, and Reply-To is unchanged. See [the rules](docs/decisions/campaign-sender-override.md).
 
 **Your list**
 

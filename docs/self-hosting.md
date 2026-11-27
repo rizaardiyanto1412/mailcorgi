@@ -410,6 +410,14 @@ Newsletters send only from a verified domain.
 4. In **Settings → Newsletter**, choose the verified domain as the **Sender domain** and set the
    sender name and local part.
 
+A single campaign, the welcome email or a sequence step can send from another verified domain or address
+with the optional sender override (`fromDomainId`, `fromLocal`, `fromName`; Reply-To stays the newsletter's).
+Each field left empty uses the newsletter's. The override domain must be added and verified in MailCorgi,
+**and the exact domain verified with your provider**: a verified `mail.example.com` does not allow sending
+from `example.com`. With SES and Resend, adding the domain here creates it at the provider. With
+PostShiba, MailCorgi does not: add and verify it in PostShiba first. PostShiba's envelope sender follows
+the From address. Details in [the decision](decisions/campaign-sender-override.md).
+
 MailCorgi checks every domain again once a day. If a record disappears, the domain fails, sending
 from it stops, and you get a notification.
 

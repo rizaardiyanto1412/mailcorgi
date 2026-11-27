@@ -6,7 +6,7 @@ import { newId } from '../../core/ids.ts'
 import { getNewsletterRow, transactionalWelcome, type NewsletterRow } from '../newsletters/index.ts'
 import { parseTheme, renderEmail } from '../render/index.ts'
 import { serializeCampaign, type CampaignRow } from '../campaigns/index.ts'
-import { verifiedSenderFor } from '../domains/index.ts'
+import { senderOverrideOf, verifiedSenderFor } from '../domains/index.ts'
 import { publicUrl, signToken } from '../tracking/index.ts'
 
 export interface SendContext {
@@ -24,7 +24,8 @@ export interface SendContext {
 /** Everything one campaign needs for every recipient, read once per batch. Null when the newsletter cannot send. */
 export function sendContext(ctx: StoreCtx, row: CampaignRow): SendContext | null {
   const newsletter = getNewsletterRow(ctx, row.newsletter_id)
-  const sender = verifiedSenderFor(ctx, row.newsletter_id)
+  // The campaign's own sender override, with the newsletter filling what it leaves unset.
+  const sender = verifiedSenderFor(ctx, row.newsletter_id, senderOverrideOf(row))
   if (!newsletter || !sender) return null
   const tracking = parseJson<{ opens?: boolean; clicks?: boolean }>(newsletter.tracking, {})
   const domain = /<[^@>]+@([^>]+)>$/.exec(sender.from)?.[1] ?? 'localhost'
