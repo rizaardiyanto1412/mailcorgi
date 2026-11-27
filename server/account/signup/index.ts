@@ -1,6 +1,7 @@
 import { z } from 'zod'
+import type { StoreCtx } from '../../core/store.ts'
 import { defineAction } from '../../core/actions.ts'
-import { AppError } from '../../core/http.ts'
+import { AppError, notFound } from '../../core/http.ts'
 import { withPatch } from '../../core/patch.ts'
 import { newId } from '../../core/ids.ts'
 import type { AccountRegistrar } from '../rpc.ts'
@@ -11,10 +12,16 @@ import { hostedForm } from './pages.ts'
 import { migrations } from './migrations.ts'
 import { getNewsletter, getSettings, settingsSchema, customFields, welcomeCampaign, welcomeEmail, welcomeEnabled } from './settings.ts'
 import { welcomeOptions } from '../newsletters/index.ts'
-import { deliverMail } from './mail.ts'
+import { deliverMail, queueWelcome } from './mail.ts'
+import { isSuppressed, onApiSubscribe } from '../contacts/index.ts'
 import { registerRoutes } from './routes.ts'
 export { formToken } from './tokens.ts'
 export { onPublicSignup } from './mail.ts'
+
+function queueApiWelcome(ctx: StoreCtx, c: { newsletterId: string; contactId: string; subscribedAt: number | null }) {
+  const mailId = queueWelcome(ctx, c.newsletterId, c.contactId, c.subscribedAt)
+  return () => deliverMail(ctx, mailId)
+}
 
 const newsletterId = z.string().min(1).describe('The newsletter id')
 const resource = { type: 'newsletter', param: 'newsletterId' } as const
@@ -23,6 +30,8 @@ export const signupModule = {
   register(reg: AccountRegistrar) {
     reg.migrations(migrations)
     registerRoutes(reg)
+    // contacts.create asserts consent, so its welcome goes out on the subscribed outcome, double opt-in or not (docs/decisions/api-welcome.md).
+    onApiSubscribe(queueApiWelcome)
     reg.job<{ mailId: string }>('signup.mail', async (ctx, input, budget) => {
       if (budget.expired() || budget.take(3) < 3) return { again: ctx.now() + 1000 }
       await deliverMail(ctx, input.mailId)
@@ -86,6 +95,25 @@ export const signupModule = {
           ctx.db.run('UPDATE newsletters SET welcome = ?, updated_at = ? WHERE id = ?', JSON.stringify({ enabled, transactional: input.transactional ?? options.transactional, includeListUnsubscribeHeaders: input.includeListUnsubscribeHeaders ?? options.includeListUnsubscribeHeaders }), ctx.now(), input.newsletterId)
           return { welcome: welcomeEmail(ctx, input.newsletterId), enabled }
         }),
+      }),
+      defineAction({
+        name: 'signup.sendWelcome', description: 'Send the welcome email once to one subscribed contact who never received it (for example one added earlier with sendWelcome false). It uses the same once-per-subscription key as every other welcome, so a second call sends nothing and returns alreadyQueued true. It never targets more than the given contact.', scope: 'account', role: 'admin', effect: 'write', resource,
+        input: z.object({ newsletterId, contactId: z.string().min(1).describe('The one contact to send the welcome email to. Must be subscribed to this newsletter.') }),
+        rest: { method: 'POST', path: '/newsletters/:newsletterId/signup/welcome/send' }, mcp: { title: 'Send the welcome email to one contact, once', destructive: false },
+        handler: async (ctx, input) => {
+          const nl = getNewsletter(ctx, input.newsletterId)
+          const contact = ctx.db.get<{ id: string; email: string; status: string; subscribed_at: number | null }>('SELECT id, email, status, subscribed_at FROM contacts WHERE id = ? AND newsletter_id = ?', input.contactId, nl.id)
+          if (!contact) throw notFound('That contact')
+          if (contact.status !== 'subscribed') throw new AppError('not_subscribed', 'Only a subscribed contact can receive the welcome email.', 409)
+          if (isSuppressed(ctx, contact.email, nl.id) || ctx.db.get('SELECT id FROM suppressions WHERE email = ? AND newsletter_id IS NULL', contact.email)) throw new AppError('suppressed', 'This address is suppressed.', 409)
+          if (!welcomeEnabled(nl.welcome) || !welcomeCampaign(ctx, nl.id)) throw new AppError('welcome_disabled', 'Turn on and save the welcome email first.', 409)
+          const mailId = `welcome:${contact.id}:${contact.subscribed_at}`
+          const stateOf = () => ctx.db.get<{ state: string }>('SELECT state FROM signup_mail WHERE id = ?', mailId)?.state ?? null
+          if (stateOf()) return { sent: false, alreadyQueued: true, mailId, state: stateOf() }
+          ctx.db.tx(() => queueWelcome(ctx, nl.id, contact.id, contact.subscribed_at))
+          try { await deliverMail(ctx, mailId) } catch { /* The durable signup.mail job retries safe failures. */ }
+          return { sent: stateOf() === 'sent', alreadyQueued: false, mailId, state: stateOf() }
+        },
       }),
     )
   },

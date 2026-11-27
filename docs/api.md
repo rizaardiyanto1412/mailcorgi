@@ -1317,7 +1317,7 @@ curl -X GET 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/cont
 
 ## POST /api/v1/newsletters/:newsletterId/contacts
 
-Add a contact with asserted consent, or update the one that already has this email (outcome exists): its name and fields are merged and the given tags are added. Adding a tag can start a tag-triggered email sequence, for new and existing contacts alike. Suppressed addresses stay suppressed (outcome suppressed) and get no tags. Past the plan contact limit the call fails with limit_reached and nothing is added.
+Add a contact with asserted consent, or update the one that already has this email (outcome exists): its name and fields are merged and the given tags are added. Adding a tag can start a tag-triggered email sequence, for new and existing contacts alike. Suppressed addresses stay suppressed (outcome suppressed) and get no tags. Past the plan contact limit the call fails with limit_reached and nothing is added. When this call newly subscribes the contact (outcome subscribed) and the newsletter has its welcome email turned on, that welcome is sent once, even with double opt-in on (this call asserts consent; it does not wait for a confirmation click). Repeat calls (outcome exists) never send another. Pass sendWelcome false for imports and migrations.
 
 MCP tool: `contacts_create`. Effect: write.
 
@@ -1380,6 +1380,11 @@ Input JSON Schema:
       "description": "How the contact was added",
       "type": "string",
       "maxLength": 100
+    },
+    "sendWelcome": {
+      "default": true,
+      "description": "Send the newsletter's welcome email when this call newly subscribes the contact and the welcome is turned on. Default true. Use false to import or migrate contacts silently. A contact who already exists as subscribed (outcome exists) never gets a welcome from this call, whatever this says.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -1394,7 +1399,7 @@ curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/con
   -H "Authorization: Bearer $MAILCORGI_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
-  --data '{"email":"reader@example.com","source":"manual"}'
+  --data '{"email":"reader@example.com","source":"manual","sendWelcome":true}'
 ```
 
 ## GET /api/v1/newsletters/:newsletterId/contacts/:contactId
@@ -6068,6 +6073,45 @@ curl -X PUT 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/sign
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id" \
   --data '{"revision":1}'
+```
+
+## POST /api/v1/newsletters/:newsletterId/signup/welcome/send
+
+Send the welcome email once to one subscribed contact who never received it (for example one added earlier with sendWelcome false). It uses the same once-per-subscription key as every other welcome, so a second call sends nothing and returns alreadyQueued true. It never targets more than the given contact.
+
+MCP tool: `signup_sendWelcome`. Effect: write.
+
+Input JSON Schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "newsletterId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The newsletter id"
+    },
+    "contactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The one contact to send the welcome email to. Must be subscribed to this newsletter."
+    }
+  },
+  "required": [
+    "newsletterId",
+    "contactId"
+  ]
+}
+```
+
+```sh
+curl -X POST 'https://mail.example.com/api/v1/newsletters/YOUR_NEWSLETTER_ID/signup/welcome/send' \
+  -H "Authorization: Bearer $MAILCORGI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-id" \
+  --data '{"contactId":"example"}'
 ```
 
 ## PUT /api/v1/newsletters/:newsletterId/website/host

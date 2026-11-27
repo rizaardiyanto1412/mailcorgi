@@ -115,6 +115,11 @@ export async function deliverMail(ctx: StoreCtx, mailId: string): Promise<void> 
     throw new Error('The signup email outcome is unknown.')
   }
   const retry = !result.ok && (result.kind === 'temporary' || result.kind === 'throttled' || (result.kind === 'unknown' && provider.capabilities.idempotency))
-  ctx.db.run('UPDATE signup_mail SET state = ? WHERE id = ? AND newsletter_id = ?', result.ok ? 'sent' : retry ? 'pending' : result.kind === 'unknown' ? 'unknown' : 'failed', mailId, nl.id)
+  ctx.db.tx(() => {
+    ctx.db.run('UPDATE signup_mail SET state = ? WHERE id = ? AND newsletter_id = ?', result.ok ? 'sent' : retry ? 'pending' : result.kind === 'unknown' ? 'unknown' : 'failed', mailId, nl.id)
+    // The send log (sends.list) reads deliveries. The welcome campaign is one evolving draft, so a contact has at most one row for it (the first welcome);
+    // OR IGNORE keeps a later welcome after a resubscription from tripping UNIQUE (campaign_id, contact_id). No contact counters or streaks change.
+    if (result.ok && welcome) ctx.db.run("INSERT OR IGNORE INTO deliveries (campaign_id, contact_id, email, status, queued_at, sent_at) VALUES (?, ?, ?, 'sent', ?, ?)", welcome.id, contact.id, contact.email, row.created_at, ctx.now())
+  })
   if (retry) throw new Error('The signup email provider asked us to retry.')
 }

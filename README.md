@@ -23,6 +23,7 @@ keeps your list, your issues and your stats in SQLite databases that you own.
   and the send page says when the next step is held and why. Send to the most engaged readers first.
 - One-click unsubscribe headers (RFC 8058) on every campaign, sequence and newsletter email. Only a
   welcome email marked transactional, with its list-unsubscribe headers switched off, goes without them.
+- Contacts added through the API or MCP (`contacts.create`) get the welcome email when they are newly subscribed, even with double opt-in on; `sendWelcome: false` skips it, and `signup.sendWelcome` sends it once to one existing contact. See `docs/decisions/api-welcome.md`.
 - Plain text sending for any campaign, the welcome email or a sequence step (`sendFormat: "plain"`, or
   "Send as plain text" in the editor): no design, footer or tracking, only your words and an unsubscribe
   line (which `hideUnsubscribeFooter` can hide; the headers stay), so it reads like an email you wrote by hand. See [how it is sent](docs/decisions/plain-text-send.md).

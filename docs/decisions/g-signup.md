@@ -46,7 +46,8 @@ Integration follow-ups:
   global suppression continue to prevent email.
 - Welcome content remains a draft campaign. Campaign lists include issues only, and sending
   rejects `kind: 'welcome'` and `keep` for both immediate sends and scheduling. Signup never
-  schedules welcome campaigns or creates campaign deliveries.
+  schedules welcome campaigns. A welcome that went out is recorded as one `deliveries` row (status
+  `sent`) so it shows in `sends.list`; see [api-welcome](api-welcome.md).
 
 Verification is recorded in the unit report. The embed behavior test executes the shipped script
 against a fake DOM and the actual HTTP API, including popup open/close and error recovery.
