@@ -14,6 +14,8 @@ export interface EmailMessage {
    * `html` and sends a lone text/plain part; the test outbox stores both.
    */
   textOnly?: boolean
+  /** Set for a send whose content is kept. A provider then logs only the provider, stage, status and an error class, never a reply or error text. */
+  safeDiagnostics?: boolean
   headers: Record<string, string>
   meta: { accountId: string; deliveryId: string | null; kind: 'campaign' | 'system' }
   idempotencyKey: string

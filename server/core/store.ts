@@ -212,6 +212,7 @@ export function createStore(registry: Registry, migrations: readonly Migration[]
   app.post('/api/actions/:name', async (c) => {
     const actor = c.get('actor')
     if (!actor) return c.json({ error: 'Sign in to continue.', code: 'unauthorized' }, 401)
+    if (registry.actions.get(c.req.param('name'))?.restOnly) return c.json({ error: `Unknown action ${c.req.param('name')}.`, code: 'unknown_action' }, 404)
     const input = await readJson(c)
     const result = await runAction(ctx, c.req.param('name'), input, actor)
     return c.json(result ?? null)

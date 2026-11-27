@@ -195,6 +195,7 @@ export function deleteContact(ctx: StoreCtx, contactId: string, newsletterId: st
     unsubscribe(ctx, { contactId, reason: 'deleted' })
     const from = contactRow(ctx, contactId, newsletterId).status
     clearContactTags(ctx, c.id)
+    ctx.db.run('DELETE FROM delivery_content WHERE contact_id = ?', c.id)
     ctx.db.run('DELETE FROM contacts WHERE id = ? AND newsletter_id = ?', c.id, newsletterId)
     for (const listener of statusListeners) listener(ctx, { newsletterId, contactId: c.id, from, to: 'deleted' })
   })

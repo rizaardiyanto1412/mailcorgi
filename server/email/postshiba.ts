@@ -68,14 +68,14 @@ export function postshibaProvider(ctx: StoreCtx, settings: Record<string, string
         if (isRedirect(response)) return redirectedSend('postshiba', response.status, 'Check postshiba_endpoint.')
         const text = await response.text()
         if (!response.ok) {
-          logSendFailure('postshiba', 'status', { status: response.status, body: text, redact })
+          logSendFailure('postshiba', 'status', { status: response.status, body: text, redact, safe: msg.safeDiagnostics })
           return refusal(response.status, text.slice(0, 4000), response.headers.get('retry-after'))
         }
         const result = resultSchema.safeParse(parseJson(text))
         if (!result.success) return unparsedSend('postshiba', response.status)
         if (result.data.success_count >= 1 && result.data.fail_count === 0) return { ok: true, id: messageId }
         return refusal(200, JSON.stringify([result.data.errors, result.data.failed_recipients]).slice(0, 4000), null)
-      } catch (error) { return failedSend('postshiba', error, redact) }
+      } catch (error) { return failedSend('postshiba', error, redact, msg.safeDiagnostics) }
     },
     parseWebhook: (request, config) => parsePostshibaWebhook(ctx, request, config),
   }

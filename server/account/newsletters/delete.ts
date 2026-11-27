@@ -22,6 +22,7 @@ const bySequence = (table: string) => `SELECT t.rowid AS r FROM ${table} t JOIN 
 const direct = (table: string) => `SELECT rowid AS r FROM ${table} WHERE newsletter_id = ? LIMIT ?`
 export const DELETE_STEPS: { table: string; select: string }[] = [
   { table: 'provider_events', select: 'SELECT p.rowid AS r FROM provider_events p JOIN deliveries d ON d.id = p.delivery_id JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? LIMIT ?' },
+  { table: 'delivery_content', select: 'SELECT t.rowid AS r FROM delivery_content t JOIN deliveries d ON d.id = t.delivery_id JOIN campaigns c ON c.id = d.campaign_id WHERE c.newsletter_id = ? LIMIT ?' },
   { table: 'deliveries', select: byCampaign('deliveries') },
   { table: 'campaign_sends', select: byCampaign('campaign_sends') },
   { table: 'links', select: byCampaign('links') },

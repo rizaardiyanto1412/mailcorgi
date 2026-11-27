@@ -500,6 +500,111 @@ Run `DATA_DIR=/var/lib/mailcorgi node scripts/backup.mjs` for a backup, and
 Durable Objects keep their own history, and MailCorgi has no export for them yet. Cloudflare keeps
 point-in-time recovery for SQLite Durable Objects for 30 days.
 
+## Send content copies
+
+MailCorgi can keep one copy of each campaign and sequence email for 30 days. The copy is the subject,
+HTML and plain text exactly as MailCorgi handed them to the email provider. It is off by default.
+
+### Turn it on
+
+Set `DELIVERY_CONTENT_CAPTURE=true` on Node, or as a variable on the Worker. Nothing else changes. From
+then on, MailCorgi tries to keep a copy of each campaign or sequence email that the provider accepts on its
+first attempt. Only the exact value `true` turns it on. The welcome email and re-engagement emails get none.
+
+A copy is best effort. MailCorgi skips it, and the send still succeeds, when:
+
+- the copy is larger than about 1 MB (subject, HTML and text together);
+- the write fails, for example when a Cloudflare write quota is used up;
+- the contact or newsletter was deleted while the provider call was running.
+
+MailCorgi writes the copy in a separate step after it records the accepted send. If the process stops
+between the two steps, the send stays accepted and has no copy. MailCorgi does not retry a skipped copy.
+
+**Storage budget.** Each copy takes up to about 1 MB, and each contact gets one per email. Plan for
+`contacts x emails per 30 days x average email size`. A Durable Object holds 10 GB, so the operator
+must size the volume or watch usage. A 20 KB email to 100,000 contacts is about 2 GB for 30 days.
+
+A copy is one recipient's email. It holds that recipient's unsubscribe and preferences links, their
+tracked links and their open-tracking pixel. Treat it like the recipient's data.
+
+### Read a copy
+
+`GET /api/v1/newsletters/:newsletterId/sends/:deliveryId` returns `{ id, sentAt, content }`. The
+`deliveryId` is the numeric `items[].id` of `sends.list`. The call is REST only: there is no MCP tool
+and no web-session route.
+
+- **Who may read.** The same callers as `sends.list` on `/api/v1`: an API key of the account, full or
+  read-only. A key acts for the account owner, so it reaches every newsletter of that account. A key of
+  another account is refused. OAuth tokens are accepted on `/mcp` only, as for every REST call today.
+  The newsletter must be readable by the key, which needs at least the member role.
+- **Wrong ids.** A newsletter you cannot read answers as for any other call. After that check, an unknown
+  id, a malformed id and an id from another newsletter all answer `404 not_found`.
+- **Caching.** Every answer on this path, errors included, carries `Cache-Control: private, no-store`.
+  Do not cache it in a proxy or a CDN, and do not write it to logs.
+- **`content` is `null`** when no exact copy exists: the feature is off, the email was not accepted,
+  it went out before copies existed, an earlier attempt made the accepted content or time uncertain,
+  or the copy is past its cutoff. MailCorgi never rebuilds an email from the current campaign. `html` is
+  `null` for a plain-text send.
+
+### Cutoff and old rows
+
+A copy expires 30 days after the provider accepted the email. At that exact moment the API answers
+`content: null`, even if the row is still in the database. A job then deletes expired rows in small
+batches. It runs from the account's own job alarm, so it needs no traffic, and it runs whether or not
+the feature is on. Rows from before the cutoff stay readable until it.
+
+### Show a copy safely
+
+MailCorgi has no preview page for copies. If you build one, make it inert. The HTML is untrusted
+newsletter content, and loading it can change real data.
+
+- **Never put the raw content in your app DOM.** Do not use `innerHTML`, or a template that inserts it.
+- **Strip or disable navigation before you insert it into a frame.** Remove or neutralise every `a`,
+  `area` and `form` element, every `href` and `action` attribute, `base`, and `meta http-equiv="refresh"`.
+  An iframe with `sandbox=""` and a Content-Security-Policy of `default-src 'none'` still lets a link
+  navigate its own iframe. The sandbox and the policy do not stop that.
+- Run no scripts and load no remote resources. Do not load the tracking pixel: it records an open.
+- Do not follow its links. A tracked link records a click. The unsubscribe and preferences links belong
+  to the recipient and act for them.
+- Do not cache the response, and do not log it.
+
+### Where copies live
+
+Copies live in the account database only, in the `delivery_content` table. They go away with their
+delivery, with the contact (deleting a contact erases that contact's copies even though the delivery
+record stays), with the newsletter and with the account.
+
+Copies also exist in places MailCorgi cannot erase:
+
+- **Your email provider** keeps its own record of what you sent, under its own retention.
+- **Node backups** hold every copy that existed at backup time. You set how long you keep them.
+  `scripts/backup.mjs` does not remove old backups.
+- **Cloudflare** point-in-time recovery holds them for its 30-day window.
+
+A recovery copy (a backup, or a point-in-time recovery) can hold a copy that you erased or that is past
+its cutoff. Such rows stay unreadable only while `DELIVERY_CONTENT_CAPTURE` is not `true`. After a
+recovery, treat them as unreadable until you scrub them or they are past retention.
+
+### Turn it off
+
+Remove the variable, or set it to any value other than `true`. The endpoint still works and answers
+`content: null`, and no new copies are made. **Turning it off does not erase copies already stored.**
+They stay in the database until their 30 days end, and the purge job then removes them. To erase them
+sooner, run `DELETE FROM delivery_content` in each account database with the app stopped.
+
+### After a restore
+
+A restored database can hold copies that were already past their cutoff, or that you meant to erase.
+Keep the flag off until you have scrubbed them or they are past retention:
+
+1. Restore with `DELIVERY_CONTENT_CAPTURE` unset. With the flag off, no copy is readable.
+2. Scrub the restored copies with `DELETE FROM delivery_content` in each account database. On Node, do
+   this after the restore and before you start the app.
+3. On Cloudflare, use SQL access to the account's Durable Object if you have it, and run the same
+   statement. If Worker SQL access is not available, you cannot scrub. Keep the flag unset until the
+   newest restored copy is past its 30 days. The purge job deletes the expired rows.
+4. Only when the copies are scrubbed or past retention, set `DELIVERY_CONTENT_CAPTURE=true`.
+
 ## Upgrade
 
 ### Docker
@@ -551,6 +656,7 @@ a variable that is missing here.
 | `APP_SECRET` (secret) | Both | generated on first boot | Master key, at least 16 characters. Leave unset unless you must move the key: changing it signs everyone out and makes stored credentials unreadable. |
 | `IMAGES_PUBLIC_URL` | Both | `APP_URL/img` | Origin that serves uploaded images, when you put a CDN or a public R2 domain in front of them. |
 | `SEND_BATCH_SIZE` | Both | 100 | Most emails one send run claims. The platform limit can lower it. |
+| `DELIVERY_CONTENT_CAPTURE` | Both | off | `true` keeps a copy of the subject, HTML and text of each campaign and sequence email as handed to the provider, for 30 days, and lets `GET /api/v1/newsletters/:newsletterId/sends/:deliveryId` return it. Off, no copy is made and the endpoint returns `content: null`. Turning it off does not erase copies already stored: they stay in the database until they expire. See [Send content copies](#send-content-copies). |
 | `TURNSTILE_SITE_KEY` | Both |  | Cloudflare Turnstile site key for signup forms. Needs `TURNSTILE_SECRET_KEY` too. |
 | `TURNSTILE_SECRET_KEY` (secret) | Both |  | Cloudflare Turnstile secret key for signup forms. |
 
